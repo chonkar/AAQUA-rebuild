@@ -1,0 +1,13 @@
+{
+    "projectName": "curl-test-framework",
+    "framework": "Selenium",
+    "language": "Java",
+    "features": {
+        "pageObjectModel": true,
+        "reporting": "Allure",
+        "logging": true,
+        "cicd": "None",
+        "docker": false,
+        "parallel": true
+    }
+}
