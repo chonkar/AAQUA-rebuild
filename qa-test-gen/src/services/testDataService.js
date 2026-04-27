@@ -22,6 +22,17 @@ const processHybridData = (data) => {
     let totalFields = 0;
 
     const processValue = (val) => {
+        if (Array.isArray(val)) {
+            return val.map(processValue);
+        }
+        if (val !== null && typeof val === 'object') {
+            const newObj = {};
+            for (const k in val) {
+                newObj[k] = processValue(val[k]);
+            }
+            return newObj;
+        }
+
         totalFields++;
         if (typeof val !== 'string') return val;
 
@@ -37,16 +48,7 @@ const processHybridData = (data) => {
         return val;
     };
 
-    let processedData = data;
-    if (Array.isArray(data)) {
-        processedData = data.map(item => {
-            const newItem = {};
-            for (const key in item) {
-                newItem[key] = processValue(item[key]);
-            }
-            return newItem;
-        });
-    }
+    let processedData = Array.isArray(data) ? data.map(processValue) : processValue(data);
 
     return {
         data: processedData,
@@ -81,17 +83,21 @@ export const generateTestData = async (input, mode = 'prompt', count = 5) => {
                 I have a JSON Schema: 
                 ${input}
                 
-                Generate ${count} records that verify this schema.
+                Generate EXACTLY ${count} records that verify this schema.
             `;
         } else {
             promptContext = `
-                Generate ${count} records based on: "${input}"
+                Generate EXACTLY ${count} records based on: "${input}"
             `;
         }
 
         const prompt = `
             ${promptContext}
 
+            CRITICAL INSTRUCTIONS:
+            - DO NOT output any reasoning, explanations, or thought process.
+            - Output ONLY the raw JSON array. NO MARKDOWN.
+            
             IMPORTANT OPTIMIZATION INSTRUCTIONS:
             To save generation time, use the following PLACEHOLDERS for standard data types exactly as written below. Do NOT generate real names/emails yourself, just use the string placeholder:
             - Use "{{FAKER_NAME}}" for person names.
@@ -104,19 +110,26 @@ export const generateTestData = async (input, mode = 'prompt', count = 5) => {
             - Use "{{FAKER_UUID}}" for unique IDs.
 
             For specific business logic or fields not covered above, generate realistic values yourself.
-
-            Output ONLY a valid JSON array of objects. No markdown.
         `;
 
         const result = await model.generateContent(prompt);
         const response = await result.response;
         let text = response.text();
 
-        // Cleanup markdown
-        text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        // Robust cleanup: find the exact JSON array using regex
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+            text = jsonMatch[0];
+        } else {
+            text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        }
 
         if (!isValidJSON(text)) {
-            throw new Error("AI failed to generate valid JSON.");
+            let parseError = "Syntax Error";
+            try { JSON.parse(text); } catch (e) { parseError = e.message; }
+
+            console.error("AI failed to generate valid JSON:", parseError, text);
+            throw new Error(`The AI output exceeded the maximum response size limit and was abruptly cut off mid-data! (${parseError}). Try lowering the Count to 1 or 2.`);
         }
 
         let rawData = JSON.parse(text);

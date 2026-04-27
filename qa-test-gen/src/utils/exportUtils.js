@@ -1,16 +1,35 @@
 
 import * as XLSX from 'xlsx';
 
-export const exportToExcel = (data, fileName = 'Functional_Test_Cases') => {
+export const exportToExcel = (data, fileName = 'Functional_Test_Cases', sheetName = 'Sheet1') => {
     if (!data || data.length === 0) return;
 
-    // Format data for Excel (headers are keys)
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Test Cases");
+    const processedData = data.map(row => {
+        const formattedRow = {};
+        for (const [key, value] of Object.entries(row)) {
+            if (value !== null && typeof value === 'object') {
+                formattedRow[key] = Array.isArray(value) ? value.join('\n') : JSON.stringify(value);
+            } else {
+                formattedRow[key] = value;
+            }
+        }
+        return formattedRow;
+    });
 
-    // Generate buffer and save
-    XLSX.writeFile(workbook, `${fileName}.xlsx`);
+    const worksheet = XLSX.utils.json_to_sheet(processedData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+
+    // Generate buffer and save safely
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8' });
+
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${fileName}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 };
 
 export const exportToJSON = (data, fileName = 'Functional_Test_Cases') => {

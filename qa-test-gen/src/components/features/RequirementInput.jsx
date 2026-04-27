@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Sparkles, Loader2 } from 'lucide-react';
+import { Sparkles, Loader2, RotateCcw } from 'lucide-react';
 
-const RequirementInput = ({ onGenerate, isGenerating, onCancel }) => {
+const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0, onClearContext }) => {
     const [requirement, setRequirement] = useState('');
 
     const handleSubmit = () => {
@@ -12,7 +12,20 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel }) => {
     return (
         <div className="input-section animate-fade-in">
             <div className="card">
-                <label className="input-label">Describe your feature or requirement</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
+                    <label className="input-label" style={{ marginBottom: 0 }}>Describe your feature or requirement</label>
+                    {contextCount > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingBottom: '0.2rem' }}>
+                            <span style={{ fontSize: '0.75rem', background: 'rgba(59, 130, 246, 0.1)', color: '#60a5fa', padding: '0.2rem 0.6rem', borderRadius: '1rem', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                                Context: {contextCount} previous
+                            </span>
+                            <button onClick={onClearContext} title="Start clean with no context" style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: 0 }} className="hover-text-white">
+                                <RotateCcw size={12} />
+                                Clear
+                            </button>
+                        </div>
+                    )}
+                </div>
                 <textarea
                     className="input-field textarea-premium"
                     placeholder="e.g. Create a login page with email validation, 'Forgot Password' link, and Google SSO integration..."

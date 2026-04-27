@@ -11,6 +11,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/llm-api': {
+        target: 'https://llm.lab.aaseya.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/llm-api/, ''),
+        secure: false,
+      },
     },
   },
 })

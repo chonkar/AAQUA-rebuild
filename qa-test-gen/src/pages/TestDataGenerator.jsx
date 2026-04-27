@@ -153,7 +153,7 @@ const TestDataGenerator = () => {
     };
 
     const handleExportJSON = () => exportToJSON(generatedData, 'synthetic_data');
-    const handleExportExcel = () => exportToExcel(generatedData, 'synthetic_data');
+    const handleExportExcel = () => exportToExcel(generatedData, 'synthetic_data', 'Test Data');
     const handleExportCSV = () => exportToCSV(generatedData, 'synthetic_data');
 
     return (
@@ -295,17 +295,20 @@ const TestDataGenerator = () => {
                                     <table>
                                         <thead>
                                             <tr>
-                                                {generatedData.length > 0 && Object.keys(generatedData[0]).map(key => (
-                                                    <th key={key}>{key}</th>
-                                                ))}
+                                                {(Array.isArray(generatedData) ? generatedData : [generatedData]).length > 0 &&
+                                                    Object.keys((Array.isArray(generatedData) ? generatedData : [generatedData])[0] || {}).map(key => (
+                                                        <th key={key}>{key}</th>
+                                                    ))}
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {generatedData.map((row, idx) => (
+                                            {(Array.isArray(generatedData) ? generatedData : [generatedData]).map((row, idx) => (
                                                 <tr key={idx}>
-                                                    {Object.values(row).map((val, i) => (
+                                                    {Object.values(row || {}).map((val, i) => (
                                                         <td key={i}>
-                                                            {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                                                            {typeof val === 'object' && val !== null ? (
+                                                                Array.isArray(val) ? val.map((v, idx) => <div key={idx}>• {typeof v === 'object' ? JSON.stringify(v) : String(v)}</div>) : JSON.stringify(val)
+                                                            ) : String(val ?? '')}
                                                         </td>
                                                     ))}
                                                 </tr>

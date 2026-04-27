@@ -2,6 +2,11 @@ export class LocalLLM {
     constructor(apiKey, endpoint) {
         this.apiKey = apiKey;
         this.endpoint = endpoint || 'https://llm.lab.aaseya.com/v1';
+
+        // Bypass CORS in browser explicitly using Vite proxy
+        if (typeof window !== 'undefined' && this.endpoint.includes('llm.lab.aaseya.com')) {
+            this.endpoint = this.endpoint.replace('https://llm.lab.aaseya.com', '/llm-api');
+        }
     }
 
     getGenerativeModel({ model }) {
@@ -15,7 +20,8 @@ export class LocalLLM {
                     },
                     body: JSON.stringify({
                         model: model,
-                        messages: [{ role: 'user', content: prompt }]
+                        messages: [{ role: 'user', content: prompt }],
+                        max_tokens: 4000
                     })
                 });
 

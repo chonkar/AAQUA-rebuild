@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Settings, HelpCircle, Database, Target, ShieldCheck, Layers, Globe, PersonStanding, RefreshCw, LayoutDashboard } from 'lucide-react';
+import { Settings, HelpCircle, Database, Target, ShieldCheck, Layers, Globe, PersonStanding, RefreshCw, LayoutDashboard, FileCode, FileText } from 'lucide-react';
 
 const Sidebar = () => {
   return (
@@ -11,6 +11,16 @@ const Sidebar = () => {
           <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <LayoutDashboard size={20} />
             <span>Dashboard</span>
+          </NavLink>
+
+          <NavLink to="/test-plan-generator" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <FileText size={20} />
+            <span>Test Plan Generator</span>
+          </NavLink>
+
+          <NavLink to="/test-generator" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <FileCode size={20} />
+            <span>Functional Test Generator</span>
           </NavLink>
 
           <NavLink to="/test-data-generator" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>

@@ -8,6 +8,7 @@ import { AlertCircle } from 'lucide-react';
 
 const TestGenerator = () => {
     const [testCases, setTestCases] = useState([]);
+    const [requirementHistory, setRequirementHistory] = useState([]);
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState(null);
     const abortControllerRef = useRef(null);
@@ -28,8 +29,9 @@ const TestGenerator = () => {
         setIsGenerating(true);
         setError(null);
         try {
-            const results = await generateTestCases(requirement, controller.signal);
-            setTestCases(results);
+            const results = await generateTestCases(requirement, requirementHistory, controller.signal);
+            setTestCases(prev => [...prev, ...results]);
+            setRequirementHistory(prev => [...prev, requirement]);
         } catch (err) {
             if (err.name === 'AbortError') {
                 console.log("Cancelled");
@@ -44,7 +46,7 @@ const TestGenerator = () => {
         }
     };
 
-    const handleExportExcel = () => exportToExcel(testCases);
+    const handleExportExcel = () => exportToExcel(testCases, 'Functional_Test_Cases', 'Test Cases');
     const handleExportJSON = () => exportToJSON(testCases);
 
     return (
@@ -58,6 +60,11 @@ const TestGenerator = () => {
                 onGenerate={handleGenerate}
                 isGenerating={isGenerating}
                 onCancel={handleCancel}
+                contextCount={requirementHistory.length}
+                onClearContext={() => {
+                    setRequirementHistory([]);
+                    setTestCases([]);
+                }}
             />
 
             {error && (

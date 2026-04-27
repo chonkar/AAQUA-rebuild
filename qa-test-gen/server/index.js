@@ -259,7 +259,7 @@ async function generatePlaywrightTypeScript(outputPath, projectName, features) {
     const playwrightConfig = `import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './src/tests',
+  testDir: './tests',
   fullyParallel: ${features.parallel},
   workers: ${features.parallel ? 'process.env.CI ? 1 : undefined' : '1'},
   reporter: [
@@ -309,7 +309,7 @@ export class BasePage {
     await this.page.waitForLoadState('networkidle');
   }
 }`;
-        fs.writeFileSync(path.join(outputPath, 'src', 'pages', 'BasePage.ts'), basePage);
+        fs.writeFileSync(path.join(outputPath, 'pages', 'BasePage.ts'), basePage);
 
         const loginPage = `import { Page, Locator } from '@playwright/test';
 import { BasePage } from './BasePage';
@@ -332,7 +332,7 @@ export class LoginPage extends BasePage {
     await this.loginButton.click();
   }
 }`;
-        fs.writeFileSync(path.join(outputPath, 'src', 'pages', 'LoginPage.ts'), loginPage);
+        fs.writeFileSync(path.join(outputPath, 'pages', 'LoginPage.ts'), loginPage);
     }
 
     // Logger utility
@@ -352,7 +352,7 @@ export const logger = winston.createLogger({
     new winston.transports.File({ filename: 'logs/test.log' })
   ]
 });`;
-        fs.writeFileSync(path.join(outputPath, 'src', 'utils', 'logger.ts'), logger);
+        fs.writeFileSync(path.join(outputPath, 'utils', 'logger.ts'), logger);
         fs.mkdirSync(path.join(outputPath, 'logs'), { recursive: true });
     }
 
@@ -378,7 +378,7 @@ test.describe('Login Tests', () => {
     ${features.logging ? "logger.info('Login test completed');" : ''}
   });
 });`;
-    fs.writeFileSync(path.join(outputPath, 'src', 'tests', 'login.spec.ts'), sampleTest);
+    fs.writeFileSync(path.join(outputPath, 'tests', 'login.spec.ts'), sampleTest);
 
     // CI/CD
     if (features.cicd === 'GitHub Actions') {
@@ -456,21 +456,95 @@ npm run report
 }
 
 async function generatePlaywrightJavaScript(outputPath, projectName, features) {
-    // Similar to TypeScript but with .js extensions and no types
-    // Simplified for brevity - would follow same pattern
     const packageJson = {
         name: projectName,
         version: '1.0.0',
         scripts: {
-            test: 'playwright test'
+            test: 'playwright test',
+            'test:headed': 'playwright test --headed',
+            'test:debug': 'playwright test --debug',
+            report: features.reporting === 'Allure' ? 'allure generate ./allure-results --clean && allure open' : 'playwright show-report'
         },
         devDependencies: {
-            '@playwright/test': '^1.40.0'
+            '@playwright/test': '^1.40.0',
+            ...(features.reporting === 'Allure' && { 'allure-playwright': '^2.15.0', 'allure-commandline': '^2.25.0' }),
+            ...(features.logging && { 'winston': '^3.11.0' })
         }
     };
     fs.writeFileSync(path.join(outputPath, 'package.json'), JSON.stringify(packageJson, null, 2));
 
-    const readme = `# ${projectName}\n\nPlaywright JavaScript Framework\n\n## Setup\n\`\`\`bash\nnpm install\nnpx playwright install\n\`\`\``;
+    const playwrightConfig = `const { defineConfig, devices } = require('@playwright/test');
+
+module.exports = defineConfig({
+  testDir: './tests',
+  fullyParallel: ${features.parallel},
+  workers: ${features.parallel ? 'process.env.CI ? 1 : undefined' : '1'},
+  reporter: [
+    ['html'],
+    ${features.reporting === 'Allure' ? "['allure-playwright']," : ''}
+  ],
+  use: {
+    baseURL: 'https://example.com',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+  ],
+});`;
+    fs.writeFileSync(path.join(outputPath, 'playwright.config.js'), playwrightConfig);
+
+    if (features.pageObjectModel) {
+        const basePage = `class BasePage {
+  constructor(page) {
+    this.page = page;
+  }
+  async navigate(url) {
+    await this.page.goto(url);
+  }
+  async waitForPageLoad() {
+    await this.page.waitForLoadState('networkidle');
+  }
+}
+module.exports = { BasePage };`;
+        fs.writeFileSync(path.join(outputPath, 'pages', 'BasePage.js'), basePage);
+
+        const loginPage = `const { BasePage } = require('./BasePage');
+class LoginPage extends BasePage {
+  constructor(page) {
+    super(page);
+    this.usernameInput = page.locator('#username');
+    this.passwordInput = page.locator('#password');
+    this.loginButton = page.locator('button[type="submit"]');
+  }
+  async login(username, password) {
+    await this.usernameInput.fill(username);
+    await this.passwordInput.fill(password);
+    await this.loginButton.click();
+  }
+}
+module.exports = { LoginPage };`;
+        fs.writeFileSync(path.join(outputPath, 'pages', 'LoginPage.js'), loginPage);
+    }
+
+    const sampleTest = `const { test, expect } = require('@playwright/test');
+${features.pageObjectModel ? "const { LoginPage } = require('../pages/LoginPage');" : ''}
+
+test.describe('Login Tests', () => {
+  test('should login successfully', async ({ page }) => {
+    ${features.pageObjectModel ? `const loginPage = new LoginPage(page);
+    await loginPage.navigate('https://example.com/login');
+    await loginPage.login('testuser', 'password123');` : `await page.goto('https://example.com/login');
+    await page.fill('#username', 'testuser');
+    await page.fill('#password', 'password123');
+    await page.click('button[type="submit"]');`}
+  });
+});`;
+    fs.writeFileSync(path.join(outputPath, 'tests', 'login.spec.js'), sampleTest);
+
+    const readme = `# ${projectName}\n\nPlaywright JavaScript Framework\n\n## Setup\n\`\`\`bash\nnpm install\nnpx playwright install\n\`\`\`\n\n## Run Tests\n\`\`\`bash\nnpm test\n\`\`\``;
     fs.writeFileSync(path.join(outputPath, 'README.md'), readme);
 }
 
@@ -1217,13 +1291,25 @@ app.post('/api/analyze-localization', async (req, res) => {
     if (!html || !targetLanguage) return res.status(400).json({ error: 'HTML and Target Language required' });
 
     try {
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        const endpoint = process.env.VITE_LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
+        const llmModel = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
+        const genAI = new GoogleGenerativeAI(apiKey, endpoint);
+        const model = genAI.getGenerativeModel({ model: llmModel });
 
         // Determine if target is an English dialect (American vs British)
         const isEnglishDialect = targetLanguage.includes('American English') || targetLanguage.includes('British English');
         const isAmericanEnglish = targetLanguage.includes('American English');
         const isBritishEnglish = targetLanguage.includes('British English');
+
+        // Aggressively clean the HTML (strip scripts, styles, SVGs, and empty space) to massively reduce token size
+        const cleanHtml = html
+            .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+            .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+            .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, '')
+            .replace(/<path\b[^<]*(?:(?!<\/path>)<[^<]*)*<\/path>/gi, '')
+            .replace(/<!--[\s\S]*?-->/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
 
         let prompt;
 
@@ -1254,7 +1340,7 @@ app.post('/api/analyze-localization', async (req, res) => {
                 - "context": A brief description of where it appears (e.g., "Submit Button", "Error Message").
                 
                 HTML CONTENT (Truncated for analysis):
-                ${html.substring(0, 50000)}
+                ${cleanHtml.substring(0, 200000)}
                 
                 OUTPUT FORMAT:
                 Return ONLY a valid JSON array of objects. No markdown.
@@ -1278,7 +1364,7 @@ app.post('/api/analyze-localization', async (req, res) => {
                 - "context": A brief CSS selector or description of where it is (e.g., "Login Button", "Footer Link").
 
                 HTML CONTENT (Truncated for analysis):
-                ${html.substring(0, 50000)}
+                ${cleanHtml.substring(0, 200000)}
 
                 OUTPUT FORMAT:
                 Return ONLY a valid JSON array of objects. No markdown.
@@ -1768,7 +1854,7 @@ app.post('/api/run-tests-local', async (req, res) => {
             runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
                 const r2 = runStore.get(runId);
                 r2.logs.push(`[AAQUA] Dependencies installed. Running Playwright...\n`);
-                runCommand('npx', ['playwright', 'test', '--reporter=json', '--output=playwright-results'], projectRoot, runId, (code) => {
+                runCommand('npx', ['playwright', 'test', '--reporter=line,json', '--output=playwright-results'], projectRoot, runId, (code) => {
                     const r3 = runStore.get(runId);
                     r3.logs.push(`\n[AAQUA] Process exited with code ${code}\n`);
                     const allLogs = r3.logs.join('');
@@ -1967,7 +2053,7 @@ app.post('/api/retry-tests/:runId', (req, res) => {
         });
     } else if (framework === 'playwright') {
         const grepPattern = failedTests.map(t => t.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-        runCommand('npx', ['playwright', 'test', '--reporter=json', '--grep', grepPattern], projectRoot, retryRunId, (code) => {
+        runCommand('npx', ['playwright', 'test', '--reporter=line,json', '--grep', grepPattern], projectRoot, retryRunId, (code) => {
             const run = runStore.get(retryRunId);
             run.logs.push(`\n[AAQUA] Retry exited with code ${code}\n`);
             const allLogs = run.logs.join('');

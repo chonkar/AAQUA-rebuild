@@ -31,7 +31,7 @@ const TestCaseTable = ({ testCases }) => {
                   <td className="id-cell">{tc.id}</td>
                   <td><span className="module-tag">{tc.module}</span></td>
                   <td className="scenario-cell">{tc.scenario}</td>
-                  <td className="multiline-cell">{tc.steps}</td>
+                  <td className="multiline-cell">{Array.isArray(tc.steps) ? tc.steps.join('\n') : tc.steps}</td>
                   <td className="multiline-cell">{tc.expectedResult}</td>
                   <td>
                     <span className={`priority-badge ${tc.priority?.split('-')[0].toLowerCase()}`}>
