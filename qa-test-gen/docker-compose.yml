@@ -1,0 +1,121 @@
+# AAQUA full-stack deployment.
+#
+# Services
+#   app       — single bundled image (nginx + Express + Playwright). nginx on
+#               :80 serves the SPA, proxies /api → loopback :3001, /llm-api →
+#               https://llm.lab.aaseya.com (Authorization injected from secret).
+#   postgres  — Postgres 16 (data persisted in postgres_data volume)
+#   zap       — OWASP ZAP daemon
+#
+# Host port map (only the app and infra ports are published):
+#   80   → app       (single public entrypoint)
+#   5442 → postgres  (for tooling / pgAdmin only; app uses internal :5432)
+#   8040 → zap       (for tooling; app uses internal :8080)
+#
+# Bring up:    docker compose up -d --build
+# Tear down:   docker compose down       (add -v to wipe the DB volume)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aaqua-postgres
+    environment:
+      POSTGRES_USER: aaqua
+      POSTGRES_DB: aaqua_security
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    ports:
+      - "5442:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aaqua -d aaqua_security"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [aaqua-net]
+
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: aaqua-zap
+    command: >
+      zap.sh -daemon -port 8080 -host 0.0.0.0
+      -config api.disablekey=true
+      -config api.addrs.addr.name=.*
+      -config api.addrs.addr.regex=true
+      -config connection.timeoutInSecs=120
+    ports:
+      - "8040:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/JSON/core/view/version/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    networks: [aaqua-net]
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aaqua-app
+    ports:
+      - "80:80"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: aaqua
+      DB_NAME: aaqua_security
+      DB_LOGGING: "false"
+      ZAP_API_URL: http://zap:8080
+      ZAP_API_KEY: ""
+      VITE_LLM_ENDPOINT: https://llm.lab.aaseya.com/v1
+      VITE_LLM_MODEL: gpt-oss-20b
+      JWT_EXPIRES_IN: 24h
+      JIRA_ENABLED: "false"
+      ALLOW_PRIVATE_SCAN: "false"
+    secrets:
+      - llm_api_key
+      - jwt_secret
+      - db_password
+      - jira_token
+    depends_on:
+      postgres:
+        condition: service_healthy
+      zap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/api/security/zap/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks: [aaqua-net]
+
+networks:
+  aaqua-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+
+secrets:
+  llm_api_key:
+    file: ./secrets/llm_api_key.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  db_password:
+    file: ./secrets/db_password.txt
+  jira_token:
+    file: ./secrets/jira_token.txt
