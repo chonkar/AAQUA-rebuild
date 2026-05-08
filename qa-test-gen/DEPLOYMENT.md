@@ -1,6 +1,21 @@
 # AAQUA — QA Server Deployment Guide
 
-How to deploy the AAQUA stack to a shared QA server using Docker Compose. Frontend and backend are bundled into a **single image** (`Dockerfile`); Postgres and OWASP ZAP run as separate containers because they're stateful infra with independent lifecycles.
+> **⚠️ This document describes the LEGACY bundled-image deployment.** As of `2026-05-08`, AAQUA deploys against a host-wide shared-infrastructure tier (Postgres 17 + Nginx + Keycloak) with AAQUA as a tenant. **For the current deployment runbook, use:**
+>
+> - **Spec** — [`docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md`](docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md)
+> - **Plan / runbook** — [`docs/superpowers/plans/2026-05-08-shared-infra-deployment.md`](docs/superpowers/plans/2026-05-08-shared-infra-deployment.md) (Phase 2, Tasks 17–26 are the host-side steps)
+>
+> The content below is preserved for historical reference and matches the (now-removed) bundled `Dockerfile` that ran `nginx + supervisord + node + Playwright` in a single container. The current `Dockerfile` is **backend-only**; the SPA is built and published separately via `scripts/publish-spa.sh`.
+>
+> **Lessons we learned during the shared-infra QA stand-up (apply when re-deploying):**
+> 1. The realm requires PKCE-S256, which needs `crypto.subtle` — only available over **HTTPS** or on `localhost`/`127.0.0.1`. A LAN-IP HTTP deploy will silently break the SPA login flow. Terminate TLS at shared-nginx (self-signed cert is acceptable for internal QA).
+> 2. `KC_HOSTNAME` must be a **bare hostname** (`10.13.1.182`), NOT a URL. Pass full URLs only via `KC_PUBLIC_BASE_URL` for realm-template substitution.
+> 3. Drop `--optimized` from Keycloak's command — the upstream image is built for H2; `start --optimized` ignores `KC_DB=postgres` and crashes.
+> 4. Healthcheck Alpine containers via `127.0.0.1`, not `localhost` (musl resolves to `::1` first; nginx isn't IPv6-bound).
+> 5. Shell scripts must have `+x` set in the git index (`git update-index --chmod=+x`); committing from Windows defaults to `100644` and the official nginx image silently skips non-executable `.envsh` files.
+> 6. `.gitattributes` pins shell scripts to LF — without it, Windows checkouts produce CRLF that breaks `set -o pipefail` on Linux.
+>
+> Full deployment-time discoveries are recorded in `CLAUDE.md` under "Production deployment — shared-infra model".
 
 > For local developer setup (running Vite + Express directly on the host), see `LOCAL_SETUP.md`.
 

@@ -29,6 +29,16 @@ This is the AAQUA platform: a React + Vite frontend that drives an Express backe
 - **Backend** (`server/`): Express app. `server/index.js` is a 2000-line monolith holding most legacy endpoints (`/api/convert`, `/api/generate-framework`, `/api/browser/*`, `/api/scrape`, `/api/analyze-localization`, `/api/analyze-accessibility`, `/api/run-tests*`). At the bottom it mounts the modular **AI Secure Engine** routers under `/api/security/*`.
 - **Vite proxy** (`vite.config.js`): `/api` → `localhost:3001`, `/llm-api` → `https://llm.lab.aaseya.com` (CORS bypass for browser-side LLM calls).
 
+### Path-prefix routing — `import.meta.env.BASE_URL` is load-bearing
+In dev the SPA serves at `/`; in shared-infra QA/prod it serves under `/aaqua/`. The split is driven by Vite's `base` config, which is set from the `VITE_BASE_PATH` build-arg (`vite.config.js` line 5). Five places downstream depend on `import.meta.env.BASE_URL` to construct correct URLs:
+- `src/App.jsx` — `<Router basename={BASE_URL.replace(/\/$/, '')}>` so React Router strips the prefix on route match.
+- `src/auth/oidcConfig.js` — `redirect_uri = ${origin}${BASE_URL}auth/callback` (without the prefix it collides with shared-Keycloak's `/auth/*` route).
+- `src/utils/apiClient.js` — prepends `${API_PREFIX}` to every fetch path.
+- `src/utils/llmClient.js` — prefixes the `/llm-api` rewrite.
+- `Dockerfile` and `scripts/publish-spa.sh` — pass `VITE_BASE_PATH` as build-arg.
+
+Hardcoded `window.location.href = '/foo'`-style paths bypass React Router's basename and 404 in QA. Always use `<Link to="...">` or `useNavigate()`.
+
 ### LLM client — Gemini-shaped wrapper around an OpenAI-compatible endpoint
 There are **two near-identical `LocalLLM` classes**: `src/utils/llmClient.js` (browser, rewrites the endpoint to `/llm-api`) and `server/utils/llmClient.js` (server-side, calls the URL directly). Both expose a Gemini-shaped API (`getGenerativeModel({ model }).generateContent(prompt).response.text()`) but POST to an OpenAI-compatible `/chat/completions`. That's why services import it as `import { LocalLLM as GoogleGenerativeAI } from ...` — the alias is intentional, callers were originally written against the Gemini SDK. If you change one client, change both.
 
@@ -66,8 +76,30 @@ Boot sequence (bottom of `server/index.js`): `initDatabase()` → `app.listen()`
 ### Frontend layout
 `src/components/common/{Layout,Header,Sidebar}.jsx` provides the chrome; pages render inside `<Layout>`. Styling is per-component inline `<style>` blocks driven by CSS variables (`var(--bg-primary)`, `var(--text-muted)`, etc.) defined in `src/index.css`. There's a `useTheme` hook in `src/hooks/`. No CSS framework, no component library beyond `lucide-react` icons.
 
+## Production deployment — shared-infra model
+
+The committed `docker-compose.yml` is the **AAQUA tenant compose** — only `app` (backend, no nginx) and `zap`. It joins an external docker network `shared-infra_default` (`external: true`) and reads file-mounted secrets from `/opt/shared-infra/secrets/aaqua/`.
+
+The platform tier (Postgres 17, Nginx, Keycloak 24) lives in a separate compose project at `/opt/shared-infra/` on the host. The committed source-of-truth for that stack is `scripts/shared-infra-template/` in this repo; it gets `cp -r`'d to `/opt/shared-infra/` on first deploy. Spec at `docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md`, executable plan at `docs/superpowers/plans/2026-05-08-shared-infra-deployment.md`.
+
+Tenant routing is path-prefix: `/aaqua/` (SPA), `/aaqua/api/` (backend), `/aaqua/llm-api/` (LLM proxy with Authorization-header injection at the shared edge), `/auth/` (shared Keycloak). The backend code itself is unaware of `/aaqua` — shared-nginx strips the prefix before proxying.
+
+### Deployment gotchas (learned the hard way during the QA box stand-up)
+1. **PKCE-S256 needs HTTPS.** Browsers gate `crypto.subtle.digest()` to Secure Contexts (HTTPS or `localhost`). On plain HTTP via a LAN IP (`http://10.13.1.182/aaqua/`), the OIDC sign-in throws `Crypto.subtle is available only in secure contexts` and silently no-ops. Workarounds: ship a self-signed cert + accept the browser warning, or terminate TLS at a real reverse proxy. There's no client-side switch — `oidc-client-ts` mandates S256 for code flow.
+2. **`KC_HOSTNAME` must be a bare hostname** (`10.13.1.182`), NOT a URL (`http://10.13.1.182`). URL form produces malformed `iss` claims (`http://http//...`) on frontchannel endpoints. Keep `KC_PUBLIC_BASE_URL` (full URL with scheme) separate — it's only used by `render-realm.sh` for realm template substitution.
+3. **`KC_PROXY=edge` + `KC_HTTP_RELATIVE_PATH=/auth`** are the right settings for shared-nginx terminating in front of Keycloak, regardless of HTTP vs HTTPS.
+4. **Don't use `start --optimized`** in shared-infra's keycloak command. The upstream image is built for H2; with `--optimized` the runtime ignores `KC_DB=postgres` and tries to use H2 to reach a Postgres URL, crashing with `URL format error; must be jdbc:h2:...`. Plain `start` lets Keycloak auto-rebuild for Postgres at boot (~30 s overhead, one-time).
+5. **Healthcheck Alpine containers via `127.0.0.1`, not `localhost`.** Alpine's musl libc resolves `localhost` to `::1` first; if nginx isn't listening on IPv6 (it isn't, when we ship our own server block), the healthcheck loops on `Connection refused`.
+6. **Shell scripts must have `+x` in the git index.** The official nginx image's entrypoint silently skips non-executable `.envsh` files (`Ignoring <file>, not executable`), then envsubst leaves placeholders unrendered, then nginx emerg-exits on the literal `${VAR}`. Use `git update-index --chmod=+x` from Windows to set the bit.
+7. **`.gitattributes` pins shell scripts to LF.** Without it, Windows commits write CRLF, and on Linux `set -o pipefail\r` fails as "invalid option name". Already shipped at the repo root.
+8. **AAQUA secrets live ONLY at `/opt/shared-infra/secrets/aaqua/`.** Two consumers — Node-side LLM calls (Docker secret in app container) and the `/aaqua/llm-api/` proxy at shared-nginx (file mount + envsubst). One file, one location, two readers. Copying secrets between dev and QA is forbidden.
+9. **Realm import is first-boot-only.** After Keycloak's `keycloak` DB has the realm row, edits to `keycloak/aaseya-platform-realm.template.json` are ignored on restart. Changes after first boot must go through the admin console (or a partial-import) and should be exported back to the template if they're meant to persist across rebuilds.
+
+### `docker-compose.security.yml` is local-dev only
+The local-dev compose still exists and runs Postgres + Keycloak + ZAP + Mailpit on the developer's laptop. It is **NOT** the same model as the shared-infra QA stack — it uses the older "two schemas in one DB" Postgres pattern and includes Mailpit (which has no place in QA/prod). The two are intentionally allowed to drift.
+
 ## Conventions worth noting
 
 - ESM throughout (`"type": "module"` in `package.json`). Server uses `import` syntax with `.js` extensions; the few `.cjs` files (`apply_fixes.cjs`, `fix_llm.cjs`) are intentional CommonJS.
 - ESLint rule `no-unused-vars` ignores names matching `^[A-Z_]` — uppercase identifiers can be left unused.
-- The `.env` in this repo contains real secrets (`VITE_LLM_API_KEY`, `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_DB_PASSWORD`). Don't print them in transcripts or PRs, don't commit replacements that would invalidate live values, and treat `.env` as already-configured rather than something to recreate. There is **no JWT secret** in this codebase anymore — token verification uses Keycloak's public JWKS, not a shared HMAC.
+- `.env` is **gitignored and untracked** as of commit `f69bd7e`. The committed `.env.example` is the safe template — never commit a populated `.env`. The repo's local `.env` may contain real secrets (`VITE_LLM_API_KEY`, `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_DB_PASSWORD`); don't print them in transcripts or PRs, don't commit replacements that would invalidate live values. There is **no JWT secret** anywhere — token verification uses Keycloak's public JWKS, not a shared HMAC.

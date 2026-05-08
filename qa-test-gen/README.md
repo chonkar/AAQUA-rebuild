@@ -7,7 +7,8 @@ AAQUA is a React + Express platform that combines a suite of AI-driven QA tools 
 | If you want to… | Read |
 |---|---|
 | Run the stack on your laptop | [`LOCAL_SETUP.md`](LOCAL_SETUP.md) |
-| Deploy to a QA / staging server | [`DEPLOYMENT.md`](DEPLOYMENT.md) |
+| Deploy to a QA / staging server (shared-infra model) | [`DEPLOYMENT.md`](DEPLOYMENT.md) and the executable plan at [`docs/superpowers/plans/2026-05-08-shared-infra-deployment.md`](docs/superpowers/plans/2026-05-08-shared-infra-deployment.md) |
+| Understand the deployment design | [`docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md`](docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md) |
 | Understand the AI Secure Engine subsystem (`/api/security/*`) | [`SECURITY_ENGINE_README.md`](SECURITY_ENGINE_README.md) |
 | Understand the architecture and codebase conventions | [`CLAUDE.md`](CLAUDE.md) |
 
@@ -38,9 +39,10 @@ Then open http://localhost:5173. See [`LOCAL_SETUP.md`](LOCAL_SETUP.md) for the 
 
 | File | Purpose | Use for |
 |---|---|---|
-| `docker-compose.security.yml` | Local dev infra: Postgres + Keycloak + ZAP + Mailpit | `npm run dev` / `npm run server` workflow |
-| `docker-compose.security.prod.yml` | Prod overlay (Keycloak `start --optimized`, hostname pinned, no Mailpit, ZAP gated behind a profile) | Composed alongside `docker-compose.yml` for QA/prod |
-| `docker-compose.yml` | Full bundled image (`app` = nginx + Express + Playwright via supervisord) | QA / prod deployment |
+| `docker-compose.security.yml` | Local dev infra: Postgres + Keycloak + ZAP + Mailpit, on the developer's laptop | `npm run dev` / `npm run server` workflow |
+| `docker-compose.security.prod.yml` | Legacy prod overlay (older bundled-image deployment model) | Not used by the current shared-infra deployment |
+| `docker-compose.yml` | **AAQUA tenant compose** — `app` (backend-only, no in-image nginx) + `zap`. Joins external `shared-infra_default` network. | QA/prod, alongside the shared-infra stack at `/opt/shared-infra/` |
+| `scripts/shared-infra-template/docker-compose.yml` | **Shared infrastructure stack** — Postgres 17 + Keycloak 24 + Nginx 1.27, hosting one or many tenants by path-prefix routing. Lives at `/opt/shared-infra/` on the QA host. | One per host; AAQUA is currently the first/only tenant. |
 
 ## License
 
