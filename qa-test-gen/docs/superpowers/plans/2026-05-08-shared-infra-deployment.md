@@ -1368,9 +1368,9 @@ chmod +x /opt/shared-infra/scripts/*.sh \
 
 ## Task 20: Configure `/opt/shared-infra/.env` and the postgres superuser secret
 
-- [ ] **Step 1: Generate passwords and write `.env` in one shot via heredoc.**
+- [ ] **Step 1: Generate passwords and write `.env` via grouped `echo` lines.**
 
-The heredoc form is more robust than `sed -i` — it sidesteps shell-variable scoping issues and special characters in base64 output (`+`, `=`, `/`).
+This form is more paste-friendly than a heredoc — heredocs require the closing `EOF` at column 0 (no leading whitespace), which terminal copy-paste often violates silently.
 
 ```bash
 cd /opt/shared-infra
@@ -1379,15 +1379,21 @@ KC_ADMIN_PW=$(openssl rand -base64 32)
 KC_DB_PW=$(openssl rand -base64 24)
 AAQUA_DB_PW=$(openssl rand -base64 24)
 
-cat > .env <<EOF
-KEYCLOAK_ADMIN_USER=superadmin
-KEYCLOAK_ADMIN_PASSWORD=$KC_ADMIN_PW
-KEYCLOAK_DB_PASSWORD=$KC_DB_PW
-AAQUA_DB_PASSWORD=$AAQUA_DB_PW
-KC_PUBLIC_BASE_URL=http://10.13.1.182
-EOF
+{
+  echo "KEYCLOAK_ADMIN_USER=superadmin"
+  echo "KEYCLOAK_ADMIN_PASSWORD=$KC_ADMIN_PW"
+  echo "KEYCLOAK_DB_PASSWORD=$KC_DB_PW"
+  echo "AAQUA_DB_PASSWORD=$AAQUA_DB_PW"
+  echo "KC_PUBLIC_BASE_URL=http://10.13.1.182"
+} > .env
 chmod 600 .env
 ```
+
+Verify:
+```bash
+cat .env
+```
+Should print 5 lines, every value populated (none empty).
 
 - [ ] **Step 2: Generate the postgres superuser secret.**
 
