@@ -42,6 +42,7 @@ verify_proj_extracted/
 
 # ─── Tooling / debug noise ───────────────────────────────
 .claude/
+.worktrees/
 bash.exe.stackdump
 *.zip
 
