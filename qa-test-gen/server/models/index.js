@@ -1,23 +1,16 @@
 import sequelize from '../db.js';
-import User from './User.js';
 import Project from './Project.js';
 import Scan from './Scan.js';
 import Vulnerability from './Vulnerability.js';
 import GovernanceMetric from './GovernanceMetric.js';
 
 // ─── Associations ────────────────────────────────────────
-
-// User → Projects (one-to-many)
-User.hasMany(Project, { foreignKey: 'owner_id', as: 'projects' });
-Project.belongsTo(User, { foreignKey: 'owner_id', as: 'owner' });
+// User identity is owned by Keycloak; `owner_id` and `initiated_by` store the
+// Keycloak `sub` UUID directly, with no FK to a local users table.
 
 // Project → Scans (one-to-many)
 Project.hasMany(Scan, { foreignKey: 'project_id', as: 'scans' });
 Scan.belongsTo(Project, { foreignKey: 'project_id', as: 'project' });
-
-// User → Scans (initiator)
-User.hasMany(Scan, { foreignKey: 'initiated_by', as: 'initiatedScans' });
-Scan.belongsTo(User, { foreignKey: 'initiated_by', as: 'initiator' });
 
 // Scan → Vulnerabilities (one-to-many)
 Scan.hasMany(Vulnerability, { foreignKey: 'scan_id', as: 'vulnerabilities' });
@@ -55,7 +48,6 @@ async function initDatabase() {
 
 export {
     sequelize,
-    User,
     Project,
     Scan,
     Vulnerability,

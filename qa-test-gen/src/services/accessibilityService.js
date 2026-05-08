@@ -4,7 +4,10 @@ export const launchBrowser = async (url) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
     });
-    if (!response.ok) throw new Error('Failed to launch browser');
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.details || err.error || `Browser launch failed (HTTP ${response.status})`);
+    }
     return response.json();
 };
 

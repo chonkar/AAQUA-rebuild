@@ -1,9 +1,15 @@
 import React from 'react';
-import { Sparkles, FileJson, ShieldCheck, Sun, Moon } from 'lucide-react';
+import { Sparkles, ShieldCheck, Sun, Moon, LogIn, LogOut, User as UserIcon } from 'lucide-react';
+import { useAuth } from 'react-oidc-context';
 import { useTheme } from '../../hooks/useTheme';
 
 const Header = () => {
   const { theme, toggleTheme } = useTheme();
+  const auth = useAuth();
+  const email = auth.user?.profile?.email;
+
+  const handleSignIn = () => auth.signinRedirect();
+  const handleSignOut = () => auth.signoutRedirect();
 
   return (
     <header className="app-header">
@@ -19,7 +25,6 @@ const Header = () => {
         </div>
 
         <nav className="nav-links">
-          {/* <a href="#" className="nav-item active">Generator</a> */}
           <button className="theme-toggle" onClick={toggleTheme} title="Toggle Theme">
             {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
           </button>
@@ -28,6 +33,21 @@ const Header = () => {
             <ShieldCheck size={16} color="#10b981" />
             <span className="status-text">API Secure</span>
           </div>
+
+          {auth.isAuthenticated ? (
+            <div className="user-menu">
+              <span className="user-email" title={email}>
+                <UserIcon size={14} /> {email}
+              </span>
+              <button className="auth-btn" onClick={handleSignOut} title="Sign Out">
+                <LogOut size={16} /> <span className="auth-btn-label">Sign Out</span>
+              </button>
+            </div>
+          ) : !auth.isLoading && (
+            <button className="auth-btn primary" onClick={handleSignIn} title="Sign In">
+              <LogIn size={16} /> <span className="auth-btn-label">Sign In</span>
+            </button>
+          )}
         </nav>
       </div>
 
@@ -125,12 +145,60 @@ const Header = () => {
           border: 1px solid var(--border-color);
         }
 
+        .user-menu {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .user-email {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          font-size: 0.8rem;
+          color: var(--text-secondary);
+          background: var(--bg-primary);
+          padding: 0.25rem 0.6rem;
+          border-radius: 99px;
+          border: 1px solid var(--border-color);
+          max-width: 200px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .auth-btn {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          background: var(--bg-tertiary);
+          border: 1px solid var(--border-color);
+          color: var(--text-secondary);
+          padding: 0.35rem 0.75rem;
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          font-size: 0.85rem;
+          transition: all 0.2s;
+        }
+        .auth-btn:hover {
+          color: var(--text-primary);
+          border-color: var(--accent-primary);
+        }
+        .auth-btn.primary {
+          background: var(--accent-primary);
+          color: #fff;
+          border-color: var(--accent-primary);
+        }
+        .auth-btn.primary:hover {
+          opacity: 0.9;
+        }
+
         /* Responsive Adjustments */
         @media (max-width: 768px) {
            .full-title { display: none; }
            .status-text { display: none; }
            .header-content { padding: 0 1rem; }
            .app-title { font-size: 1.25rem; }
+           .user-email { display: none; }
+           .auth-btn-label { display: none; }
         }
       `}</style>
     </header>

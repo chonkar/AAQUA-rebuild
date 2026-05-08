@@ -12,7 +12,6 @@ const require = createRequire(import.meta.url);
 
 // ─── AI Secure Engine imports ────────────────────────────
 import { initDatabase } from './models/index.js';
-import authRoutes from './routes/authRoutes.js';
 import projectRoutes from './routes/projectRoutes.js';
 import scanRoutes from './routes/scanRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
@@ -2068,7 +2067,8 @@ app.post('/api/retry-tests/:runId', (req, res) => {
 });
 
 // ─── AI Secure Engine: Mount security routes ────────────
-app.use('/api/security/auth', authRoutes);
+// Authentication is owned by Keycloak; no /api/security/auth endpoints — clients
+// obtain tokens via the OIDC code+PKCE flow against the realm directly.
 app.use('/api/security/projects', securityRateLimiter, projectRoutes);
 app.use('/api/security/scan', securityRateLimiter, scanRoutes);
 app.use('/api/security/dashboard', securityRateLimiter, dashboardRoutes);

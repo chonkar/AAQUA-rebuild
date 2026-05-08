@@ -17,6 +17,11 @@ const sequelize = new Sequelize(DATABASE_URL, {
         underscored: true,   // snake_case column names
         timestamps: true,     // createdAt, updatedAt
         freezeTableName: true,
+        schema: 'public',     // pin app tables to public; keycloak schema is off-limits
+    },
+    dialectOptions: {
+        // Lock the search_path so sync({ alter: true }) cannot reach the keycloak schema.
+        options: '-c search_path=public',
     },
 });
 
