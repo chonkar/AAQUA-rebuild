@@ -83,7 +83,10 @@ services:
     tmpfs:
       - /etc/nginx/tenants.d
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      # Use 127.0.0.1 not localhost: Alpine's libc resolves localhost to ::1 (IPv6)
+      # first, but nginx only binds IPv4 (the upstream image's IPv6 entrypoint
+      # script keys on /etc/nginx/conf.d/default.conf which we don't ship).
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
