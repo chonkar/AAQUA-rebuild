@@ -5,7 +5,8 @@ export class LocalLLM {
 
         // Bypass CORS in browser explicitly using Vite proxy
         if (typeof window !== 'undefined' && this.endpoint.includes('llm.lab.aaseya.com')) {
-            this.endpoint = this.endpoint.replace('https://llm.lab.aaseya.com', '/llm-api');
+            const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+            this.endpoint = this.endpoint.replace('https://llm.lab.aaseya.com', `${BASE}/llm-api`);
         }
     }
 
