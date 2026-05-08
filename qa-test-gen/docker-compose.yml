@@ -1,95 +1,54 @@
-# AAQUA full-stack deployment.
-#
-# Services
-#   app       — single bundled image (nginx + Express + Playwright). nginx on
-#               :80 serves the SPA, proxies /api → loopback :3001, /llm-api →
-#               https://llm.lab.aaseya.com (Authorization injected from secret).
-#   postgres  — Postgres 16 (data persisted in postgres_data volume).
-#               Hosts two schemas: `public` (app) and `keycloak` (IAM).
-#   keycloak  — Keycloak 24 IAM, OIDC provider for the SPA + backend.
-#   zap       — OWASP ZAP daemon.
-#
-# Host port map (only externally needed ports are published):
-#   80   → app       (single public entrypoint for end users)
-#   8082 → keycloak  (Sign-In flow redirects users here; firewall to your
-#                     network unless you front it with a reverse proxy)
-#   5442 → postgres  (tooling only — pgAdmin / psql)
-#   8040 → zap       (tooling only — ZAP UI)
+# AAQUA tenant compose — only the app backend and ZAP. Postgres, Keycloak,
+# and the public-facing nginx live in /opt/shared-infra. This file joins
+# the shared docker network as `external: true`.
 #
 # Bring up:    docker compose up -d --build
-# Tear down:   docker compose down       (add -v to wipe the DB volume)
+# Update:      git pull && ./scripts/publish-spa.sh && docker compose up -d --build app
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: aaqua-postgres
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE_PATH: /aaqua/
+        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://10.13.1.182/auth}
+        VITE_KEYCLOAK_REALM: aaseya-platform
+        VITE_KEYCLOAK_CLIENT_ID: aaqua-frontend
+    container_name: aaqua-app
+    init: true                # tini-equivalent signal forwarding (replaces in-image tini)
     environment:
-      POSTGRES_USER: aaqua
-      POSTGRES_DB: aaqua_security
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-      # Surfaced from the deploy `.env` so the init script can provision the
-      # `keycloak_user` role with this password on first boot.
-      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: shared-postgres
+      DB_PORT: 5432
+      DB_USER: aaqua_app
+      DB_NAME: aaqua_security
+      DB_LOGGING: "false"
+      ZAP_API_URL: http://aaqua-zap:8080
+      ZAP_API_KEY: ""
+      VITE_LLM_ENDPOINT: https://llm.lab.aaseya.com/v1
+      VITE_LLM_MODEL: gpt-oss-20b
+      KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-http://10.13.1.182/auth/realms/aaseya-platform}
+      KEYCLOAK_AUDIENCE: aaqua-frontend
+      JIRA_ENABLED: "false"
+      ALLOW_PRIVATE_SCAN: "false"
     secrets:
+      - llm_api_key
       - db_password
-    ports:
-      - "5442:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      # Provisions the `keycloak` schema + role on a fresh volume.
-      # Re-run manually after volume already exists:
-      #   docker exec -e KEYCLOAK_DB_PASSWORD="$(cat secrets/keycloak_db_password.txt)" \
-      #     aaqua-postgres bash /docker-entrypoint-initdb.d/01-keycloak-schema.sh
-      - ./keycloak/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aaqua -d aaqua_security"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    networks: [aaqua-net]
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:24.0
-    container_name: aaqua-keycloak
-    # Production: `start --optimized` enforces hostname + HTTPS expectations.
-    # `start-dev` is intentionally NOT used here — see docker-compose.security.prod.yml
-    # for the full prod overlay if you front this with a reverse proxy.
-    command: ["start", "--import-realm", "--optimized"]
-    # Keycloak does not natively translate `*_FILE` env vars (unlike the
-    # Postgres image), so passwords come from compose-substituted `.env` values.
-    # Keep the deploy `.env` chmod 600 alongside the secrets/ directory.
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/aaqua_security
-      KC_DB_SCHEMA: keycloak
-      KC_DB_USERNAME: keycloak_user
-      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-superadmin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
-      # Public hostname end users hit. Override at deploy time, e.g.
-      # `KC_HOSTNAME=https://auth.aaseya.com docker compose up`.
-      KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:8082}
-      KC_HOSTNAME_STRICT: ${KC_HOSTNAME_STRICT:-false}
-      KC_HOSTNAME_STRICT_HTTPS: ${KC_HOSTNAME_STRICT_HTTPS:-false}
-      KC_HTTP_ENABLED: "true"
-      KC_PROXY: ${KC_PROXY:-none}
-      KC_HEALTH_ENABLED: "true"
-    volumes:
-      - ./keycloak/aaseya-platform-realm.json:/opt/keycloak/data/import/aaseya-platform-realm.json:ro
-    ports:
-      - "8082:8080"
+      - jira_token
     depends_on:
-      postgres:
+      zap:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 90s
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/security/zap/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
-    networks: [aaqua-net]
+    networks:
+      - shared-infra_default
 
   zap:
     image: ghcr.io/zaproxy/zaproxy:stable
@@ -100,8 +59,6 @@ services:
       -config api.addrs.addr.name=.*
       -config api.addrs.addr.regex=true
       -config connection.timeoutInSecs=120
-    ports:
-      - "8040:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/JSON/core/view/version/"]
       interval: 30s
@@ -113,69 +70,17 @@ services:
       resources:
         limits:
           memory: 2G
-    networks: [aaqua-net]
-
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: aaqua-app
-    ports:
-      - "80:80"
-    environment:
-      NODE_ENV: production
-      PORT: 3001
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: aaqua
-      DB_NAME: aaqua_security
-      DB_LOGGING: "false"
-      ZAP_API_URL: http://zap:8080
-      ZAP_API_KEY: ""
-      VITE_LLM_ENDPOINT: https://llm.lab.aaseya.com/v1
-      VITE_LLM_MODEL: gpt-oss-20b
-      # Backend verifies Keycloak tokens against this realm's JWKS.
-      # Use the public hostname end users hit (must match `iss` in the token).
-      KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-http://localhost:8082/realms/aaseya-platform}
-      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-aaqua-frontend}
-      # Frontend OIDC config (baked into the SPA bundle at build time).
-      VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://localhost:8082}
-      VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-aaseya-platform}
-      VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID:-aaqua-frontend}
-      JIRA_ENABLED: "false"
-      ALLOW_PRIVATE_SCAN: "false"
-    secrets:
-      - llm_api_key
-      - db_password
-      - jira_token
-    depends_on:
-      postgres:
-        condition: service_healthy
-      zap:
-        condition: service_healthy
-      keycloak:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/api/security/zap/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    restart: unless-stopped
-    networks: [aaqua-net]
+    networks:
+      - shared-infra_default
 
 networks:
-  aaqua-net:
-    driver: bridge
-
-volumes:
-  postgres_data:
-    driver: local
+  shared-infra_default:
+    external: true
 
 secrets:
   llm_api_key:
-    file: ./secrets/llm_api_key.txt
+    file: /opt/shared-infra/secrets/aaqua/llm_api_key.txt
   db_password:
-    file: ./secrets/db_password.txt
+    file: /opt/shared-infra/secrets/aaqua/db_password.txt
   jira_token:
     file: ./secrets/jira_token.txt
