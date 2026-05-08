@@ -1368,29 +1368,36 @@ chmod +x /opt/shared-infra/scripts/*.sh \
 
 ## Task 20: Configure `/opt/shared-infra/.env` and the postgres superuser secret
 
-- [ ] **Step 1: Copy and edit `.env`:**
+- [ ] **Step 1: Generate passwords and write `.env` in one shot via heredoc.**
+
+The heredoc form is more robust than `sed -i` — it sidesteps shell-variable scoping issues and special characters in base64 output (`+`, `=`, `/`).
 
 ```bash
 cd /opt/shared-infra
-cp .env.example .env
-chmod 600 .env
-```
 
-- [ ] **Step 2: Generate strong passwords and put them in `.env`:**
-
-```bash
 KC_ADMIN_PW=$(openssl rand -base64 32)
 KC_DB_PW=$(openssl rand -base64 24)
 AAQUA_DB_PW=$(openssl rand -base64 24)
 
-sed -i "s|KEYCLOAK_ADMIN_PASSWORD=.*|KEYCLOAK_ADMIN_PASSWORD=$KC_ADMIN_PW|" .env
-sed -i "s|KEYCLOAK_DB_PASSWORD=.*|KEYCLOAK_DB_PASSWORD=$KC_DB_PW|"           .env
-sed -i "s|AAQUA_DB_PASSWORD=.*|AAQUA_DB_PASSWORD=$AAQUA_DB_PW|"              .env
+cat > .env <<EOF
+KEYCLOAK_ADMIN_USER=superadmin
+KEYCLOAK_ADMIN_PASSWORD=$KC_ADMIN_PW
+KEYCLOAK_DB_PASSWORD=$KC_DB_PW
+AAQUA_DB_PASSWORD=$AAQUA_DB_PW
+KC_PUBLIC_BASE_URL=http://10.13.1.182
+EOF
+chmod 600 .env
 ```
 
-(If `sed -i` syntax differs on this Ubuntu — unlikely — open `.env` in `$EDITOR` and replace the three placeholder values manually.)
+- [ ] **Step 2: Generate the postgres superuser secret.**
 
-- [ ] **Step 3: Verify .env has no `CHANGE_ME_*` placeholders left:**
+```bash
+mkdir -p /opt/shared-infra/secrets
+openssl rand -base64 24 > /opt/shared-infra/secrets/postgres_super_password.txt
+chmod 600 /opt/shared-infra/secrets/postgres_super_password.txt
+```
+
+- [ ] **Step 3: Verify `.env` has real values (no placeholders left).**
 
 ```bash
 grep CHANGE_ME .env && echo "FIX: still has placeholders" || echo "OK"
@@ -1398,12 +1405,14 @@ grep CHANGE_ME .env && echo "FIX: still has placeholders" || echo "OK"
 
 Expected: `OK`.
 
-- [ ] **Step 4: Generate the postgres superuser secret:**
+- [ ] **Step 4: Save the admin password somewhere outside `.env`** (you need it for the Keycloak admin console in Task 25; `.env` only lives on the server).
 
 ```bash
-openssl rand -base64 24 > /opt/shared-infra/secrets/postgres_super_password.txt
-chmod 600 /opt/shared-infra/secrets/postgres_super_password.txt
+echo "Save this — Keycloak admin (master realm) password:"
+grep KEYCLOAK_ADMIN_PASSWORD .env
 ```
+
+Copy the value into your password manager / secret store now. Do NOT paste it into chat or commit it anywhere.
 
 ---
 
