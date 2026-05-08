@@ -1,0 +1,98 @@
+# Shared infrastructure tier on host 10.13.1.182.
+# - postgres-17:    multi-tenant cluster, INTERNAL ONLY (5443 = tooling only)
+# - keycloak:       multi-realm IAM, INTERNAL ONLY (reached via shared-nginx)
+# - nginx:          public edge on :80 (later :443), routes path-prefix per tenant
+#
+# Bring up:    docker compose up -d
+# Tear down:   docker compose down       (-v also wipes Postgres + Keycloak data)
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: shared-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_super_password
+      POSTGRES_DB: postgres
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set in .env}
+      AAQUA_DB_PASSWORD:    ${AAQUA_DB_PASSWORD:?set in .env}
+    secrets:
+      - postgres_super_password
+    ports:
+      - "5443:5432"            # tooling only — firewall to LAN/VPN
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: shared-keycloak
+    command: ["start", "--import-realm", "--optimized"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak_user
+      KC_DB_PASSWORD:        ${KEYCLOAK_DB_PASSWORD:?set in .env}
+      KEYCLOAK_ADMIN:        ${KEYCLOAK_ADMIN_USER:-superadmin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set in .env}
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME: ${KC_PUBLIC_BASE_URL:-http://10.13.1.182}
+      KC_PROXY: edge
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./keycloak/realms:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: shared-nginx
+    ports:
+      - "80:80"
+      # - "443:443"           # uncomment when TLS lands (out-of-scope here)
+    environment:
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx/tenants.d
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/conf.d.templates:/etc/nginx/templates:ro
+      - ./nginx/sites:/var/www:ro
+      - ./secrets:/run/shared-secrets:ro
+      - ./nginx/10-load-tenant-secrets.envsh:/docker-entrypoint.d/10-load-tenant-secrets.envsh:ro
+    tmpfs:
+      - /etc/nginx/tenants.d
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  default:
+    name: shared-infra_default
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+
+secrets:
+  postgres_super_password:
+    file: ./secrets/postgres_super_password.txt
