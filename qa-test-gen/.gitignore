@@ -1,4 +1,4 @@
-# Logs
+# ─── Logs ────────────────────────────────────────────────
 logs
 *.log
 npm-debug.log*
@@ -7,12 +7,13 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# ─── Build outputs / deps ────────────────────────────────
 node_modules
 dist
 dist-ssr
 *.local
 
-# Editor directories and files
+# ─── Editor / OS noise ───────────────────────────────────
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -22,3 +23,36 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ─── Secrets ─────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+secrets/*.txt
+!secrets/*.example
+
+# ─── Runtime artifacts ───────────────────────────────────
+temp_uploads/
+temp_extract/
+temp_output/
+temp_test/
+temp_runner_uploads/
+node_test_extract/
+verify_proj_extracted/
+
+# ─── Tooling / debug noise ───────────────────────────────
+.claude/
+bash.exe.stackdump
+*.zip
+
+# ─── Ad-hoc debug scripts at repo root ───────────────────
+# (kept locally, not committed; CLAUDE.md acknowledges these as ephemeral)
+debug_llm.js
+test_request.js
+test-llm-full.js
+tmp-test-llm.js
+test_payload.json
+apply_fixes.cjs
+fix_llm.cjs
+error_log.txt
+result_log.txt
