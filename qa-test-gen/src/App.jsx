@@ -23,7 +23,7 @@ const adminOnly = (el) => <ProtectedRoute requireRoles={['admin']}>{el}</Protect
 function App() {
   return (
     <AuthProvider {...oidcConfig}>
-      <Router>
+      <Router basename={import.meta.env.BASE_URL.replace(/\/$/, '') || undefined}>
         <Layout>
           <Routes>
             <Route path="/" element={<Home />} />
