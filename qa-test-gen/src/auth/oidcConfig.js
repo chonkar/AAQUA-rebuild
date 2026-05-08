@@ -9,11 +9,13 @@ if (!KC_URL || !KC_REALM || !KC_CLIENT_ID) {
         'Login will fail until these are set in .env.');
 }
 
+const BASE = import.meta.env.BASE_URL;       // '/' in dev, '/aaqua/' in QA
+
 export const oidcConfig = {
     authority: `${KC_URL}/realms/${KC_REALM}`,
     client_id: KC_CLIENT_ID,
-    redirect_uri: `${window.location.origin}/auth/callback`,
-    post_logout_redirect_uri: window.location.origin + '/',
+    redirect_uri: `${window.location.origin}${BASE}auth/callback`,
+    post_logout_redirect_uri: `${window.location.origin}${BASE}`,
     response_type: 'code',
     scope: 'openid profile email',
     automaticSilentRenew: true,
