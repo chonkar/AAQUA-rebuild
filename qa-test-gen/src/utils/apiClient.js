@@ -5,10 +5,12 @@
  *   const api = createApiClient(() => auth.user?.access_token);
  *   const data = await api.get('/api/security/projects');
  */
+const API_PREFIX = import.meta.env.BASE_URL.replace(/\/$/, '');   // '' in dev, '/aaqua' in QA
+
 export function createApiClient(getToken) {
     async function request(path, { method = 'GET', body, headers = {} } = {}) {
         const token = typeof getToken === 'function' ? getToken() : getToken;
-        const res = await fetch(path, {
+        const res = await fetch(`${API_PREFIX}${path}`, {
             method,
             headers: {
                 'Content-Type': 'application/json',
