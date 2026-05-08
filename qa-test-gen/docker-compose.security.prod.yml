@@ -1,0 +1,48 @@
+# Production overlay — apply on top of docker-compose.security.yml.
+#
+# Usage:
+#   docker compose \
+#     -f docker-compose.security.yml \
+#     -f docker-compose.security.prod.yml \
+#     up -d
+#
+# Pre-requisites for production:
+#   1. Set strong values in .env: KEYCLOAK_ADMIN_PASSWORD, KEYCLOAK_DB_PASSWORD,
+#      KEYCLOAK_HOSTNAME, POSTGRES_PASSWORD.
+#   2. Terminate TLS at a reverse proxy (nginx, Traefik, ALB) in front of Keycloak.
+#   3. Build the optimized server image once (faster boot, no per-start build):
+#        docker compose -f docker-compose.security.yml run --rm --no-deps \
+#          --entrypoint /opt/keycloak/bin/kc.sh keycloak build --db=postgres
+#   4. Backups: snapshot the `postgres_data` volume on a schedule.
+
+services:
+  postgres:
+    environment:
+      # Real password sourced from secret manager / encrypted .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    # Drop public host port mapping in production — only the internal network reaches Postgres.
+    ports: []
+
+  keycloak:
+    # Production server: enforces hostname, requires explicit HTTPS or a known reverse proxy.
+    command: ["start", "--optimized"]
+    environment:
+      # Hostname Keycloak advertises (set in .env, e.g. https://auth.aaseya.com).
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME}
+      KC_HOSTNAME_STRICT: "true"
+      KC_HOSTNAME_STRICT_HTTPS: "true"
+      # Trust the X-Forwarded-* headers from the reverse proxy.
+      KC_PROXY: edge
+      # Disable the dev-mode HTTP listener; TLS is terminated upstream.
+      KC_HTTP_ENABLED: "false"
+      # Caches survive restarts and replicate across nodes when scaled.
+      KC_CACHE: ispn
+      KC_CACHE_STACK: tcp
+      KC_LOG_LEVEL: INFO
+    # No host port — proxy reaches Keycloak via the internal `aaqua-net` network.
+    ports: []
+
+  zap:
+    # ZAP is dev/CI tooling, not part of the production user-facing surface.
+    profiles: ["dev-only"]

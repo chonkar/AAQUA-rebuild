@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  # ─── PostgreSQL Database ────────────────────────────────
+  # ─── PostgreSQL Database (shared by app + Keycloak via separate schemas) ───
   postgres:
     image: postgres:16-alpine
     container_name: aaqua-postgres
@@ -10,16 +8,81 @@ services:
       POSTGRES_PASSWORD: aaqua
       POSTGRES_DB: aaqua_security
       POSTGRES_HOST_AUTH_METHOD: trust
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-changeme-keycloak-db-pw}
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Provisions `keycloak` schema + `keycloak_user` role on a fresh volume.
+      # For an existing volume, run the script manually (see file header).
+      - ./keycloak/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U aaqua -d aaqua_security" ]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    networks:
+      - aaqua-net
+
+  # ─── Keycloak 24+ (IAM provider) ────────────────────────
+  # Dev mode: HTTP-only, no hostname check, in-memory cache. Suitable for local only.
+  # Production: bring up with the prod overlay:
+  #   docker compose -f docker-compose.security.yml -f docker-compose.security.prod.yml up -d
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: aaqua-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/aaqua_security
+      KC_DB_SCHEMA: keycloak
+      KC_DB_USERNAME: keycloak_user
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-changeme-keycloak-db-pw}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-superadmin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-changeme-superadmin-pw}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      # Host port 8082 (8080 is taken by ZAP, 8081 was occupied on this dev machine).
+      - "8082:8080"
+    volumes:
+      - ./keycloak/aaseya-platform-realm.json:/opt/keycloak/data/import/aaseya-platform-realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Keycloak 24 serves /health/ready on the same HTTP port as the realm.
+    # No `curl` in the official image, so we use a TCP probe via /dev/tcp.
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - aaqua-net
+
+  # ─── Mailpit (local SMTP catcher for Keycloak emails) ──────────
+  # Captures all outbound mail from Keycloak (verify-email, password reset, etc.)
+  # and exposes a web UI to view it. No real delivery — local dev only.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: aaqua-mailpit
+    environment:
+      MP_MAX_MESSAGES: 5000
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "8025:8025"   # Web UI — open http://localhost:8025
+      - "1025:1025"   # SMTP (exposed for host-side debug; Keycloak uses the docker network)
+    volumes:
+      - mailpit_data:/data
+    restart: unless-stopped
+    networks:
+      - aaqua-net
 
   # ─── OWASP ZAP (Daemon Mode) ───────────────────────────
   zap:
@@ -36,12 +99,19 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    # Resource limits to prevent ZAP from consuming too much memory
     deploy:
       resources:
         limits:
           memory: 2G
+    networks:
+      - aaqua-net
 
 volumes:
   postgres_data:
     driver: local
+  mailpit_data:
+    driver: local
+
+networks:
+  aaqua-net:
+    driver: bridge

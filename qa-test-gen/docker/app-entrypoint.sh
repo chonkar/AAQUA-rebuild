@@ -15,8 +15,8 @@ read_secret() {
 LLM_KEY="$(read_secret llm_api_key)"
 [ -n "$LLM_KEY" ] && export VITE_LLM_API_KEY="$LLM_KEY"
 
-JWT="$(read_secret jwt_secret)"
-[ -n "$JWT" ] && export JWT_SECRET="$JWT"
+# Authentication is delegated to Keycloak (see /api/security/* via OIDC); the
+# Node backend verifies tokens against the realm's JWKS and stores no secret.
 
 JIRA="$(read_secret jira_token)"
 [ -n "$JIRA" ] && export JIRA_TOKEN="$JIRA"
