@@ -12,11 +12,13 @@ npm run build          # production build → dist/
 npm run lint           # eslint .
 npm run preview        # preview built bundle
 
-# AI Secure Engine infra (Postgres + OWASP ZAP)
-docker-compose -f docker-compose.security.yml up -d
+# Local infra: Postgres + Keycloak + OWASP ZAP + Mailpit (SMTP catcher)
+docker compose -f docker-compose.security.yml up -d
 ```
 
 There is **no test framework wired up**. The `test_*.js`, `tmp-test-llm.js`, `debug_llm.js`, and `apply_fixes.cjs` files at the repo root are ad-hoc debug scripts run with `node <file>` — not a test suite. Don't claim "tests pass" without something to run.
+
+`npm install` runs a `postinstall` hook (`playwright install chromium`) that fetches the Chromium build matching the pinned Playwright version. It's idempotent — no-op if the binary is already cached. Docker image builds bypass this via `npm ci --ignore-scripts`, since the `mcr.microsoft.com/playwright:v1.58.0-jammy` base image already ships matching browsers at `/ms-playwright`.
 
 ## Architecture
 
@@ -35,10 +37,16 @@ Configuration via `.env`: `VITE_LLM_API_KEY`, `VITE_LLM_ENDPOINT` (default `http
 ### AI Secure Engine subsystem (`/api/security/*`)
 A bolted-on, modular subsystem that does **not** follow the monolith pattern in `server/index.js`. It has its own layered structure under `server/`:
 
-- `models/` — Sequelize models (`User`, `Project`, `Scan`, `Vulnerability`, `GovernanceMetric`) with associations defined in `models/index.js`. Convention: `underscored: true`, `freezeTableName: true`.
-- `routes/` — one router per resource (`authRoutes`, `projectRoutes`, `scanRoutes`, `dashboardRoutes`, `governanceRoutes`).
+- `models/` — Sequelize models (`Project`, `Scan`, `Vulnerability`, `GovernanceMetric`) with associations defined in `models/index.js`. Convention: `underscored: true`, `freezeTableName: true`. **No `User` model** — identity is owned by Keycloak; `Project.owner_id` and `Scan.initiated_by` are plain UUIDs storing the Keycloak `sub` claim.
+- `routes/` — one router per resource (`projectRoutes`, `scanRoutes`, `dashboardRoutes`, `governanceRoutes`). Governance endpoints are gated by `requireRole('admin')`.
 - `services/` — `zapService` (OWASP ZAP REST client), `aiAnalysisService` (LLM-driven vuln triage), `governanceService` (release-gate logic: blocks if Critical+High > 30% of findings), `jiraService`.
-- `middleware/` — `auth.js` (JWT), `rateLimiter.js`, `urlValidator.js` (SSRF guard).
+- `middleware/` — `auth.js` (Keycloak JWT verification via `jose` + JWKS — see "Identity" below), `rateLimiter.js`, `urlValidator.js` (SSRF guard).
+
+### Identity — Keycloak owns auth, Express only verifies tokens
+Authentication is delegated entirely to Keycloak (realm `aaseya-platform`, OIDC code+PKCE flow). `server/middleware/auth.js` verifies inbound `Authorization: Bearer <jwt>` tokens against Keycloak's JWKS using `jose`, sets `req.user = { id, email, name, roles, raw }` from the token claims, and exposes `requireRole(...allowed)` for role gating. There is **no local password store, no `/auth/login` endpoint, no JWT signing key in `.env`** — all of that lives in Keycloak. The frontend uses `react-oidc-context`; tokens flow via `src/utils/apiClient.js`. The `keycloak` schema is isolated from the app's `public` schema; `server/db.js` pins Sequelize's `search_path` to `public` so `sync({ alter: true })` cannot reach Keycloak's tables.
+
+### Local mail — Mailpit (dev only)
+`docker-compose.security.yml` includes a `mailpit` container that catches every email Keycloak sends (verify-email, password reset, etc.) without delivering to a real inbox. SMTP at `mailpit:1025`, web UI at `localhost:8025`. The realm export's `smtpServer` block points at it. **Production uses real SMTP** — configured via the Keycloak admin console (Realm settings → Email), not via the realm JSON. Never include Mailpit in `docker-compose.yml` or `docker-compose.security.prod.yml`.
 
 Boot sequence (bottom of `server/index.js`): `initDatabase()` → `app.listen()`. `initDatabase` runs `sequelize.sync({ alter: true })` so model edits auto-migrate the schema on next start. **DB connection failure is non-fatal** — the server logs a warning and keeps running with security features unavailable; don't add code that assumes the DB is up.
 
@@ -62,4 +70,4 @@ Boot sequence (bottom of `server/index.js`): `initDatabase()` → `app.listen()`
 
 - ESM throughout (`"type": "module"` in `package.json`). Server uses `import` syntax with `.js` extensions; the few `.cjs` files (`apply_fixes.cjs`, `fix_llm.cjs`) are intentional CommonJS.
 - ESLint rule `no-unused-vars` ignores names matching `^[A-Z_]` — uppercase identifiers can be left unused.
-- The `.env` in this repo contains a real LLM API key and JWT secret. Don't print them, don't commit replacements that would invalidate the existing key, and treat `.env` as already-configured rather than something to recreate.
+- The `.env` in this repo contains real secrets (`VITE_LLM_API_KEY`, `KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_DB_PASSWORD`). Don't print them in transcripts or PRs, don't commit replacements that would invalidate live values, and treat `.env` as already-configured rather than something to recreate. There is **no JWT secret** in this codebase anymore — token verification uses Keycloak's public JWKS, not a shared HMAC.
