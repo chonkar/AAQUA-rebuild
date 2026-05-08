@@ -47,7 +47,12 @@ services:
       KEYCLOAK_ADMIN:        ${KEYCLOAK_ADMIN_USER:-superadmin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set in .env}
       KC_HTTP_RELATIVE_PATH: /auth
-      KC_HOSTNAME: ${KC_PUBLIC_BASE_URL:-http://10.13.1.182}
+      # KC_HOSTNAME must be a BARE HOSTNAME (no scheme). If you pass a URL like
+      # `http://10.13.1.182`, Keycloak treats the whole string as the host and
+      # produces malformed issuer URLs like `http://http//10.13.1.182/...` on
+      # frontchannel endpoints (login page, logout). Keep KC_PUBLIC_BASE_URL
+      # (full URL) separate — that one's used by render-realm.sh, not by Keycloak.
+      KC_HOSTNAME: ${KC_HOSTNAME:-10.13.1.182}
       KC_PROXY: edge
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"
