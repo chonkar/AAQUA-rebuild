@@ -13,7 +13,7 @@ const Header = () => {
             <Sparkles size={24} color="#fff" />
           </div>
           <h1 className="app-title">
-            AAQUA <span className="full-title">(Aaseya AI Quality Assurance)</span>
+            AAUQA <span className="full-title">- Aaseya AI quality assuarance</span>
             <span className="beta-tag">BETA</span>
           </h1>
         </div>

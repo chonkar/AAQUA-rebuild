@@ -15,7 +15,8 @@ export class LocalLLM {
                     },
                     body: JSON.stringify({
                         model: model,
-                        messages: [{ role: 'user', content: prompt }]
+                        messages: [{ role: 'user', content: prompt }],
+                        temperature: 0.8
                     })
                 });
 

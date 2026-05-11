@@ -25,7 +25,7 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
         const prompt = `
       You are a Senior QA Test Architect.
       ${historyText}
-      Generate as many comprehensive FUNCTIONAL test cases as necessary (aim for 8-12) for the following NEW requirement:
+      Generate comprehensive FUNCTIONAL test cases for the following NEW requirement. You MUST generate AT LEAST 15 functional test cases. Ensure they are STRICTLY functional test cases without automation specifics:
       "${requirement}"
 
       Cover relevant scenarios from ALL of these Test Types to ensure 100% coverage:

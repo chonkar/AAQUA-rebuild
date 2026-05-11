@@ -1161,8 +1161,13 @@ mvn test
 
 // Launch Interactive Browser
 app.post('/api/browser/launch', async (req, res) => {
-    const { url } = req.body;
+    let { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL required' });
+
+    // Auto-prepend https protocols so Playwright doesn't crash from raw domains like "google.com"
+    if (!/^https?:\/\//i.test(url)) {
+        url = 'https://' + url;
+    }
 
     try {
         if (activeBrowser) {
@@ -1351,12 +1356,14 @@ app.post('/api/analyze-localization', async (req, res) => {
         } else {
             // Standard foreign language prompt: check for English text leaking into non-English pages
             prompt = `
-                You are a Localization QA Expert. Analyze the provided HTML content for a web page that SHOULD be in ${targetLanguage}.
+                You are a highly precise Localization QA Expert. Your sole task is to exhaustively scan the provided HTML for a non-English website and find EVERY piece of English text. The web page SHOULD be fully translated into ${targetLanguage}.
                 
-                Identify any text visible to the user that matches the following criteria:
-                1. Is written in ENGLISH (or any language other than ${targetLanguage}).
-                2. Is NOT a proper noun, brand name, or technical term that stays English globally.
-                3. Appears to be hardcoded or missed by the translation system.
+                You MUST identify EVERY SINGLE INSTANCE of text visible to the user that is leaking in ENGLISH (or any language other than ${targetLanguage}).
+                
+                RULES:
+                1. Only check the visible text content INSIDE the HTML tags. CRITICAL: Do NOT flag HTML tag names, CSS classes, URLs, or code attribute values as English text!
+                2. Explicitly ignore proper nouns, global brand names, and technical product names.
+                3. Do not summarize or be lazy. You must extract every single sentence, button label, or paragraph that failed to translate.
 
                 For each issue found, provide:
                 - "original": The text found.
