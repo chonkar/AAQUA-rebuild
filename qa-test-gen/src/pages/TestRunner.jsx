@@ -1,6 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Clock, FolderOpen, ChevronDown, ChevronRight, Terminal, BarChart3, Download } from 'lucide-react';
-import { runTestsLocal, getRunStatus, retryFailedTests } from '../services/testRunnerService';
+import { runTestsLocal, getRunStatus, retryFailedTests, getRuntimeInfo } from '../services/testRunnerService';
+
+// Sticky preference for the headed/headless toggle. Stored per-user in
+// localStorage so devs who like watching the browser don't have to re-tick
+// the checkbox on every visit. Falls back to false (headless) when unset.
+const HEADED_PREF_KEY = 'aaqua.testrunner.headed';
 
 const STATUS_COLORS = { PASSED: 'var(--success)', FAILED: 'var(--error)', SKIPPED: 'var(--warning)' };
 const STATUS_ICONS = { PASSED: CheckCircle2, FAILED: XCircle, SKIPPED: MinusCircle };
@@ -147,15 +152,38 @@ const TestRunner = () => {
     const [error, setError] = useState(null);
     const [hasRun, setHasRun] = useState(false);
     const [liveResults, setLiveResults] = useState(null);
+    const [hasDisplayServer, setHasDisplayServer] = useState(false);
+    const [headed, setHeaded] = useState(() => {
+        try { return localStorage.getItem(HEADED_PREF_KEY) === 'true'; } catch { return false; }
+    });
     const pollRef = useRef(null);
+    // Cursor lives in a ref because it's loop-internal state — bumping it on
+    // each poll shouldn't trigger React re-renders or invalidate `startPolling`.
+    const logCursorRef = useRef(0);
 
-    // Polling
+    // Persist the headed preference whenever the user toggles it.
+    useEffect(() => {
+        try { localStorage.setItem(HEADED_PREF_KEY, String(headed)); } catch { /* localStorage may be unavailable in some browsers */ }
+    }, [headed]);
+
+    // Fetch runtime info on mount to decide whether to show the headed toggle.
+    // In the deployed container (no DISPLAY env var) we hide the control
+    // entirely rather than offer something that can't work.
+    useEffect(() => {
+        getRuntimeInfo()
+            .then(info => setHasDisplayServer(!!info.hasDisplayServer))
+            .catch(() => setHasDisplayServer(false));
+    }, []);
+
+    // Polling — uses cursor-based delta so each tick only ships new chunks.
     const startPolling = useCallback((rid) => {
         if (pollRef.current) clearInterval(pollRef.current);
+        logCursorRef.current = 0;
         pollRef.current = setInterval(async () => {
             try {
-                const data = await getRunStatus(rid);
-                setLogs(data.logs || '');
+                const data = await getRunStatus(rid, logCursorRef.current);
+                if (data.cursor != null) logCursorRef.current = data.cursor;
+                if (data.logs) setLogs(prev => prev + data.logs);
                 setStatus(data.status);
                 setFramework(data.framework);
                 // Live dashboard data (parsed from partial XML reports)
@@ -183,8 +211,11 @@ const TestRunner = () => {
     const handleRun = async () => {
         if (!projectPath.trim()) return;
         setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
+        logCursorRef.current = 0;
         try {
-            const data = await runTestsLocal(projectPath.trim());
+            // Only forward `headed` when the host advertises a display server.
+            // Sending it from a no-display host would cause Playwright to fail.
+            const data = await runTestsLocal(projectPath.trim(), { headed: hasDisplayServer && headed });
             if (data.error) { setStatus('error'); setError(data.error); setHasRun(true); return; }
             setRunId(data.runId);
             setRetrySourceRunId(data.runId);
@@ -200,6 +231,7 @@ const TestRunner = () => {
         const sourceId = retrySourceRunId || runId;
         if (!sourceId) return;
         setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
+        logCursorRef.current = 0;
         try {
             const data = await retryFailedTests(sourceId);
             if (data.error) { setStatus('error'); setError(data.error); return; }
@@ -309,6 +341,17 @@ const TestRunner = () => {
                         <RotateCcw size={18} />Re-Run Failed
                     </button>
                 </div>
+                {hasDisplayServer && (
+                    <label className="tr-headed-toggle" title="Run Playwright with a visible browser window (local dev only).">
+                        <input
+                            type="checkbox"
+                            checked={headed}
+                            onChange={(e) => setHeaded(e.target.checked)}
+                            disabled={isRunning}
+                        />
+                        <span>Open browser while running tests</span>
+                    </label>
+                )}
                 {framework && <div className="tr-framework-badge">Framework: <strong>{framework.toUpperCase()}</strong></div>}
             </div>
 
@@ -413,6 +456,15 @@ const TestRunner = () => {
           padding: 0.35rem 0.75rem; background: var(--bg-tertiary);
           border-radius: var(--radius-sm); display: inline-block;
         }
+        .tr-headed-toggle {
+          margin-top: 0.75rem; margin-right: 0.75rem;
+          display: inline-flex; align-items: center; gap: 0.5rem;
+          font-size: 0.8rem; color: var(--text-secondary);
+          padding: 0.35rem 0.75rem; background: var(--bg-tertiary);
+          border-radius: var(--radius-sm); cursor: pointer; user-select: none;
+        }
+        .tr-headed-toggle input { cursor: pointer; }
+        .tr-headed-toggle input:disabled { cursor: not-allowed; }
         .btn-retry {
           display: inline-flex; align-items: center; gap: 0.5rem;
           padding: 0.75rem 1.25rem; border-radius: var(--radius-md);

@@ -26,6 +26,10 @@ const SecurityScanner = () => {
     const [activeScan, setActiveScan] = useState(null);
     const [scanResults, setScanResults] = useState(null);
     const [governance, setGovernance] = useState(null);
+    const [scanLogs, setScanLogs] = useState([]);
+    const [logsExpanded, setLogsExpanded] = useState(true);
+    const scanLogCursorRef = useRef(0);
+    const logsEndRef = useRef(null);
 
     // ─── General ─────────────────────────────────────────
     const [error, setError] = useState('');
@@ -95,6 +99,8 @@ const SecurityScanner = () => {
         setScanLoading(true);
         setScanResults(null);
         setGovernance(null);
+        setScanLogs([]);
+        scanLogCursorRef.current = 0;
         try {
             const data = await api.post(`${API}/scan/start`, {
                 project_id: selectedProject.id,
@@ -110,10 +116,17 @@ const SecurityScanner = () => {
 
     const startPolling = (scanId) => {
         if (pollRef.current) clearInterval(pollRef.current);
+        // 2s poll: a little tighter than the original 3s because the log panel
+        // makes lag visible. Still well within the existing infra's request
+        // budget (ZAP scans run for minutes).
         pollRef.current = setInterval(async () => {
             try {
-                const data = await api.get(`${API}/scan/status/${scanId}`);
+                const data = await api.get(`${API}/scan/status/${scanId}?since=${scanLogCursorRef.current}`);
                 setActiveScan(data);
+                if (Array.isArray(data.logs) && data.logs.length > 0) {
+                    setScanLogs(prev => [...prev, ...data.logs]);
+                }
+                if (typeof data.cursor === 'number') scanLogCursorRef.current = data.cursor;
 
                 if (data.status === 'completed' || data.status === 'failed') {
                     clearInterval(pollRef.current);
@@ -137,8 +150,15 @@ const SecurityScanner = () => {
                     }
                 }
             } catch { }
-        }, 3000);
+        }, 2000);
     };
+
+    // Auto-scroll the log panel to the bottom when new lines arrive.
+    useEffect(() => {
+        if (logsExpanded && logsEndRef.current) {
+            logsEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+    }, [scanLogs, logsExpanded]);
 
     const fetchScanResults = async (scanId) => {
         try {
@@ -438,6 +458,23 @@ const SecurityScanner = () => {
                                 <div className="progress-fill" style={{ width: `${activeScan.progress || 5}%` }} />
                             </div>
                             <p className="scan-progress-text">System is currently performing {activeScan.scan_type} analysis on target endpoint.</p>
+                        </div>
+                    )}
+
+                    {/* Scan Log Panel — tail of zapService + executeScan output */}
+                    {scanLogs.length > 0 && (
+                        <div className="scan-log-card">
+                            <div className="scan-log-header" onClick={() => setLogsExpanded(v => !v)}>
+                                {logsExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                <span>Scan logs ({scanLogs.length})</span>
+                                {scanLoading && <span className="scan-log-live">● LIVE</span>}
+                            </div>
+                            {logsExpanded && (
+                                <pre className="scan-log-body">
+                                    {scanLogs.join('\n')}
+                                    <div ref={logsEndRef} />
+                                </pre>
+                            )}
                         </div>
                     )}
 
@@ -964,6 +1001,32 @@ function renderStyles() {
         .progress-bar { height: 6px; background: var(--bg-tertiary); border-radius: 99px; overflow: hidden; }
         .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary)); border-radius: 99px; transition: width 0.5s ease; }
         .scan-progress-text { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; }
+
+        /* Scan Log Panel */
+        .scan-log-card {
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg); margin-bottom: 1.5rem; overflow: hidden;
+        }
+        .scan-log-header {
+            display: flex; align-items: center; gap: 0.5rem;
+            padding: 0.75rem 1rem; cursor: pointer;
+            font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);
+            background: var(--bg-tertiary); user-select: none;
+        }
+        .scan-log-header:hover { color: var(--text-primary); }
+        .scan-log-live {
+            margin-left: auto; font-size: 0.7rem; color: var(--error); font-weight: 700;
+            animation: scanLogPulse 1.2s ease-in-out infinite;
+        }
+        @keyframes scanLogPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .scan-log-body {
+            background: #0d0d14; color: #c4c4c4;
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.78rem; line-height: 1.5;
+            padding: 1rem; margin: 0;
+            max-height: 320px; overflow-y: auto;
+            white-space: pre-wrap; word-break: break-word;
+        }
 
         /* Governance Card */
         .governance-card {

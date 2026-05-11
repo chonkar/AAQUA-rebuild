@@ -19,7 +19,8 @@ AAQUA is a React + Express platform that combines a suite of AI-driven QA tools 
 - **Identity** — Keycloak 24 (OIDC + OAuth2, PKCE), realm `aaseya-platform`. Express verifies tokens against Keycloak's JWKS using `jose`. No local user table.
 - **Database** — PostgreSQL 16, two schemas in one DB (`public` for app data, `keycloak` for IAM data).
 - **Security scanner** — OWASP ZAP daemon, controlled via REST.
-- **Browser automation** — Playwright (used both as an in-process library for accessibility / localization scans and as a subprocess runner for uploaded user test ZIPs).
+- **Browser automation** — Playwright (used both as an in-process library for accessibility / localization scans and as a subprocess runner for uploaded user test ZIPs). Both paths run headless by default; the Test Runner page exposes a per-user "Open browser while running tests" toggle when the host has a display server (`GET /api/runtime-info` gates the UI).
+- **Live scan logs** — ZAP scan and test-run output streams to the UI via cursor-based polling on the existing `*/status/:id` endpoints (`?since=<cursor>` returns the delta). Scan logs persist to a `Scan.logs` DB column so post-mortem viewing of completed scans works without keeping anything in memory.
 - **Local mail** — Mailpit container catches every email Keycloak emits during dev. Production uses real SMTP (configured in the Keycloak admin console).
 
 ## First-time install (3 steps)

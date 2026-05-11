@@ -94,8 +94,10 @@ curl -i http://localhost:3001/api/security/projects
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | POST | `/api/security/scan/start` | any authenticated | Start a scan |
-| GET | `/api/security/scan/status/:scanId` | any authenticated | Poll scan progress |
+| GET | `/api/security/scan/status/:scanId?since=<cursor>` | any authenticated | Poll scan progress + live log tail. `since` is the cursor returned by the previous call; omit (or pass 0) for the full buffer. Response shape: `{ id, scan_type, status, progress, target_url, started_at, completed_at, error_message, logs: string[], cursor: number }`. |
 | GET | `/api/security/scan/results/:scanId` | any authenticated | Get full results |
+
+Log lines accumulate in an in-memory ring buffer (cap 500 lines per scan) and are flushed to the `Scan.logs` TEXT column on each phase transition and on terminal status. The status endpoint serves from the live buffer while the scan runs and falls back to `Scan.logs` for completed/failed scans — so tester reloads and post-mortem reviews show the same log history.
 
 ### Dashboard & Governance
 
@@ -205,7 +207,7 @@ server/
 ├── models/               # ORM models — no User model; identity owned by Keycloak
 │   ├── index.js          # Associations & DB init
 │   ├── Project.js        # owner_id stores Keycloak `sub`
-│   ├── Scan.js           # initiated_by stores Keycloak `sub`
+│   ├── Scan.js           # initiated_by stores Keycloak `sub`; `logs` TEXT holds the run tail
 │   ├── Vulnerability.js
 │   └── GovernanceMetric.js
 ├── routes/               # API route handlers
