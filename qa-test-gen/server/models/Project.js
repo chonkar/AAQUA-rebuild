@@ -31,10 +31,10 @@ const Project = sequelize.define('projects', {
         type: DataTypes.STRING,
         allowNull: true,
     },
+    // Keycloak `sub` claim — stable per-realm user identity.
     owner_id: {
         type: DataTypes.UUID,
         allowNull: false,
-        references: { model: 'users', key: 'id' },
     },
 });
 

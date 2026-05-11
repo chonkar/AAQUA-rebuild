@@ -44,10 +44,16 @@ const Scan = sequelize.define('scans', {
         type: DataTypes.TEXT,
         allowNull: true,
     },
+    // Append-only run log surfaced in the UI. Capped to ~500 newline-separated
+    // lines on the server side before being persisted on phase transitions.
+    logs: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+    },
+    // Keycloak `sub` claim of the user who triggered the scan.
     initiated_by: {
         type: DataTypes.UUID,
         allowNull: true,
-        references: { model: 'users', key: 'id' },
     },
 });
 

@@ -257,81 +257,120 @@ export async function setupZapContext(project) {
 
 // ─── Full Scan Orchestration ─────────────────────────────
 
+// Each orchestrator accepts an optional `onLog(line)` callback so the route
+// layer can capture phase-level events (session create, spider start, alert
+// count) and surface them to the tester via the /status endpoint's log tail.
+// Falls back to console.log when not provided so server logs are unchanged.
+const mkLog = (onLog) => (line) => {
+    if (onLog) onLog(line);
+    else console.log(line);
+};
+
 /**
  * Run a complete baseline scan (spider → passive scan → get alerts)
  */
-export async function runBaselineScan(project, onProgress) {
+export async function runBaselineScan(project, onProgress, onLog) {
+    const log = mkLog(onLog);
     const targetUrl = project.target_url;
+    log(`[ZAP] Baseline scan starting for ${targetUrl}`);
     await newSession(`baseline-${Date.now()}`);
     await setupZapContext(project);
     const spiderId = await startSpider(targetUrl);
-    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p));
+    log(`[ZAP] Spider started: ID=${spiderId}`);
+    await waitForSpider(spiderId, (p) => { log(`[ZAP] Spider progress: ${p}%`); onProgress && onProgress('spidering', p); });
+    log('[ZAP] Spider phase complete; waiting for passive scan to drain');
     await waitForPassiveScan();
-    return getAlerts(targetUrl);
+    const alerts = await getAlerts(targetUrl);
+    log(`[ZAP] Baseline complete: ${alerts.length} alert(s) found`);
+    return alerts;
 }
 
 /**
  * Run a complete active scan (spider → passive → active → get alerts)
  */
-export async function runFullActiveScan(project, onProgress) {
+export async function runFullActiveScan(project, onProgress, onLog) {
+    const log = mkLog(onLog);
     const targetUrl = project.target_url;
+    log(`[ZAP] Active scan starting for ${targetUrl}`);
     await newSession(`active-${Date.now()}`);
     await setupZapContext(project);
     const spiderId = await startSpider(targetUrl);
-    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p * 0.3));
+    log(`[ZAP] Spider started: ID=${spiderId}`);
+    await waitForSpider(spiderId, (p) => { log(`[ZAP] Spider progress: ${p}%`); onProgress && onProgress('spidering', p * 0.3); });
+    log('[ZAP] Spider phase complete; waiting for passive scan to drain');
     await waitForPassiveScan();
     const activeScanId = await startActiveScan(targetUrl);
-    await waitForActiveScan(activeScanId, (p) => onProgress && onProgress('scanning', 30 + p * 0.7));
-    return getAlerts(targetUrl);
+    log(`[ZAP] Active scan started: ID=${activeScanId}`);
+    await waitForActiveScan(activeScanId, (p) => { log(`[ZAP] Active scan progress: ${p}%`); onProgress && onProgress('scanning', 30 + p * 0.7); });
+    const alerts = await getAlerts(targetUrl);
+    log(`[ZAP] Active scan complete: ${alerts.length} alert(s) found`);
+    return alerts;
 }
 
 /**
  * Run an API scan (import OpenAPI spec → spider → active scan → get alerts)
  */
-export async function runApiScan(specUrl, project, onProgress) {
+export async function runApiScan(specUrl, project, onProgress, onLog) {
+    const log = mkLog(onLog);
     const targetUrl = project?.target_url;
+    log(`[ZAP] API scan starting; importing OpenAPI spec from ${specUrl}`);
     await newSession(`api-${Date.now()}`);
     if (project) await setupZapContext(project);
     await importOpenApiSpec(specUrl, targetUrl);
     if (targetUrl) {
         const spiderId = await startSpider(targetUrl);
-        await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p * 0.3));
+        log(`[ZAP] Spider started: ID=${spiderId}`);
+        await waitForSpider(spiderId, (p) => { log(`[ZAP] Spider progress: ${p}%`); onProgress && onProgress('spidering', p * 0.3); });
     }
     await waitForPassiveScan();
     if (targetUrl) {
         const activeScanId = await startActiveScan(targetUrl);
-        await waitForActiveScan(activeScanId, (p) => onProgress && onProgress('scanning', 30 + p * 0.7));
+        log(`[ZAP] Active scan started: ID=${activeScanId}`);
+        await waitForActiveScan(activeScanId, (p) => { log(`[ZAP] Active scan progress: ${p}%`); onProgress && onProgress('scanning', 30 + p * 0.7); });
     }
-    return getAlerts(targetUrl || specUrl);
+    const alerts = await getAlerts(targetUrl || specUrl);
+    log(`[ZAP] API scan complete: ${alerts.length} alert(s) found`);
+    return alerts;
 }
 
 /**
  * Run a passive scan only (spider → wait for passive scan → get alerts)
  */
-export async function runPassiveScan(project, onProgress) {
+export async function runPassiveScan(project, onProgress, onLog) {
+    const log = mkLog(onLog);
     const targetUrl = project.target_url;
+    log(`[ZAP] Passive scan starting for ${targetUrl}`);
     await newSession(`passive-${Date.now()}`);
     await setupZapContext(project);
     const spiderId = await startSpider(targetUrl);
-    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p));
+    log(`[ZAP] Spider started: ID=${spiderId}`);
+    await waitForSpider(spiderId, (p) => { log(`[ZAP] Spider progress: ${p}%`); onProgress && onProgress('spidering', p); });
     await waitForPassiveScan();
-    return getAlerts(targetUrl);
+    const alerts = await getAlerts(targetUrl);
+    log(`[ZAP] Passive scan complete: ${alerts.length} alert(s) found`);
+    return alerts;
 }
 
 /**
  * Run a fuzzer scan (aggressive active scan)
  */
-export async function runFuzzerScan(project, onProgress) {
+export async function runFuzzerScan(project, onProgress, onLog) {
+    const log = mkLog(onLog);
     const targetUrl = project.target_url;
+    log(`[ZAP] Fuzzer scan starting for ${targetUrl}`);
     await newSession(`fuzzer-${Date.now()}`);
     await setupZapContext(project);
     const spiderId = await startSpider(targetUrl);
-    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p * 0.2));
+    log(`[ZAP] Spider started: ID=${spiderId}`);
+    await waitForSpider(spiderId, (p) => { log(`[ZAP] Spider progress: ${p}%`); onProgress && onProgress('spidering', p * 0.2); });
     await waitForPassiveScan();
 
     const activeScanId = await startActiveScan(targetUrl);
-    await waitForActiveScan(activeScanId, (p) => onProgress && onProgress('scanning', 20 + p * 0.8));
-    return getAlerts(targetUrl);
+    log(`[ZAP] Fuzzer active scan started: ID=${activeScanId}`);
+    await waitForActiveScan(activeScanId, (p) => { log(`[ZAP] Fuzzer progress: ${p}%`); onProgress && onProgress('scanning', 20 + p * 0.8); });
+    const alerts = await getAlerts(targetUrl);
+    log(`[ZAP] Fuzzer scan complete: ${alerts.length} alert(s) found`);
+    return alerts;
 }
 
 /**

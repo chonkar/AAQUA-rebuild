@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Scan, GovernanceMetric, Vulnerability, Project } from '../models/index.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { getGovernanceTrend } from '../services/governanceService.js';
 
 const router = Router();
@@ -9,7 +9,7 @@ const router = Router();
  * GET /api/security/governance/release-check/:scanId
  * Check if a scan passes the release gate
  */
-router.get('/release-check/:scanId', authenticateToken, async (req, res) => {
+router.get('/release-check/:scanId', authenticateToken, requireRole('admin'), async (req, res) => {
     try {
         const scan = await Scan.findByPk(req.params.scanId, {
             include: [
@@ -75,7 +75,7 @@ router.get('/release-check/:scanId', authenticateToken, async (req, res) => {
  * GET /api/security/governance/trend/:projectId
  * Get historical governance trend for a project
  */
-router.get('/trend/:projectId', authenticateToken, async (req, res) => {
+router.get('/trend/:projectId', authenticateToken, requireRole('admin'), async (req, res) => {
     try {
         const project = await Project.findOne({
             where: { id: req.params.projectId, owner_id: req.user.id },

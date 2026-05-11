@@ -1,0 +1,91 @@
+# AAQUA tenant compose — only the app backend and ZAP. Postgres, Keycloak,
+# and the public-facing nginx live in /opt/shared-infra. This file joins
+# the shared docker network as `external: true`.
+#
+# Bring up:    docker compose up -d --build
+# Update:      git pull && ./scripts/publish-spa.sh && docker compose up -d --build app
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE_PATH: /aaqua/
+        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-https://10.13.1.182/auth}
+        VITE_KEYCLOAK_REALM: aaseya-platform
+        VITE_KEYCLOAK_CLIENT_ID: aaqua-frontend
+    container_name: aaqua-app
+    init: true                # tini-equivalent signal forwarding (replaces in-image tini)
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: shared-postgres
+      DB_PORT: 5432
+      DB_USER: aaqua_app
+      DB_NAME: aaqua_security
+      DB_LOGGING: "false"
+      ZAP_API_URL: http://aaqua-zap:8080
+      ZAP_API_KEY: ""
+      VITE_LLM_ENDPOINT: https://llm.lab.aaseya.com/v1
+      VITE_LLM_MODEL: gpt-oss-20b
+      KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-https://10.13.1.182/auth/realms/aaseya-platform}
+      # Optional: backend JWKS fetch URL. Defaults to ${KEYCLOAK_REALM_URL}/protocol/openid-connect/certs.
+      # Set this to a docker-internal URL (e.g. http://shared-keycloak:8080/auth/realms/aaseya-platform/protocol/openid-connect/certs)
+      # when the public Keycloak URL uses a self-signed TLS cert that the backend can't validate.
+      # The issuer (REALM_URL) must remain the public URL — that's what's baked into token `iss` claims.
+      KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-}
+      KEYCLOAK_AUDIENCE: aaqua-frontend
+      JIRA_ENABLED: "false"
+      ALLOW_PRIVATE_SCAN: "false"
+    secrets:
+      - llm_api_key
+      - db_password
+      - jira_token
+    depends_on:
+      zap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/security/zap/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - shared-infra_default
+
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: aaqua-zap
+    command: >
+      zap.sh -daemon -port 8080 -host 0.0.0.0
+      -config api.disablekey=true
+      -config api.addrs.addr.name=.*
+      -config api.addrs.addr.regex=true
+      -config connection.timeoutInSecs=120
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/JSON/core/view/version/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    networks:
+      - shared-infra_default
+
+networks:
+  shared-infra_default:
+    external: true
+
+secrets:
+  llm_api_key:
+    file: /opt/shared-infra/secrets/aaqua/llm_api_key.txt
+  db_password:
+    file: /opt/shared-infra/secrets/aaqua/db_password.txt
+  jira_token:
+    file: ./secrets/jira_token.txt

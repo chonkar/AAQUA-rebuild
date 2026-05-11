@@ -1,0 +1,17 @@
+# Force LF line endings for shell-side files regardless of OS / autocrlf setting.
+# Without this, Windows commits (or Windows checkouts with core.autocrlf=true) can
+# write CRLF into shell scripts; when those files run on Linux, `bash` mis-parses
+# the trailing \r and breaks (`set -o pipefail` becomes `set -o pipefail\r`, etc.)
+
+*.sh        text eol=lf
+*.envsh     text eol=lf
+*.bash      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.conf      text eol=lf
+*.template  text eol=lf
+Dockerfile  text eol=lf
+
+# Per-component dotfiles often executed at boot — always LF.
+.env.example  text eol=lf
+.gitkeep      text eol=lf

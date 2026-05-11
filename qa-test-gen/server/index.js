@@ -12,7 +12,6 @@ const require = createRequire(import.meta.url);
 
 // ─── AI Secure Engine imports ────────────────────────────
 import { initDatabase } from './models/index.js';
-import authRoutes from './routes/authRoutes.js';
 import projectRoutes from './routes/projectRoutes.js';
 import scanRoutes from './routes/scanRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
@@ -1176,8 +1175,13 @@ app.post('/api/browser/launch', async (req, res) => {
         }
 
         console.log(`Launching interactive browser for: ${url}`);
+        // Default headless so this works in the deployed container (which has
+        // no display server). Local devs can opt out with HEADLESS=false in
+        // .env to keep the historic headed-Chromium workflow for cookie/HTML
+        // capture from the Setup Wizard.
+        const launchHeadless = process.env.HEADLESS !== 'false';
         activeBrowser = await chromium.launch({
-            headless: false // Show the browser window
+            headless: launchHeadless,
         });
 
         activeContext = await activeBrowser.newContext({
@@ -1548,6 +1552,29 @@ app.post('/api/analyze-accessibility', async (req, res) => {
 // In-memory store for run state
 const runStore = new Map(); // runId -> { status, logs, results, framework, projectPath, failedTests }
 
+// Cap on run.logs chunk count. The full log is also persisted to
+// temp_runner/<runId>/logs.txt on completion for cases where the tail was
+// rotated away during a long-running suite.
+const MAX_RUN_LOG_CHUNKS = 500;
+
+function appendRunLog(run, chunk) {
+    if (!run || chunk == null) return;
+    run.logs.push(String(chunk));
+    if (run.logs.length > MAX_RUN_LOG_CHUNKS) {
+        run.logs.splice(0, run.logs.length - MAX_RUN_LOG_CHUNKS);
+    }
+}
+
+const RUN_LOGS_DIR = 'temp_runner_logs';
+function persistRunLogs(runId, run) {
+    try {
+        if (!fs.existsSync(RUN_LOGS_DIR)) fs.mkdirSync(RUN_LOGS_DIR, { recursive: true });
+        fs.writeFileSync(path.join(RUN_LOGS_DIR, `${runId}.log`), run.logs.join(''));
+    } catch (err) {
+        console.error(`[Runner ${runId}] Failed to persist logs:`, err.message);
+    }
+}
+
 const runnerUpload = multer({ dest: 'temp_runner_uploads/' });
 
 // Helper: detect framework from extracted folder
@@ -1763,14 +1790,13 @@ function runCommand(cmd, args, cwd, runId, onComplete) {
 
     child.stdout.on('data', (data) => {
         const line = data.toString();
-        run.logs.push(line);
+        appendRunLog(run, line);
         process.stdout.write(`[${runId}] ${line}`);
-        // Parse each line for live results
         line.split('\n').forEach(l => processLine(l));
     });
     child.stderr.on('data', (data) => {
         const line = data.toString();
-        run.logs.push(line);
+        appendRunLog(run, line);
         line.split('\n').forEach(l => processLine(l));
     });
     child.on('close', (code) => {
@@ -1778,7 +1804,7 @@ function runCommand(cmd, args, cwd, runId, onComplete) {
         onComplete(code);
     });
     child.on('error', (err) => {
-        run.logs.push(`ERROR: ${err.message}`);
+        appendRunLog(run, `ERROR: ${err.message}\n`);
         run.status = 'error';
         run.error = err.message;
     });
@@ -1788,8 +1814,13 @@ function runCommand(cmd, args, cwd, runId, onComplete) {
 
 // POST /api/run-tests-local — Run tests from a local project directory
 app.post('/api/run-tests-local', async (req, res) => {
-    const { projectPath } = req.body;
+    const { projectPath, headed } = req.body;
     if (!projectPath) return res.status(400).json({ error: 'projectPath is required' });
+    // headed is only honoured when the host has a display server. We still
+    // accept the flag here and let Playwright fail loudly in a headless
+    // container — the UI hides the toggle when /api/runtime-info reports no
+    // display so misconfiguration is rare in practice.
+    const runHeaded = headed === true || headed === 'true';
 
     // Normalize path separators
     const normalizedPath = path.resolve(projectPath);
@@ -1830,9 +1861,9 @@ app.post('/api/run-tests-local', async (req, res) => {
         }
 
         run.status = 'running';
-        run.logs.push(`[AAQUA] Detected framework: ${framework.toUpperCase()}\n`);
-        run.logs.push(`[AAQUA] Project root: ${projectRoot}\n`);
-        run.logs.push(`[AAQUA] Starting test execution...\n`);
+        appendRunLog(run, `[AAQUA] Detected framework: ${framework.toUpperCase()}\n`);
+        appendRunLog(run, `[AAQUA] Project root: ${projectRoot}\n`);
+        appendRunLog(run, `[AAQUA] Starting test execution...\n`);
 
         res.json({ runId, framework });
 
@@ -1851,19 +1882,22 @@ app.post('/api/run-tests-local', async (req, res) => {
             }
             runCommand('mvn', ['clean', 'test', '-fae', '--no-transfer-progress'], projectRoot, runId, (code) => {
                 const r = runStore.get(runId);
-                r.logs.push(`\n[AAQUA] Process exited with code ${code}\n`);
+                appendRunLog(r, `\n[AAQUA] Process exited with code ${code}\n`);
                 const suites = parseMavenResults(projectRoot);
                 r.results = { suites, summary: buildSummary(suites) };
                 r.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name, classname: t.classname })));
                 r.status = 'completed';
+                persistRunLogs(runId, r);
             });
         } else if (framework === 'playwright') {
             runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
                 const r2 = runStore.get(runId);
-                r2.logs.push(`[AAQUA] Dependencies installed. Running Playwright...\n`);
-                runCommand('npx', ['playwright', 'test', '--reporter=line,json', '--output=playwright-results'], projectRoot, runId, (code) => {
+                appendRunLog(r2, `[AAQUA] Dependencies installed. Running Playwright (${runHeaded ? 'headed' : 'headless'})...\n`);
+                const pwArgs = ['playwright', 'test', '--reporter=line,json', '--output=playwright-results'];
+                if (runHeaded) pwArgs.push('--headed');
+                runCommand('npx', pwArgs, projectRoot, runId, (code) => {
                     const r3 = runStore.get(runId);
-                    r3.logs.push(`\n[AAQUA] Process exited with code ${code}\n`);
+                    appendRunLog(r3, `\n[AAQUA] Process exited with code ${code}\n`);
                     const allLogs = r3.logs.join('');
                     const jsonStart = allLogs.lastIndexOf('{"version"');
                     let suites = [];
@@ -1873,15 +1907,17 @@ app.post('/api/run-tests-local', async (req, res) => {
                     r3.results = { suites, summary: buildSummary(suites) };
                     r3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
                     r3.status = 'completed';
+                    persistRunLogs(runId, r3);
                 });
             });
         } else if (framework === 'cypress') {
             runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
                 runCommand('npx', ['cypress', 'run', '--reporter', 'json'], projectRoot, runId, (code) => {
                     const r3 = runStore.get(runId);
-                    r3.logs.push(`\n[AAQUA] Cypress exited with code ${code}\n`);
+                    appendRunLog(r3, `\n[AAQUA] Cypress exited with code ${code}\n`);
                     r3.results = { suites: [], summary: { total: 0, passed: 0, failed: 0, skipped: 0, duration: '—' } };
                     r3.status = 'completed';
+                    persistRunLogs(runId, r3);
                 });
             });
         }
@@ -1897,6 +1933,10 @@ app.post('/api/run-tests-local', async (req, res) => {
 // POST /api/run-tests — Upload zip and run
 app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No zip file uploaded' });
+
+    // multer parses non-file form fields into req.body. The TestRunner UI
+    // sends `headed` only when the host advertises a display server.
+    const runHeaded = req.body?.headed === 'true' || req.body?.headed === true;
 
     const runId = crypto.randomBytes(6).toString('hex');
     const extractDir = path.join('temp_runner', runId);
@@ -1933,9 +1973,9 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
         }
 
         run.status = 'running';
-        run.logs.push(`[AAQUA] Detected framework: ${framework.toUpperCase()}\n`);
-        run.logs.push(`[AAQUA] Project root: ${projectRoot}\n`);
-        run.logs.push(`[AAQUA] Starting test execution...\n`);
+        appendRunLog(run, `[AAQUA] Detected framework: ${framework.toUpperCase()}\n`);
+        appendRunLog(run, `[AAQUA] Project root: ${projectRoot}\n`);
+        appendRunLog(run, `[AAQUA] Starting test execution...\n`);
 
         res.json({ runId, framework });
 
@@ -1947,20 +1987,23 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
             }
             runCommand('mvn', ['clean', 'test', '-fae', '--no-transfer-progress'], projectRoot, runId, (code) => {
                 const run = runStore.get(runId);
-                run.logs.push(`\n[AAQUA] Process exited with code ${code}\n`);
+                appendRunLog(run, `\n[AAQUA] Process exited with code ${code}\n`);
                 const suites = parseMavenResults(projectRoot);
                 run.results = { suites, summary: buildSummary(suites) };
                 run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name, classname: t.classname })));
                 run.status = 'completed';
+                persistRunLogs(runId, run);
             });
         } else if (framework === 'playwright') {
             // Install deps first
             runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
                 const run2 = runStore.get(runId);
-                run2.logs.push(`[AAQUA] Dependencies installed. Running Playwright...\n`);
-                runCommand('npx', ['playwright', 'test', '--reporter=json', '--output=playwright-results'], projectRoot, runId, (code) => {
+                appendRunLog(run2, `[AAQUA] Dependencies installed. Running Playwright (${runHeaded ? 'headed' : 'headless'})...\n`);
+                const pwArgs = ['playwright', 'test', '--reporter=json', '--output=playwright-results'];
+                if (runHeaded) pwArgs.push('--headed');
+                runCommand('npx', pwArgs, projectRoot, runId, (code) => {
                     const run3 = runStore.get(runId);
-                    run3.logs.push(`\n[AAQUA] Process exited with code ${code}\n`);
+                    appendRunLog(run3, `\n[AAQUA] Process exited with code ${code}\n`);
                     // Try to read json from stdout logs
                     const allLogs = run3.logs.join('');
                     const jsonStart = allLogs.lastIndexOf('{"version"');
@@ -1971,15 +2014,17 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
                     run3.results = { suites, summary: buildSummary(suites) };
                     run3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
                     run3.status = 'completed';
+                    persistRunLogs(runId, run3);
                 });
             });
         } else if (framework === 'cypress') {
             runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
                 runCommand('npx', ['cypress', 'run', '--reporter', 'json'], projectRoot, runId, (code) => {
                     const run3 = runStore.get(runId);
-                    run3.logs.push(`\n[AAQUA] Cypress exited with code ${code}\n`);
+                    appendRunLog(run3, `\n[AAQUA] Cypress exited with code ${code}\n`);
                     run3.results = { suites: [], summary: { total: 0, passed: 0, failed: 0, skipped: 0, duration: '—' } };
                     run3.status = 'completed';
+                    persistRunLogs(runId, run3);
                 });
             });
         }
@@ -1992,7 +2037,13 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
     }
 });
 
-// GET /api/run-status/:runId — Poll status, logs, results
+// GET /api/run-status/:runId?since=<cursor> — Poll status, logs delta, results
+//
+// `since` is the chunk index returned by a prior call's `cursor` field. Clients
+// pass it back to receive only new log content since the last poll, which is
+// much cheaper than re-shipping the whole buffer every 1.5s. Omitting `since`
+// (or passing 0) returns the full buffer — used on initial mount and after
+// page reloads.
 app.get('/api/run-status/:runId', (req, res) => {
     const run = runStore.get(req.params.runId);
     if (!run) return res.status(404).json({ error: 'Run not found' });
@@ -2009,10 +2060,15 @@ app.get('/api/run-status/:runId', (req, res) => {
         } catch (e) { /* ignore parse errors during execution */ }
     }
 
+    const since = Math.max(0, parseInt(req.query.since, 10) || 0);
+    const tail = run.logs.slice(since);
+    const cursor = run.logs.length;
+
     res.json({
         status: run.status,
         framework: run.framework,
-        logs: run.logs.join(''),
+        logs: tail.join(''),
+        cursor,
         results: run.results,
         liveResults: liveResults,
         failedCount: run.failedTests?.length || 0,
@@ -2049,20 +2105,21 @@ app.post('/api/retry-tests/:runId', (req, res) => {
             const cls = t.classname ? t.classname.split('.').pop() : t.suite;
             return `${cls}#${t.name}`;
         }).join(',');
-        runStore.get(retryRunId).logs.push(`[AAQUA] Filter: -Dtest=${testFilter}\n`);
+        appendRunLog(runStore.get(retryRunId), `[AAQUA] Filter: -Dtest=${testFilter}\n`);
         runCommand('mvn', ['test', '-fae', '--no-transfer-progress', `-Dtest=${testFilter}`], projectRoot, retryRunId, (code) => {
             const run = runStore.get(retryRunId);
-            run.logs.push(`\n[AAQUA] Retry process exited with code ${code}\n`);
+            appendRunLog(run, `\n[AAQUA] Retry process exited with code ${code}\n`);
             const suites = parseMavenResults(projectRoot);
             run.results = { suites, summary: buildSummary(suites) };
             run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name, classname: t.classname })));
             run.status = 'completed';
+            persistRunLogs(retryRunId, run);
         });
     } else if (framework === 'playwright') {
         const grepPattern = failedTests.map(t => t.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
         runCommand('npx', ['playwright', 'test', '--reporter=line,json', '--grep', grepPattern], projectRoot, retryRunId, (code) => {
             const run = runStore.get(retryRunId);
-            run.logs.push(`\n[AAQUA] Retry exited with code ${code}\n`);
+            appendRunLog(run, `\n[AAQUA] Retry exited with code ${code}\n`);
             const allLogs = run.logs.join('');
             const jsonStart = allLogs.lastIndexOf('{"version"');
             let suites = [];
@@ -2070,12 +2127,27 @@ app.post('/api/retry-tests/:runId', (req, res) => {
             run.results = { suites, summary: buildSummary(suites) };
             run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
             run.status = 'completed';
+            persistRunLogs(retryRunId, run);
         });
     }
 });
 
+// GET /api/runtime-info — Lets the UI decide whether to show env-dependent
+// controls (e.g. the headed-mode toggle). Reports whether the host has a
+// display server and whether we're running inside a container. Unauthenticated
+// because the response carries no secrets and the UI needs it before the
+// auth flow has completed for some routes.
+app.get('/api/runtime-info', (req, res) => {
+    res.json({
+        hasDisplayServer: !!process.env.DISPLAY,
+        isContainer: fs.existsSync('/.dockerenv'),
+        platform: process.platform,
+    });
+});
+
 // ─── AI Secure Engine: Mount security routes ────────────
-app.use('/api/security/auth', authRoutes);
+// Authentication is owned by Keycloak; no /api/security/auth endpoints — clients
+// obtain tokens via the OIDC code+PKCE flow against the realm directly.
 app.use('/api/security/projects', securityRateLimiter, projectRoutes);
 app.use('/api/security/scan', securityRateLimiter, scanRoutes);
 app.use('/api/security/dashboard', securityRateLimiter, dashboardRoutes);
