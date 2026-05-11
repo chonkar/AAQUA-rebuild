@@ -1,5 +1,8 @@
+// See testRunnerService.js for why this is BASE_URL-prefixed rather than a bare /api.
+const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
+
 export const launchBrowser = async (url) => {
-    const response = await fetch('/api/browser/launch', {
+    const response = await fetch(`${API_URL}/browser/launch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
@@ -12,7 +15,7 @@ export const launchBrowser = async (url) => {
 };
 
 export const runAccessibilityScan = async () => {
-    const response = await fetch('/api/analyze-accessibility', {
+    const response = await fetch(`${API_URL}/analyze-accessibility`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
     });

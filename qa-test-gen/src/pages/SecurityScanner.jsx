@@ -178,11 +178,11 @@ const SecurityScanner = () => {
 
     const checkZapHealth = async () => {
         try {
-            // ZAP health is unauthenticated by design.
-            const res = await fetch(`${API}/zap/health`);
-            const text = await res.text();
-            const data = text ? JSON.parse(text) : { status: 'error', error: 'Empty response' };
-            setZapHealth(data);
+            // ZAP health is unauthenticated by design, but we still go through the
+            // api client so the BASE_URL prefix (/aaqua in QA) is applied. A raw
+            // fetch('/api/...') bypasses the prefix and 404s at shared-nginx.
+            const data = await api.get(`${API}/zap/health`);
+            setZapHealth(data || { status: 'error', error: 'Empty response' });
         } catch {
             setZapHealth({ status: 'error', error: 'Unreachable' });
         }

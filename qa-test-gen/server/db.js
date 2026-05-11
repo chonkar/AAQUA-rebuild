@@ -1,8 +1,35 @@
 import { Sequelize } from 'sequelize';
 import dotenv from 'dotenv';
+import fs from 'fs';
 dotenv.config();
 
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://aaqua:aaqua@localhost:5433/aaqua_security';
+// Connection-string resolution, in order of precedence:
+//   1. DATABASE_URL — used by local dev (set in .env)
+//   2. DB_HOST / DB_PORT / DB_USER / DB_NAME / DB_PASSWORD_FILE — set by
+//      docker-compose.yml in deployed environments. Password comes from a
+//      file-mounted Docker secret at /run/secrets/db_password (Compose's
+//      non-swarm secret model writes secrets to files, not env vars).
+//   3. Hardcoded fallback for first-time local-dev runs without .env.
+function resolveDatabaseUrl() {
+    if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+
+    const host = process.env.DB_HOST;
+    if (host) {
+        const port = process.env.DB_PORT || '5432';
+        const user = process.env.DB_USER || 'aaqua_app';
+        const name = process.env.DB_NAME || 'aaqua_security';
+        const passwordFile = process.env.DB_PASSWORD_FILE || '/run/secrets/db_password';
+        let password = process.env.DB_PASSWORD || '';
+        if (!password && fs.existsSync(passwordFile)) {
+            password = fs.readFileSync(passwordFile, 'utf8').trim();
+        }
+        const auth = password ? `${user}:${encodeURIComponent(password)}` : user;
+        return `postgresql://${auth}@${host}:${port}/${name}`;
+    }
+    return 'postgresql://aaqua:aaqua@localhost:5433/aaqua_security';
+}
+
+const DATABASE_URL = resolveDatabaseUrl();
 
 const sequelize = new Sequelize(DATABASE_URL, {
     dialect: 'postgres',

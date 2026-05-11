@@ -12,7 +12,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_BASE_PATH: /aaqua/
-        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://10.13.1.182/auth}
+        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-https://10.13.1.182/auth}
         VITE_KEYCLOAK_REALM: aaseya-platform
         VITE_KEYCLOAK_CLIENT_ID: aaqua-frontend
     container_name: aaqua-app
@@ -29,7 +29,12 @@ services:
       ZAP_API_KEY: ""
       VITE_LLM_ENDPOINT: https://llm.lab.aaseya.com/v1
       VITE_LLM_MODEL: gpt-oss-20b
-      KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-http://10.13.1.182/auth/realms/aaseya-platform}
+      KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-https://10.13.1.182/auth/realms/aaseya-platform}
+      # Optional: backend JWKS fetch URL. Defaults to ${KEYCLOAK_REALM_URL}/protocol/openid-connect/certs.
+      # Set this to a docker-internal URL (e.g. http://shared-keycloak:8080/auth/realms/aaseya-platform/protocol/openid-connect/certs)
+      # when the public Keycloak URL uses a self-signed TLS cert that the backend can't validate.
+      # The issuer (REALM_URL) must remain the public URL — that's what's baked into token `iss` claims.
+      KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-}
       KEYCLOAK_AUDIENCE: aaqua-frontend
       JIRA_ENABLED: "false"
       ALLOW_PRIVATE_SCAN: "false"

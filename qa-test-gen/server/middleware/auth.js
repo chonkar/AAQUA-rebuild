@@ -2,16 +2,29 @@ import { createRemoteJWKSet, jwtVerify, errors as joseErrors } from 'jose';
 import dotenv from 'dotenv';
 dotenv.config();
 
+// Two URLs because they often need to differ in containerized deploys:
+//   - KEYCLOAK_REALM_URL is what Keycloak puts in the `iss` claim (public URL,
+//     e.g. https://10.13.1.182/auth/realms/aaseya-platform). jwtVerify uses
+//     this to validate the token's issuer with exact string equality.
+//   - KEYCLOAK_JWKS_URL (optional) is the URL the backend uses to fetch the
+//     JWKS. Inside docker-compose, the public hostname often isn't reachable
+//     from the app container — use the docker service name instead, e.g.
+//     http://shared-keycloak:8080/auth/realms/aaseya-platform/protocol/openid-connect/certs
+//   - If KEYCLOAK_JWKS_URL is not set, we derive it from KEYCLOAK_REALM_URL
+//     (the historical behavior — fine for local dev and any deploy where the
+//     issuer URL is reachable from the backend).
 const REALM_URL = process.env.KEYCLOAK_REALM_URL;
 const AUDIENCE = process.env.KEYCLOAK_AUDIENCE;
+const JWKS_URL = process.env.KEYCLOAK_JWKS_URL
+    || (REALM_URL ? `${REALM_URL}/protocol/openid-connect/certs` : null);
 
 if (!REALM_URL) {
     console.warn('[auth] KEYCLOAK_REALM_URL is not set — token verification will fail.');
 }
 
 // Singleton JWKS — `jose` caches keys and refreshes on rotation automatically.
-const JWKS = REALM_URL
-    ? createRemoteJWKSet(new URL(`${REALM_URL}/protocol/openid-connect/certs`), {
+const JWKS = JWKS_URL
+    ? createRemoteJWKSet(new URL(JWKS_URL), {
         cooldownDuration: 30_000,
         cacheMaxAge: 600_000,
     })

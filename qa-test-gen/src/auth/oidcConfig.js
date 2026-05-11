@@ -29,7 +29,23 @@ export const oidcConfig = {
     },
 };
 
-/** Read realm roles from a Keycloak ID/Access token's profile. */
+/**
+ * Read realm roles from the user's Keycloak access_token.
+ *
+ * Realm roles live in the access_token's `realm_access.roles` claim, not in
+ * `profile` (which is built from the id_token / /userinfo response and carries
+ * identity claims only). This decoder accepts the oidc-client-ts user object
+ * and returns the roles array, or [] if anything along the path is missing.
+ */
 export function rolesOf(user) {
-    return user?.profile?.realm_access?.roles ?? [];
+    const token = user?.access_token;
+    if (!token) return [];
+    try {
+        const payload = JSON.parse(
+            atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))
+        );
+        return payload?.realm_access?.roles ?? [];
+    } catch {
+        return [];
+    }
 }

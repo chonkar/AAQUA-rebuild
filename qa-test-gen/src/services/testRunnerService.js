@@ -1,4 +1,7 @@
-const API_URL = "http://localhost:3001/api";
+// Relative path: in dev the Vite proxy maps /api → :3001; in QA the BASE_URL
+// prefix turns this into /aaqua/api/... which shared-nginx routes to the backend.
+// A hardcoded http://localhost:3001 would 404 in the browser when deployed.
+const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
 export const runTestsLocal = async (projectPath, options = {}) => {
     const { headed = false } = options;
