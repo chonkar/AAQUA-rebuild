@@ -1,0 +1,31 @@
+# Substituted at boot: ${AAQUA_LLM_API_KEY}
+
+# AAQUA SPA — static bundle published by /opt/aaqua/scripts/publish-spa.sh.
+location /aaqua/ {
+    alias /var/www/aaqua/;
+    try_files $uri $uri/ /aaqua/index.html;
+}
+
+# AAQUA Express backend.
+location /aaqua/api/ {
+    proxy_pass         http://aaqua-app:3001/api/;
+    proxy_http_version 1.1;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_set_header   X-Forwarded-Prefix /aaqua;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+}
+
+# LLM proxy with Authorization injection from /run/shared-secrets/aaqua/llm_api_key.txt.
+location /aaqua/llm-api/ {
+    proxy_pass            https://llm.lab.aaseya.com/;
+    proxy_http_version    1.1;
+    proxy_ssl_server_name on;
+    proxy_set_header      Host          llm.lab.aaseya.com;
+    proxy_set_header      Authorization "Bearer ${AAQUA_LLM_API_KEY}";
+    proxy_set_header      Content-Type  "application/json";
+    proxy_read_timeout    120s;
+}

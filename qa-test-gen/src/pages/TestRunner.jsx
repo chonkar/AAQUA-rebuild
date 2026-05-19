@@ -169,13 +169,29 @@ const TestRunner = () => {
     const batchPollRef = useRef(null);
     const healPollRefs = useRef({});
 
-    // Polling
+    // Persist the headed preference whenever the user toggles it.
+    useEffect(() => {
+        try { localStorage.setItem(HEADED_PREF_KEY, String(headed)); } catch { /* localStorage may be unavailable in some browsers */ }
+    }, [headed]);
+
+    // Fetch runtime info on mount to decide whether to show the headed toggle.
+    // In the deployed container (no DISPLAY env var) we hide the control
+    // entirely rather than offer something that can't work.
+    useEffect(() => {
+        getRuntimeInfo()
+            .then(info => setHasDisplayServer(!!info.hasDisplayServer))
+            .catch(() => setHasDisplayServer(false));
+    }, []);
+
+    // Polling — uses cursor-based delta so each tick only ships new chunks.
     const startPolling = useCallback((rid) => {
         if (pollRef.current) clearInterval(pollRef.current);
+        logCursorRef.current = 0;
         pollRef.current = setInterval(async () => {
             try {
-                const data = await getRunStatus(rid);
-                setLogs(data.logs || '');
+                const data = await getRunStatus(rid, logCursorRef.current);
+                if (data.cursor != null) logCursorRef.current = data.cursor;
+                if (data.logs) setLogs(prev => prev + data.logs);
                 setStatus(data.status);
                 setFramework(data.framework);
                 // Live dashboard data (parsed from partial XML reports)
@@ -231,6 +247,7 @@ const TestRunner = () => {
     const handleRun = async () => {
         if (!projectPath.trim()) return;
         setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
+        logCursorRef.current = 0;
         try {
             const data = await runTestsLocal(projectPath.trim(), !isHeaded);
             if (data.error) { setStatus('error'); setError(data.error); setHasRun(true); return; }
@@ -248,6 +265,7 @@ const TestRunner = () => {
         const sourceId = retrySourceRunId || runId;
         if (!sourceId) return;
         setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
+        logCursorRef.current = 0;
         try {
             const data = await retryFailedTests(sourceId);
             if (data.error) { setStatus('error'); setError(data.error); return; }
@@ -815,6 +833,15 @@ const TestRunner = () => {
           padding: 0.35rem 0.75rem; background: var(--bg-tertiary);
           border-radius: var(--radius-sm); display: inline-block;
         }
+        .tr-headed-toggle {
+          margin-top: 0.75rem; margin-right: 0.75rem;
+          display: inline-flex; align-items: center; gap: 0.5rem;
+          font-size: 0.8rem; color: var(--text-secondary);
+          padding: 0.35rem 0.75rem; background: var(--bg-tertiary);
+          border-radius: var(--radius-sm); cursor: pointer; user-select: none;
+        }
+        .tr-headed-toggle input { cursor: pointer; }
+        .tr-headed-toggle input:disabled { cursor: not-allowed; }
         .btn-retry {
           display: inline-flex; align-items: center; gap: 0.5rem;
           padding: 0.75rem 1.25rem; border-radius: var(--radius-md);

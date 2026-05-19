@@ -3,6 +3,10 @@ import { generateLocators } from '../services/locatorGenerationService';
 import { exportToJSON, exportToExcel } from '../utils/exportUtils';
 import { Target, Search, Copy, Download, Code, Globe, AlertCircle, Loader2 } from 'lucide-react';
 
+// BASE_URL-prefixed relative path. See src/services/testRunnerService.js for why.
+// Hardcoded http://localhost:3001 worked in dev but 404'd in QA (browser bypasses the Vite proxy in prod).
+const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
+
 const LocatorGenerator = () => {
     const [mode, setMode] = useState('html'); // 'html' or 'url'
     const [htmlInput, setHtmlInput] = useState('');
@@ -26,7 +30,7 @@ const LocatorGenerator = () => {
         setStatusText("Launching Browser...");
         setError(null);
         try {
-            const response = await fetch('http://localhost:3001/api/browser/launch', {
+            const response = await fetch(`${API_URL}/browser/launch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: urlInput })
@@ -51,7 +55,7 @@ const LocatorGenerator = () => {
 
         try {
             // 1. Capture HTML & Cookies
-            const captureRes = await fetch('http://localhost:3001/api/browser/capture');
+            const captureRes = await fetch(`${API_URL}/browser/capture`);
             if (!captureRes.ok) throw new Error("Failed to capture browser session");
 
             const { html, cookies } = await captureRes.json();
@@ -73,7 +77,7 @@ const LocatorGenerator = () => {
 
     const handleCloseBrowser = async () => {
         try {
-            await fetch('http://localhost:3001/api/browser/close', { method: 'POST' });
+            await fetch(`${API_URL}/browser/close`, { method: 'POST' });
         } catch (e) {
             console.error("Failed to close browser", e);
         } finally {
@@ -108,7 +112,7 @@ const LocatorGenerator = () => {
 
                 setStatusText('Scraping Website (this may take a few seconds)...');
                 try {
-                    const response = await fetch('http://localhost:3001/api/scrape', {
+                    const response = await fetch(`${API_URL}/scrape`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ url: urlInput, cookies: useCookies ? cookies : [] })

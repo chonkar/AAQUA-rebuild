@@ -14,6 +14,34 @@ const router = Router();
 const activeScans = new Set();
 const MAX_CONCURRENT_SCANS = 2;
 
+// In-memory per-scan log ring buffer. Lines accumulate here during execution
+// and are flushed to Scan.logs on phase transitions and on terminal status.
+// Bounded to MAX_LOG_LINES so a chatty scan can't OOM the process.
+const scanLogBuffers = new Map(); // scanId -> string[]
+const MAX_LOG_LINES = 500;
+
+function logScan(scanId, line) {
+    const text = line == null ? '' : String(line);
+    const stamped = `[${new Date().toISOString()}] ${text}`;
+    let buf = scanLogBuffers.get(scanId);
+    if (!buf) { buf = []; scanLogBuffers.set(scanId, buf); }
+    buf.push(stamped);
+    if (buf.length > MAX_LOG_LINES) buf.splice(0, buf.length - MAX_LOG_LINES);
+    // Mirror to the server console so docker logs / journalctl still capture
+    // everything, in case of post-mortem debugging beyond what the UI shows.
+    console.log(`[Scan ${scanId.slice(0, 8)}] ${text}`);
+}
+
+async function flushScanLogs(scan) {
+    const buf = scanLogBuffers.get(scan.id);
+    if (!buf || buf.length === 0) return;
+    try {
+        await scan.update({ logs: buf.join('\n') });
+    } catch (err) {
+        console.error(`[Scan ${scan.id}] Failed to flush logs:`, err.message);
+    }
+}
+
 /**
  * POST /api/security/scan/start
  * Start a security scan (runs asynchronously)
@@ -103,11 +131,16 @@ router.post('/start', authenticateToken, async (req, res) => {
  * Execute the scan in background
  */
 async function executeScan(scan, project, openapiUrl) {
+    const log = (line) => logScan(scan.id, line);
     try {
-        console.log(`[Scan] Starting ${scan.scan_type} scan: ${scan.id}`);
+        log(`Starting ${scan.scan_type} scan against ${scan.target_url}`);
         await scan.update({ status: 'spidering' });
+        await flushScanLogs(scan);
 
-        // Helper to update progress in DB
+        // Progress callback from zapService. We flush logs on each phase
+        // transition so a tester reloading mid-scan sees up-to-date history
+        // even if the in-memory buffer is dropped.
+        let lastStatus = scan.status;
         const updateProgress = async (status, progress) => {
             console.log(`[Scan] Progress update: ${status} (${progress}%)`);
             // Check if aborted in-between to avoid database writes
@@ -138,15 +171,17 @@ async function executeScan(scan, project, openapiUrl) {
                 break;
         }
 
-        console.log(`[Scan] ZAP returned ${alerts.length} alerts`);
+        log(`ZAP returned ${alerts.length} alert(s); starting AI analysis`);
         await scan.update({ status: 'analyzing', progress: 60 });
+        await flushScanLogs(scan);
 
         // Phase 2: AI analysis
         const enrichedVulns = await analyzeVulnerabilities(alerts);
-        console.log(`[Scan] AI analysis completed for ${enrichedVulns.length} vulnerabilities`);
+        log(`AI analysis complete for ${enrichedVulns.length} vulnerability/ies`);
 
         // Phase 3: Check regressions
         const withRegressions = await checkForRegressions(project.id, enrichedVulns);
+        log(`Regression check complete (${withRegressions.filter(v => v.is_regression).length} regressions flagged)`);
 
         // Phase 4: Persist vulnerabilities
         await scan.update({ progress: 80 });
@@ -158,10 +193,11 @@ async function executeScan(scan, project, openapiUrl) {
             });
             savedVulns.push(saved);
         }
+        log(`Persisted ${savedVulns.length} vulnerability record(s)`);
 
         // Phase 5: Calculate governance metrics
         const governance = await calculateGovernanceMetrics(scan.id);
-        console.log(`[Scan] Governance: ${governance.release_blocked ? '🚫 BLOCKED' : '✅ APPROVED'}`);
+        log(`Governance: ${governance.release_blocked ? 'BLOCKED' : 'APPROVED'}`);
 
         // Phase 6: Jira tickets (optional)
         const tickets = await createTicketsForCriticalHigh(savedVulns, project.name);
@@ -172,22 +208,23 @@ async function executeScan(scan, project, openapiUrl) {
                     { where: { id: ticket.vulnerability_id } }
                 );
             }
+            log(`Created ${tickets.length} Jira ticket(s) for Critical/High findings`);
         }
 
         // Mark complete
+        log(`Scan completed: ${savedVulns.length} vulnerabilities found`);
         await scan.update({
             status: 'completed',
             progress: 100,
             completed_at: new Date(),
         });
-
-        console.log(`[Scan] ✅ Scan ${scan.id} completed. ${savedVulns.length} vulnerabilities found.`);
+        await flushScanLogs(scan);
 
         // Enforce 30-scan retention limit per project
         await enforceScanRetention(project.id);
 
     } catch (err) {
-        console.error(`[Scan] ❌ Scan ${scan.id} failed:`, err.message);
+        log(`Scan failed: ${err.message}`);
         await scan.update({
             status: 'failed',
             error_message: err.message,
@@ -204,8 +241,12 @@ async function executeScan(scan, project, openapiUrl) {
 }
 
 /**
- * GET /api/security/scan/status/:scanId
- * Poll scan progress
+ * GET /api/security/scan/status/:scanId?since=<cursor>
+ *
+ * Returns scan status, progress, and the delta of log lines since `cursor`.
+ * Live buffer is preferred for in-flight scans; falls back to the persisted
+ * Scan.logs column once the buffer has been dropped (terminal status, or
+ * server restart between polls).
  */
 router.get('/status/:scanId', authenticateToken, async (req, res) => {
     try {
@@ -213,6 +254,14 @@ router.get('/status/:scanId', authenticateToken, async (req, res) => {
         if (!scan) {
             return res.status(404).json({ error: 'Scan not found.' });
         }
+
+        const since = Math.max(0, parseInt(req.query.since, 10) || 0);
+        const buf = scanLogBuffers.get(scan.id);
+        const allLines = buf
+            ? buf.slice()
+            : (scan.logs ? scan.logs.split('\n') : []);
+        const logs = allLines.slice(since);
+        const cursor = allLines.length;
 
         res.json({
             id: scan.id,
@@ -223,6 +272,8 @@ router.get('/status/:scanId', authenticateToken, async (req, res) => {
             started_at: scan.started_at,
             completed_at: scan.completed_at,
             error_message: scan.error_message,
+            logs,
+            cursor,
         });
     } catch (err) {
         console.error('[Scan] Status error:', err);

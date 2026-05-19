@@ -1,0 +1,148 @@
+{
+  "realm": "aaseya-platform",
+  "displayName": "Aaseya Platform",
+  "displayNameHtml": "<b>Aaseya Platform</b>",
+  "enabled": true,
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": true,
+  "verifyEmail": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername(undefined) and passwordHistory(3)",
+
+  "accessTokenLifespan": 900,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 2592000,
+  "ssoSessionIdleTimeoutRememberMe": 0,
+  "ssoSessionMaxLifespanRememberMe": 0,
+  "offlineSessionIdleTimeout": 2592000,
+  "offlineSessionMaxLifespanEnabled": false,
+  "offlineSessionMaxLifespan": 5184000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "actionTokenGeneratedByUserLifespan": 300,
+
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Administrator with full access to AAQUA features and governance",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "user",
+        "description": "Default authenticated user with access to standard tooling",
+        "composite": false,
+        "clientRole": false
+      }
+    ]
+  },
+
+  "defaultRole": {
+    "name": "default-roles-aaseya-platform",
+    "description": "${role_default-roles}",
+    "composite": true,
+    "clientRole": false,
+    "composites": {
+      "realm": ["user"],
+      "client": {
+        "account": ["view-profile", "manage-account"]
+      }
+    }
+  },
+
+  "users": [
+    {
+      "username": "sanjay.jain",
+      "email": "jain.sanjay@aaseya.com",
+      "firstName": "Sanjay",
+      "lastName": "Jain",
+      "enabled": true,
+      "emailVerified": false,
+      "realmRoles": ["admin", "user"],
+      "requiredActions": ["UPDATE_PASSWORD", "VERIFY_EMAIL"]
+    },
+    {
+      "username": "kavita.chonkar",
+      "email": "kavita.chonkar@aaseya.com",
+      "firstName": "Kavita",
+      "lastName": "Chonkar",
+      "enabled": true,
+      "emailVerified": false,
+      "realmRoles": ["admin", "user"],
+      "requiredActions": ["UPDATE_PASSWORD", "VERIFY_EMAIL"]
+    }
+  ],
+
+  "clients": [
+    {
+      "clientId": "aaqua-frontend",
+      "name": "AAQUA Frontend (React + Vite)",
+      "description": "Public OIDC client for the AAQUA browser app. Uses Authorization Code flow with PKCE.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "rootUrl": "${PUBLIC_BASE_URL}/aaqua",
+      "baseUrl": "${PUBLIC_BASE_URL}/aaqua/",
+      "redirectUris": [
+        "${PUBLIC_BASE_URL}/aaqua/*"
+      ],
+      "webOrigins": [
+        "${PUBLIC_BASE_URL}",
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/*",
+        "access.token.lifespan": "900"
+      },
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["web-origins", "profile", "roles", "email"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
+    }
+  ],
+
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "no-reply@aaseya.local",
+    "fromDisplayName": "AAQUA Platform",
+    "replyTo": "",
+    "replyToDisplayName": "",
+    "envelopeFrom": "",
+    "ssl": "false",
+    "starttls": "false",
+    "auth": "false"
+  },
+  "internationalizationEnabled": false,
+  "supportedLocales": [],
+  "browserSecurityHeaders": {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "referrerPolicy": "no-referrer",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "xXSSProtection": "1; mode=block",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+  }
+}

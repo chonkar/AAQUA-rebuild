@@ -1,4 +1,5 @@
-const API_URL = "http://localhost:3001/api";
+// See testRunnerService.js for why this is relative + BASE_URL-prefixed.
+const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
 export const convertProject = async (zipFile, targetFramework, apiKey) => {
     const formData = new FormData();

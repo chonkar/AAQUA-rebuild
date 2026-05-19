@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { Play, Search, AlertTriangle, CheckCircle, ExternalLink, Loader2, User, Sparkles, BrainCircuit } from 'lucide-react';
 import { launchBrowser } from '../services/accessibilityService';
 
+// Same BASE_URL pattern as the service layer — see src/services/testRunnerService.js for the rationale.
+const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
+
 const AccessibilityScanner = () => {
     const [url, setUrl] = useState('');
     const [isBrowserActive, setIsBrowserActive] = useState(false);
@@ -25,7 +28,7 @@ const AccessibilityScanner = () => {
         try {
             setIsScanning(true);
             setError(null);
-            const response = await fetch('/api/analyze-accessibility', {
+            const response = await fetch(`${API_URL}/analyze-accessibility`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

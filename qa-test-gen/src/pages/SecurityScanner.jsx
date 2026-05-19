@@ -25,6 +25,10 @@ const SecurityScanner = () => {
     const [activeScan, setActiveScan] = useState(null);
     const [scanResults, setScanResults] = useState(null);
     const [governance, setGovernance] = useState(null);
+    const [scanLogs, setScanLogs] = useState([]);
+    const [logsExpanded, setLogsExpanded] = useState(true);
+    const scanLogCursorRef = useRef(0);
+    const logsEndRef = useRef(null);
 
     // ─── General ─────────────────────────────────────────
     const [error, setError] = useState('');
@@ -101,13 +105,11 @@ const SecurityScanner = () => {
 
     const fetchProjects = async () => {
         try {
-            const res = await fetch(`${API}/projects`, { headers: headers() });
-            if (res.status === 401) { handleLogout(); return; }
-            const text = await res.text();
-            const data = text ? JSON.parse(text) : {};
+            const data = await api.get(`${API}/projects`);
             setProjects(data.projects || []);
         } catch (err) {
-            setError('Failed to fetch projects');
+            if (err.status === 401) auth.signinRedirect();
+            else setError('Failed to fetch projects');
         }
     };
 
@@ -115,14 +117,7 @@ const SecurityScanner = () => {
         e.preventDefault();
         setError('');
         try {
-            const res = await fetch(`${API}/projects`, {
-                method: 'POST',
-                headers: headers(),
-                body: JSON.stringify(projectForm),
-            });
-            const text = await res.text();
-            const data = text ? JSON.parse(text) : {};
-            if (!res.ok) throw new Error(data.error);
+            await api.post(`${API}/projects`, projectForm);
             setProjectForm({
                 name: '',
                 target_url: '',
@@ -238,17 +233,13 @@ const SecurityScanner = () => {
         setScanLoading(true);
         setScanResults(null);
         setGovernance(null);
+        setScanLogs([]);
+        scanLogCursorRef.current = 0;
         try {
-            const res = await fetch(`${API}/scan/start`, {
-                method: 'POST',
-                headers: headers(),
-                body: JSON.stringify({
-                    project_id: selectedProject.id,
-                    scan_type: scanType,
-                }),
+            const data = await api.post(`${API}/scan/start`, {
+                project_id: selectedProject.id,
+                scan_type: scanType,
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error);
             setActiveScan(data.scan);
             startPolling(data.scan.id);
         } catch (err) {
@@ -285,11 +276,17 @@ const SecurityScanner = () => {
 
     const startPolling = (scanId) => {
         if (pollRef.current) clearInterval(pollRef.current);
+        // 2s poll: a little tighter than the original 3s because the log panel
+        // makes lag visible. Still well within the existing infra's request
+        // budget (ZAP scans run for minutes).
         pollRef.current = setInterval(async () => {
             try {
-                const res = await fetch(`${API}/scan/status/${scanId}`, { headers: headers() });
-                const data = await res.json();
+                const data = await api.get(`${API}/scan/status/${scanId}?since=${scanLogCursorRef.current}`);
                 setActiveScan(data);
+                if (Array.isArray(data.logs) && data.logs.length > 0) {
+                    setScanLogs(prev => [...prev, ...data.logs]);
+                }
+                if (typeof data.cursor === 'number') scanLogCursorRef.current = data.cursor;
 
                 if (data.status === 'completed' || data.status === 'failed') {
                     clearInterval(pollRef.current);
@@ -326,6 +323,13 @@ const SecurityScanner = () => {
         }, 3000);
     };
 
+    // Auto-scroll the log panel to the bottom when new lines arrive.
+    useEffect(() => {
+        if (logsExpanded && logsEndRef.current) {
+            logsEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+    }, [scanLogs, logsExpanded]);
+
     const fetchScanResults = async (scanId) => {
         try {
             const res = await fetch(`${API}/scan/results/${scanId}`, { headers: headers() });
@@ -346,14 +350,26 @@ const SecurityScanner = () => {
 
     const checkZapHealth = async () => {
         try {
-            const res = await fetch(`${API}/zap/health`);
-            const text = await res.text();
-            const data = text ? JSON.parse(text) : { status: 'error', error: 'Empty response' };
-            setZapHealth(data);
+            // ZAP health is unauthenticated by design, but we still go through the
+            // api client so the BASE_URL prefix (/aaqua in QA) is applied. A raw
+            // fetch('/api/...') bypasses the prefix and 404s at shared-nginx.
+            const data = await api.get(`${API}/zap/health`);
+            setZapHealth(data || { status: 'error', error: 'Empty response' });
         } catch {
             setZapHealth({ status: 'error', error: 'Unreachable' });
         }
     };
+
+    // ─── Effects ─────────────────────────────────────────
+
+    useEffect(() => {
+        fetchProjects();
+        checkZapHealth();
+        return () => { if (pollRef.current) clearInterval(pollRef.current); };
+        // Mount-only — depending on `fetchProjects` here would re-fire every
+        // render since it isn't memoized; the effect only needs to run once.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // ─── Helpers ────────────────────────────────────────
 
@@ -372,90 +388,6 @@ const SecurityScanner = () => {
         }
     };
 
-    // ─── RENDER: Auth Screen ─────────────────────────────
-
-    if (!token) {
-        return (
-            <div className="security-scanner animate-fade-in">
-                <div className="page-header-premium">
-                    <h2><ShieldCheck size={32} /> AI Secure Engine</h2>
-                    <p>AI-powered security scanning with OWASP ZAP integration</p>
-                </div>
-
-                <div className="auth-layout">
-                    <div className="auth-card-premium">
-                        <div className="auth-tabs-premium">
-                            <button
-                                className={`auth-tab-premium ${authMode === 'login' ? 'active' : ''}`}
-                                onClick={() => setAuthMode('login')}
-                            >
-                                Login
-                            </button>
-                            <button
-                                className={`auth-tab-premium ${authMode === 'register' ? 'active' : ''}`}
-                                onClick={() => setAuthMode('register')}
-                            >
-                                Register
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleAuth}>
-                            {authMode === 'register' && (
-                                <div className="form-group-premium">
-                                    <label>Full Name</label>
-                                    <input
-                                        type="text"
-                                        className="form-input-premium"
-                                        placeholder="John Doe"
-                                        value={authForm.name}
-                                        onChange={e => setAuthForm(p => ({ ...p, name: e.target.value }))}
-                                        required
-                                    />
-                                </div>
-                            )}
-                            <div className="form-group-premium">
-                                <label>Email Address</label>
-                                <input
-                                    type="email"
-                                    className="form-input-premium"
-                                    placeholder="your@email.com"
-                                    value={authForm.email}
-                                    onChange={e => setAuthForm(p => ({ ...p, email: e.target.value }))}
-                                    required
-                                />
-                            </div>
-                            <div className="form-group-premium">
-                                <label>Password</label>
-                                <input
-                                    type="password"
-                                    className="form-input-premium"
-                                    placeholder="••••••••"
-                                    value={authForm.password}
-                                    onChange={e => setAuthForm(p => ({ ...p, password: e.target.value }))}
-                                    required
-                                    minLength={8}
-                                />
-                            </div>
-
-                            {authError && (
-                                <div className="error-banner-premium">
-                                    <AlertTriangle size={16} />
-                                    {authError}
-                                </div>
-                            )}
-
-                            <button type="submit" className="btn btn-primary full-width" disabled={authLoading}>
-                                {authLoading ? <Loader2 className="spin" size={18} /> : <LogIn size={18} />}
-                                {authMode === 'login' ? 'Sign In' : 'Create Account'}
-                            </button>
-                        </form>
-                    </div>
-                </div>
-                {renderStyles()}
-            </div>
-        );
-    }
-
     // ─── RENDER: Main App ────────────────────────────────
 
     return (
@@ -470,7 +402,6 @@ const SecurityScanner = () => {
                         <span className={`zap-status-pill ${zapHealth?.status === 'ok' ? 'online' : 'offline'}`}>
                             {zapHealth?.status === 'ok' ? '● ZAP Engine Active' : '○ Engine Offline'}
                         </span>
-                        <button className="btn btn-ghost" onClick={handleLogout}>Logout</button>
                     </div>
                 </div>
             </div>
@@ -730,6 +661,23 @@ const SecurityScanner = () => {
                                     <StopCircle size={14} /> Stop Scan
                                 </button>
                             </div>
+                        </div>
+                    )}
+
+                    {/* Scan Log Panel — tail of zapService + executeScan output */}
+                    {scanLogs.length > 0 && (
+                        <div className="scan-log-card">
+                            <div className="scan-log-header" onClick={() => setLogsExpanded(v => !v)}>
+                                {logsExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                <span>Scan logs ({scanLogs.length})</span>
+                                {scanLoading && <span className="scan-log-live">● LIVE</span>}
+                            </div>
+                            {logsExpanded && (
+                                <pre className="scan-log-body">
+                                    {scanLogs.join('\n')}
+                                    <div ref={logsEndRef} />
+                                </pre>
+                            )}
                         </div>
                     )}
 
@@ -1357,6 +1305,32 @@ function renderStyles() {
         .progress-bar { height: 6px; background: var(--bg-tertiary); border-radius: 99px; overflow: hidden; }
         .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary)); border-radius: 99px; transition: width 0.5s ease; }
         .scan-progress-text { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; }
+
+        /* Scan Log Panel */
+        .scan-log-card {
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg); margin-bottom: 1.5rem; overflow: hidden;
+        }
+        .scan-log-header {
+            display: flex; align-items: center; gap: 0.5rem;
+            padding: 0.75rem 1rem; cursor: pointer;
+            font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);
+            background: var(--bg-tertiary); user-select: none;
+        }
+        .scan-log-header:hover { color: var(--text-primary); }
+        .scan-log-live {
+            margin-left: auto; font-size: 0.7rem; color: var(--error); font-weight: 700;
+            animation: scanLogPulse 1.2s ease-in-out infinite;
+        }
+        @keyframes scanLogPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .scan-log-body {
+            background: #0d0d14; color: #c4c4c4;
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.78rem; line-height: 1.5;
+            padding: 1rem; margin: 0;
+            max-height: 320px; overflow-y: auto;
+            white-space: pre-wrap; word-break: break-word;
+        }
 
         /* Governance Card */
         .governance-card {

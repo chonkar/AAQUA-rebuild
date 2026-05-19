@@ -5,9 +5,19 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores([
+    'dist',
+    // Ad-hoc dev scripts at the repo root — gitignored, not for review.
+    'debug_llm.js',
+    'test_request.js',
+    'test-llm-full.js',
+    'tmp-test-llm.js',
+    'apply_fixes.cjs',
+    'fix_llm.cjs',
+  ]),
+  // Frontend (browser globals).
   {
-    files: ['**/*.{js,jsx}'],
+    files: ['src/**/*.{js,jsx}'],
     extends: [
       js.configs.recommended,
       reactHooks.configs.flat.recommended,
@@ -28,6 +38,22 @@ export default defineConfig([
         argsIgnorePattern: '^(e|err|parseErr|parseError|_.*)$',
         caughtErrorsIgnorePattern: '^(e|err|parseErr|parseError|_.*)$'
       }],
+    },
+  },
+  // Backend (Node globals — process, Buffer, console, __dirname, etc.).
+  {
+    files: ['server/**/*.js', 'scripts/**/*.{js,cjs,mjs}'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: { ...globals.node },
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]|^_' }],
     },
   },
 ])

@@ -463,11 +463,21 @@ export async function setupZapContext(project) {
 
 // ─── Full Scan Orchestration ─────────────────────────────
 
+// Each orchestrator accepts an optional `onLog(line)` callback so the route
+// layer can capture phase-level events (session create, spider start, alert
+// count) and surface them to the tester via the /status endpoint's log tail.
+// Falls back to console.log when not provided so server logs are unchanged.
+const mkLog = (onLog) => (line) => {
+    if (onLog) onLog(line);
+    else console.log(line);
+};
+
 /**
  * Run a complete baseline scan (spider → passive scan → get alerts)
  */
 export async function runBaselineScan(project, onProgress, dbScan = null) {
     const targetUrl = project.target_url;
+    log(`[ZAP] Baseline scan starting for ${targetUrl}`);
     await newSession(`baseline-${Date.now()}`);
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     await accessUrl(targetUrl); // Prime the tree
@@ -486,6 +496,7 @@ export async function runBaselineScan(project, onProgress, dbScan = null) {
  */
 export async function runFullActiveScan(project, onProgress, dbScan = null) {
     const targetUrl = project.target_url;
+    log(`[ZAP] Active scan starting for ${targetUrl}`);
     await newSession(`active-${Date.now()}`);
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     await accessUrl(targetUrl); // Prime the tree
@@ -512,6 +523,7 @@ export async function runFullActiveScan(project, onProgress, dbScan = null) {
  */
 export async function runApiScan(specUrl, project, onProgress, dbScan = null) {
     const targetUrl = project?.target_url;
+    log(`[ZAP] API scan starting; importing OpenAPI spec from ${specUrl}`);
     await newSession(`api-${Date.now()}`);
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     let hasContext = null;
@@ -541,6 +553,7 @@ export async function runApiScan(specUrl, project, onProgress, dbScan = null) {
  */
 export async function runPassiveScan(project, onProgress, dbScan = null) {
     const targetUrl = project.target_url;
+    log(`[ZAP] Passive scan starting for ${targetUrl}`);
     await newSession(`passive-${Date.now()}`);
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     await accessUrl(targetUrl); // Prime the tree
@@ -559,6 +572,7 @@ export async function runPassiveScan(project, onProgress, dbScan = null) {
  */
 export async function runFuzzerScan(project, onProgress, dbScan = null) {
     const targetUrl = project.target_url;
+    log(`[ZAP] Fuzzer scan starting for ${targetUrl}`);
     await newSession(`fuzzer-${Date.now()}`);
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     await accessUrl(targetUrl); // Prime the tree
