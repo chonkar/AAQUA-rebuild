@@ -9,6 +9,7 @@ const LocalizationTester = () => {
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [issues, setIssues] = useState([]);
     const [error, setError] = useState(null);
+    const [chunkCount, setChunkCount] = useState(null);
 
     const languages = [
         'Arabic',
@@ -45,6 +46,7 @@ const LocalizationTester = () => {
 
             const result = await analyzeLocalization(html, targetLanguage, apiKey);
             setIssues(result.issues || []);
+            setChunkCount(result.chunks || 1);
 
         } catch (err) {
             setError(err.message);
@@ -55,9 +57,9 @@ const LocalizationTester = () => {
 
     return (
         <div className="localization-tester animate-fade-in">
-            <div className="page-header">
+            <div className="lc-header">
                 <h2><Globe className="inline-icon" /> Localization Tester</h2>
-                <p>Detect English text leakage on localized pages.</p>
+                <p className="lc-subtitle">Detect English text leakage on localized pages.</p>
             </div>
 
             <div className="tester-container">
@@ -111,7 +113,8 @@ const LocalizationTester = () => {
                         <button
                             onClick={handleAnalyze}
                             disabled={!isBrowserActive || isAnalyzing}
-                            className="btn btn-accent full-width"
+                            className="btn full-width"
+                            style={{ background: '#2563eb', color: '#fff', border: 'none' }}
                         >
                             {isAnalyzing ? <Loader2 className="spin" /> : <Search size={18} />}
                             {isAnalyzing ? "Analyzing..." : "Analyze Current Page"}
@@ -131,6 +134,12 @@ const LocalizationTester = () => {
                 <div className="results-panel">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                         <h3 style={{ margin: 0 }}>Analysis Results</h3>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        {chunkCount > 1 && (
+                            <span style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', padding: '0.25rem 0.75rem', borderRadius: '999px', fontSize: '0.8rem' }}>
+                                {chunkCount} chunks scanned
+                            </span>
+                        )}
                         {issues.length > 0 && (
                             <span style={{
                                 background: '#3b82f6',
@@ -143,6 +152,7 @@ const LocalizationTester = () => {
                                 Total Findings: {issues.length}
                             </span>
                         )}
+                        </div>
                     </div>
                     {issues.length === 0 && !isAnalyzing ? (
                         <div className="empty-state">
@@ -172,7 +182,21 @@ const LocalizationTester = () => {
             <style>{`
                 .localization-tester { max-width: 1000px; margin: 0 auto; }
                 .inline-icon { display: inline; vertical-align: middle; margin-right: 0.5rem; }
-                
+
+                /* Header — matches Test Runner format */
+                .lc-header { margin-bottom: 2rem; }
+                .lc-header h2 {
+                    font-size: 2rem;
+                    margin-bottom: 0.5rem;
+                    background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .lc-subtitle { color: var(--text-secondary); }
+
                 .tester-container {
                     display: grid;
                     grid-template-columns: 1fr 1.5fr;

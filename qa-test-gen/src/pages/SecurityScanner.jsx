@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, Play, Loader2, AlertTriangle, CheckCircle, XCircle, Lock, LogIn, Plus, ArrowLeft, BarChart3, Shield, Bug, Code, RefreshCw, Download, Clock, TrendingUp, Eye, BrainCircuit, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { ShieldCheck, Play, Loader2, AlertTriangle, CheckCircle, XCircle, Lock, LogIn, Plus, ArrowLeft, BarChart3, Shield, Bug, Code, RefreshCw, Download, Clock, TrendingUp, Eye, BrainCircuit, Sparkles, ChevronDown, ChevronUp, StopCircle } from 'lucide-react';
 
-const API = '/api/security';
+const API = 'http://localhost:3001/api/security';
 
 const SecurityScanner = () => {
     // ─── Auth state ──────────────────────────────────────
     const [token, setToken] = useState(localStorage.getItem('sec_token') || '');
-    const [user, setUser] = useState(null);
+    const [_user, setUser] = useState(null);
     const [authMode, setAuthMode] = useState('login'); // login | register
     const [authForm, setAuthForm] = useState({ email: '', password: '', name: '' });
     const [authError, setAuthError] = useState('');
@@ -17,6 +17,7 @@ const SecurityScanner = () => {
     const [projects, setProjects] = useState([]);
     const [selectedProject, setSelectedProject] = useState(null);
     const [dashboardData, setDashboardData] = useState(null);
+    const [scanHistory, setScanHistory] = useState([]);
 
     // ─── Scan state ──────────────────────────────────────
     const [scanType, setScanType] = useState('baseline');
@@ -54,7 +55,7 @@ const SecurityScanner = () => {
             checkZapHealth();
         }
         return () => { if (pollRef.current) clearInterval(pollRef.current); };
-    }, [token]);
+    }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── Auth handlers ───────────────────────────────────
 
@@ -144,11 +145,90 @@ const SecurityScanner = () => {
         setScanResults(null);
         setGovernance(null);
         setActiveScan(null);
+        setScanHistory([]);
         try {
+            // Fetch project detail with scan history
+            const projRes = await fetch(`${API}/projects/${project.id}`, { headers: headers() });
+            const projData = await projRes.json();
+            if (projRes.ok) setScanHistory(projData.project.scans || []);
+
             const res = await fetch(`${API}/dashboard/summary/${project.id}`, { headers: headers() });
             const data = await res.json();
             if (res.ok) setDashboardData(data);
-        } catch { }
+        } catch (_err) { /* ignored */ }
+    };
+
+    const downloadReport = async (scanId, scanType, scanDate) => {
+        setError('');
+        try {
+            const res = await fetch(`${API}/scan/report/${scanId}/download`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || 'Failed to generate report.');
+            }
+
+            // Extract the filename from Content-Disposition if exposed, otherwise construct it
+            let filename = '';
+            const disposition = res.headers.get('Content-Disposition');
+            if (disposition && disposition.indexOf('attachment') !== -1) {
+                const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                const matches = filenameRegex.exec(disposition);
+                if (matches != null && matches[1]) { 
+                    filename = matches[1].replace(/['"]/g, '');
+                }
+            }
+
+            // Fallback to client-side formatted date and time if header is missing
+            if (!filename) {
+                const dateObj = new Date(scanDate || Date.now());
+                const formattedDate = dateObj.getFullYear() + '-' +
+                    String(dateObj.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(dateObj.getDate()).padStart(2, '0');
+                const formattedTime = String(dateObj.getHours()).padStart(2, '0') + '-' +
+                    String(dateObj.getMinutes()).padStart(2, '0') + '-' +
+                    String(dateObj.getSeconds()).padStart(2, '0');
+                filename = `Security_Scan_Report_${scanType}_${formattedDate}_${formattedTime}.docx`;
+            }
+
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            
+            // Delay revocation to ensure the browser captures the filename and starts downloading before blob is destroyed
+            setTimeout(() => {
+                window.URL.revokeObjectURL(url);
+                a.remove();
+            }, 5000);
+        } catch (err) {
+            setError('Failed to download report: ' + err.message);
+        }
+    };
+
+    const handleViewHistoryResults = async (scanId) => {
+        setScanLoading(true);
+        setError('');
+        setScanResults(null);
+        setGovernance(null);
+        try {
+            await fetchScanResults(scanId);
+            await fetchGovernance(scanId);
+            const res = await fetch(`${API}/scan/status/${scanId}`, { headers: headers() });
+            const data = await res.ok ? await res.json() : null;
+            setActiveScan(data);
+        } catch (err) {
+            setError('Failed to fetch historical scan results.');
+        } finally {
+            setScanLoading(false);
+        }
     };
 
     // ─── Scan handlers ──────────────────────────────────
@@ -177,6 +257,32 @@ const SecurityScanner = () => {
         }
     };
 
+    const handleStopScan = async (scanId) => {
+        setError('');
+        try {
+            const res = await fetch(`${API}/scan/stop/${scanId}`, {
+                method: 'POST',
+                headers: headers(),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to stop scan.');
+
+            if (pollRef.current) {
+                clearInterval(pollRef.current);
+                pollRef.current = null;
+            }
+
+            setActiveScan(null);
+            setScanLoading(false);
+            setScanResults(null);
+            setGovernance(null);
+
+            await openProject(selectedProject);
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
     const startPolling = (scanId) => {
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = setInterval(async () => {
@@ -197,16 +303,26 @@ const SecurityScanner = () => {
                         const dashRes = await fetch(`${API}/dashboard/summary/${selectedProject.id}`, { headers: headers() });
                         const dashData = await dashRes.json();
                         if (dashRes.ok) setDashboardData(dashData);
+
+                        // Refresh scan history
+                        const projRes = await fetch(`${API}/projects/${selectedProject.id}`, { headers: headers() });
+                        const projData = await projRes.json();
+                        if (projRes.ok) setScanHistory(projData.project.scans || []);
                     } else if (data.status === 'failed') {
-                        const errorMsg = data.error || 'Scan execution failed';
+                        const errorMsg = data.error_message || data.error || 'Scan execution failed';
                         if (errorMsg.includes('429') || errorMsg.toLowerCase().includes('quota') || errorMsg.toLowerCase().includes('rate limit')) {
-                            setError('AI Rate Limit Reached: The scan finished but AI analysis was throttled. Please wait a few minutes before trying again or check your Gemini API quota.');
+                            setError('AI Rate Limit Reached: The scan finished but AI analysis was throttled. Please wait a few minutes before trying again or check your Local LLM configuration.');
                         } else {
                             setError(`Security Scan Failed: ${errorMsg}`);
                         }
+
+                        // Refresh scan history
+                        const projRes = await fetch(`${API}/projects/${selectedProject.id}`, { headers: headers() });
+                        const projData = await projRes.json();
+                        if (projRes.ok) setScanHistory(projData.project.scans || []);
                     }
                 }
-            } catch { }
+            } catch (_err) { /* ignored */ }
         }, 3000);
     };
 
@@ -215,7 +331,7 @@ const SecurityScanner = () => {
             const res = await fetch(`${API}/scan/results/${scanId}`, { headers: headers() });
             const data = await res.json();
             if (res.ok) setScanResults(data);
-        } catch { }
+        } catch (_err) { /* ignored */ }
     };
 
     const fetchGovernance = async (scanId) => {
@@ -223,7 +339,7 @@ const SecurityScanner = () => {
             const res = await fetch(`${API}/governance/release-check/${scanId}`, { headers: headers() });
             const data = await res.json();
             if (res.ok) setGovernance(data);
-        } catch { }
+        } catch (_err) { /* ignored */ }
     };
 
     // ─── ZAP health ──────────────────────────────────────
@@ -582,7 +698,38 @@ const SecurityScanner = () => {
                             <div className="progress-bar" style={{ background: 'var(--bg-primary)' }}>
                                 <div className="progress-fill" style={{ width: `${activeScan.progress || 5}%` }} />
                             </div>
-                            <p className="scan-progress-text">System is currently performing {activeScan.scan_type} analysis on target endpoint.</p>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
+                                <p className="scan-progress-text" style={{ margin: 0 }}>System is currently performing {activeScan.scan_type} analysis on target endpoint.</p>
+                                <button 
+                                    className="btn-danger" 
+                                    style={{ 
+                                        background: 'rgba(239, 68, 68, 0.1)', 
+                                        color: '#ef4444', 
+                                        border: '1px solid #ef4444',
+                                        borderRadius: '6px',
+                                        padding: '6px 14px',
+                                        fontSize: '0.85rem',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        fontWeight: '600',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s ease',
+                                        boxShadow: '0 0 10px rgba(239, 68, 68, 0.15)'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                                        e.target.style.boxShadow = '0 0 15px rgba(239, 68, 68, 0.3)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                                        e.target.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.15)';
+                                    }}
+                                    onClick={() => handleStopScan(activeScan.id)}
+                                >
+                                    <StopCircle size={14} /> Stop Scan
+                                </button>
+                            </div>
                         </div>
                     )}
 
@@ -593,11 +740,11 @@ const SecurityScanner = () => {
                                 {governance.release_blocked ? <XCircle size={32} style={{ color: 'var(--error)' }} /> : <CheckCircle size={32} style={{ color: 'var(--success)' }} />}
                                 <div>
                                     <h4 style={{ fontSize: '1.2rem' }}>{governance.release_blocked ? 'Policy Violation: Release Blocked' : 'Security Compliance: Approved'}</h4>
-                                    <p>Security Gate: Critical+High vulnerabilities at {governance.metrics?.critical_high_percentage?.toFixed(1)}% (Limit: 30%)</p>
+                                    <p>Security Posture Score: {governance.metrics?.health_score !== undefined && governance.metrics?.health_score !== null ? governance.metrics.health_score.toFixed(1) : '—'}/10 (Policy Gate Limit: 6.0/10)</p>
                                 </div>
                                 <div style={{ marginLeft: 'auto' }}>
                                     <span style={{ fontSize: '0.8rem', background: 'var(--bg-primary)', padding: '4px 10px', borderRadius: '4px' }}>
-                                        {governance.metrics?.regression_count} Regressions Found
+                                        {governance.metrics?.regressions || 0} Regressions Found
                                     </span>
                                 </div>
                             </div>
@@ -612,7 +759,16 @@ const SecurityScanner = () => {
                     {/* Scan Results Dashboard */}
                     {scanResults && (
                         <div className="results-section">
-                            <h3 className="results-title"><BarChart3 size={20} /> Latest Analysis Findings</h3>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                                <h3 className="results-title" style={{ margin: 0 }}><BarChart3 size={20} /> Latest Analysis Findings</h3>
+                                <button 
+                                    className="btn-ghost" 
+                                    style={{ background: 'var(--accent-glow)', borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)', fontWeight: 'bold' }}
+                                    onClick={() => downloadReport(scanResults.scan.id, scanResults.scan.scan_type, scanResults.scan.started_at || scanResults.scan.created_at)}
+                                >
+                                    <Download size={16} /> Download Report
+                                </button>
+                            </div>
 
                             <div className="stats-row-premium">
                                 {[
@@ -623,6 +779,7 @@ const SecurityScanner = () => {
                                     { label: 'Medium', value: scanResults.summary.medium, color: 'var(--warning)' },
                                     { label: 'Low', value: scanResults.summary.low, color: 'var(--success)' },
                                     { label: 'Regressions', value: scanResults.summary.regressions, color: '#a855f7' },
+                                    { label: 'Scan Date', value: scanResults.scan?.completed_at ? new Date(scanResults.scan.completed_at).toLocaleDateString() : new Date(scanResults.scan?.started_at || Date.now()).toLocaleDateString(), color: 'var(--accent-secondary)' },
                                 ].map(c => (
                                     <div key={c.label} className="stat-card-premium">
                                         <span className="value" style={{ color: c.color }}>{c.value}</span>
@@ -673,6 +830,7 @@ const SecurityScanner = () => {
                                     { label: 'Active Issues', value: dashboardData.stats.total_vulnerabilities, color: 'var(--warning)' },
                                     { label: 'Risk Exposure', value: `${dashboardData.stats.critical_high_pct?.toFixed(1)}%`, color: '#f97316' },
                                     { label: 'Policy Status', value: dashboardData.stats.release_status || 'N/A', color: dashboardData.stats.release_status === 'APPROVED' ? 'var(--success)' : 'var(--error)' },
+                                    { label: 'Last Scan', value: dashboardData.stats.last_scan_date ? new Date(dashboardData.stats.last_scan_date).toLocaleDateString() : 'N/A', color: 'var(--accent-secondary)' },
                                 ].map(c => (
                                     <div key={c.label} className="stat-card-premium">
                                         <span className="value" style={{ color: c.color }}>{c.value}</span>
@@ -700,7 +858,7 @@ const SecurityScanner = () => {
                             )}
 
                             {dashboardData.executive_summary && (
-                                <div className="exec-summary-box" style={{ background: 'var(--bg-tertiary)', borderLeft: '4px solid var(--accent-primary)' }}>
+                                <div className="exec-summary-box" style={{ background: 'var(--bg-tertiary)', borderLeft: '4px solid var(--accent-primary)', marginBottom: '2rem' }}>
                                     <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                         <Sparkles size={18} style={{ color: 'var(--accent-primary)' }} /> AI Executive Summary
                                     </h4>
@@ -709,6 +867,95 @@ const SecurityScanner = () => {
                                     </div>
                                 </div>
                             )}
+
+                            {/* Security Scan History (Up to 30 Scans) */}
+                            <div className="card" style={{ marginTop: '2rem', padding: '1.5rem', marginBottom: '2rem', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-lg)' }}>
+                                <h4 style={{ marginBottom: '1.25rem', color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem' }}>
+                                    <Clock size={20} /> Security Scan Execution History (Up to 30 Scans)
+                                </h4>
+                                
+                                {scanHistory && scanHistory.length > 0 ? (
+                                    <div style={{ overflowX: 'auto' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                            <thead>
+                                                <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left', background: 'var(--bg-primary)' }}>
+                                                    <th style={{ padding: '12px 10px' }}>Scan Type</th>
+                                                    <th style={{ padding: '12px 10px' }}>Execution Date</th>
+                                                    <th style={{ padding: '12px 10px' }}>Status</th>
+                                                    <th style={{ padding: '12px 10px' }}>Governance Gate</th>
+                                                    <th style={{ padding: '12px 10px' }}>Findings Breakdown</th>
+                                                    <th style={{ padding: '12px 10px', textAlign: 'center' }}>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {scanHistory.map((scan) => {
+                                                    const isBlocked = scan.governance?.release_blocked;
+                                                    return (
+                                                        <tr key={scan.id} style={{ borderBottom: '1px solid var(--border-color)', transition: 'background 0.2s' }} className="table-row-hover">
+                                                            <td style={{ padding: '12px 10px', textTransform: 'capitalize', fontWeight: '600', color: 'var(--text-primary)' }}>{scan.scan_type}</td>
+                                                            <td style={{ padding: '12px 10px' }}>{new Date(scan.started_at || scan.created_at || Date.now()).toLocaleString()}</td>
+                                                            <td style={{ padding: '12px 10px' }}>
+                                                                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                    {getStatusIcon(scan.status)}
+                                                                    <span style={{ textTransform: 'capitalize', fontSize: '0.8rem' }}>{scan.status}</span>
+                                                                </span>
+                                                            </td>
+                                                            <td style={{ padding: '12px 10px' }}>
+                                                                {scan.status === 'completed' ? (
+                                                                    <span style={{ 
+                                                                        padding: '2px 8px', 
+                                                                        borderRadius: '4px', 
+                                                                        fontSize: '0.75rem', 
+                                                                        fontWeight: '700',
+                                                                        background: isBlocked ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                                                                        color: isBlocked ? 'var(--error)' : 'var(--success)',
+                                                                        border: `1px solid ${isBlocked ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 197, 94, 0.2)'}`
+                                                                    }}>
+                                                                        {isBlocked ? 'BLOCKED' : 'APPROVED'}
+                                                                    </span>
+                                                                ) : '—'}
+                                                            </td>
+                                                            <td style={{ padding: '12px 10px' }}>
+                                                                {scan.status === 'completed' && scan.governance ? (
+                                                                    <div style={{ display: 'flex', gap: '6px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                                                                        <span style={{ background: 'rgba(239, 68, 68, 0.15)', color: 'var(--error)', padding: '1px 6px', borderRadius: '4px' }}>C: {scan.governance.critical_count || 0}</span>
+                                                                        <span style={{ background: 'rgba(249, 115, 22, 0.15)', color: '#f97316', padding: '1px 6px', borderRadius: '4px' }}>H: {scan.governance.high_count || 0}</span>
+                                                                        <span style={{ background: 'var(--bg-primary)', color: 'var(--text-muted)', padding: '1px 6px', borderRadius: '4px' }}>Total: {scan.governance.total_count || 0}</span>
+                                                                    </div>
+                                                                ) : '—'}
+                                                            </td>
+                                                            <td style={{ padding: '12px 10px', display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                                                                {scan.status === 'completed' && (
+                                                                    <>
+                                                                        <button 
+                                                                            className="btn-ghost" 
+                                                                            style={{ padding: '4px 8px', fontSize: '0.75rem' }} 
+                                                                            title="View Scan Results"
+                                                                            onClick={() => handleViewHistoryResults(scan.id)}
+                                                                        >
+                                                                            <Eye size={12} /> View
+                                                                        </button>
+                                                                        <button 
+                                                                            className="btn-ghost" 
+                                                                            style={{ padding: '4px 8px', fontSize: '0.75rem', color: 'var(--accent-primary)', borderColor: 'var(--accent-glow)' }} 
+                                                                            title="Download Report"
+                                                                            onClick={() => downloadReport(scan.id, scan.scan_type, scan.started_at || scan.created_at)}
+                                                                        >
+                                                                            <Download size={12} /> Download
+                                                                        </button>
+                                                                    </>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ) : (
+                                    <p style={{ margin: 0, color: 'var(--text-muted)', textAlign: 'center', padding: '1.5rem' }}>No historical scans have been recorded for this project yet.</p>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -819,16 +1066,17 @@ function renderStyles() {
             margin: 0; 
             font-size: 2rem; 
             font-weight: 800;
-            background: linear-gradient(to right, #fff, var(--text-secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: var(--text-primary);
+            -webkit-text-fill-color: unset;
+            background: none;
             display: flex;
             align-items: center;
             gap: 0.75rem;
         }
         .page-header-premium p { 
             margin: 0.5rem 0 0 0; 
-            color: var(--text-secondary);
+            color: var(--text-primary);
+            opacity: 0.75;
             font-size: 1.1rem;
         }
 
@@ -1204,6 +1452,10 @@ function renderStyles() {
 
         .project-detail-header { margin-bottom: 1rem; }
         .project-detail-header h3 { margin: 0; }
+
+        .table-row-hover:hover {
+            background: rgba(255, 255, 255, 0.03) !important;
+        }
 
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }

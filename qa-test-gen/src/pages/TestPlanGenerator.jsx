@@ -132,7 +132,7 @@ const TestPlanGenerator = () => {
                 />
             </div>
 
-            <div className="btn-group-action" style={{ display: 'flex', gap: '0.5rem' }}>
+            <div className="btn-group-action" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
                 <button
                     className="btn btn-primary generate-btn"
                     onClick={handleGenerate}
@@ -155,7 +155,7 @@ const TestPlanGenerator = () => {
                     <button
                         className="btn btn-danger"
                         onClick={handleCancel}
-                        title="Cancel Operation"
+                        title="Cancel Generation"
                         style={{
                             background: 'rgba(239, 68, 68, 0.2)',
                             color: '#fca5a5',

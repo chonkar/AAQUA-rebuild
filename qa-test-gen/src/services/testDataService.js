@@ -38,7 +38,7 @@ const processHybridData = (data) => {
 
         if (val.includes('{{FAKER_NAME}}')) { fakerCount++; return faker.person.fullName(); }
         if (val.includes('{{FAKER_EMAIL}}')) { fakerCount++; return faker.internet.email(); }
-        if (val.includes('{{FAKER_PHONE}}')) { fakerCount++; return faker.phone.number(); }
+        if (val.includes('{{FAKER_PHONE}}')) { fakerCount++; return faker.string.numeric(10); }
         if (val.includes('{{FAKER_CITY}}')) { fakerCount++; return faker.location.city(); }
         if (val.includes('{{FAKER_COUNTRY}}')) { fakerCount++; return faker.location.country(); }
         if (val.includes('{{FAKER_COMPANY}}')) { fakerCount++; return faker.company.name(); }

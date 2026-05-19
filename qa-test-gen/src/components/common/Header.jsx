@@ -14,7 +14,7 @@ const Header = () => {
           </div>
           <h1 className="app-title">
             AAUQA <span className="full-title">- Aaseya AI quality assuarance</span>
-            <span className="beta-tag">BETA</span>
+
           </h1>
         </div>
 
@@ -83,7 +83,7 @@ const Header = () => {
            color: var(--text-secondary);
         }
         
-        .beta-tag {
+        /* beta-tag removed */
           font-size: 0.65rem;
           background: var(--bg-tertiary);
           border: 1px solid var(--border-color);

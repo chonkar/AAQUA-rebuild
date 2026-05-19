@@ -12,7 +12,7 @@ User.hasMany(Project, { foreignKey: 'owner_id', as: 'projects' });
 Project.belongsTo(User, { foreignKey: 'owner_id', as: 'owner' });
 
 // Project → Scans (one-to-many)
-Project.hasMany(Scan, { foreignKey: 'project_id', as: 'scans' });
+Project.hasMany(Scan, { foreignKey: 'project_id', as: 'scans', onDelete: 'CASCADE', hooks: true });
 Scan.belongsTo(Project, { foreignKey: 'project_id', as: 'project' });
 
 // User → Scans (initiator)
@@ -20,11 +20,11 @@ User.hasMany(Scan, { foreignKey: 'initiated_by', as: 'initiatedScans' });
 Scan.belongsTo(User, { foreignKey: 'initiated_by', as: 'initiator' });
 
 // Scan → Vulnerabilities (one-to-many)
-Scan.hasMany(Vulnerability, { foreignKey: 'scan_id', as: 'vulnerabilities' });
+Scan.hasMany(Vulnerability, { foreignKey: 'scan_id', as: 'vulnerabilities', onDelete: 'CASCADE', hooks: true });
 Vulnerability.belongsTo(Scan, { foreignKey: 'scan_id', as: 'scan' });
 
 // Scan → GovernanceMetric (one-to-one)
-Scan.hasOne(GovernanceMetric, { foreignKey: 'scan_id', as: 'governance' });
+Scan.hasOne(GovernanceMetric, { foreignKey: 'scan_id', as: 'governance', onDelete: 'CASCADE', hooks: true });
 GovernanceMetric.belongsTo(Scan, { foreignKey: 'scan_id', as: 'scan' });
 
 // ─── Sync helper ─────────────────────────────────────────

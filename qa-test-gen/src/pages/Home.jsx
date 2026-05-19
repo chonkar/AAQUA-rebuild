@@ -2,11 +2,11 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, FileText, ArrowRight, Star, Moon, Sun, Database, Target, ShieldCheck, Layers, Globe, PersonStanding, PlayCircle } from 'lucide-react';
 
-const ServiceCard = ({ icon: Icon, title, description, badge, onClick }) => (
+const ServiceCard = ({ icon: _Icon, title, description, badge, onClick }) => (
   <div className="service-card" onClick={onClick}>
     <div className="card-header">
       <div className={`icon-wrapper ${badge ? 'disabled' : ''}`}>
-        <Icon size={24} color={badge ? 'var(--text-muted)' : 'var(--text-primary)'} />
+        <_Icon size={24} color={badge ? 'var(--text-muted)' : 'var(--text-primary)'} />
       </div>
       {badge && <span className="badge">{badge}</span>}
     </div>
@@ -82,7 +82,7 @@ const Home = () => {
         <ServiceCard
           icon={Globe}
           title="Localization Tester"
-          description="Detect untranslated text and localization issues using Gemini AI analysis."
+          description="Detect untranslated text and localization issues using Local LLM analysis."
           onClick={() => navigate('/localization')}
         />
 

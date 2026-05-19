@@ -1,10 +1,10 @@
 const API_URL = "http://localhost:3001/api";
 
-export const runTestsLocal = async (projectPath) => {
+export const runTestsLocal = async (projectPath, isHeadless = true) => {
     const response = await fetch(`${API_URL}/run-tests-local`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath }),
+        body: JSON.stringify({ projectPath, isHeadless }),
     });
     if (!response.ok) {
         const err = await response.json().catch(() => ({ error: 'Unknown error' }));

@@ -1,13 +1,13 @@
 # AI Secure Engine
 
-AI-powered security scanning backend integrated into the AAQUA platform. Uses OWASP ZAP for vulnerability scanning and Gemini AI for intelligent analysis, remediation, and governance.
+AI-powered security scanning backend integrated into the AAQUA platform. Uses OWASP ZAP for vulnerability scanning and Local LLM for intelligent analysis, remediation, and governance.
 
 ## Architecture
 
 ```
 React Frontend  →  Express Server (:3001)  →  ZAP API (:8080)
                                            →  PostgreSQL (:5432)
-                                           →  Gemini AI
+                                           →  Local LLM
                                            →  Jira API (optional)
 ```
 
@@ -158,7 +158,7 @@ curl http://localhost:3001/api/security/governance/release-check/<scan-id> \
 | `ZAP_API_KEY` | No | _(empty)_ | ZAP API key (disabled in dev) |
 | `JWT_SECRET` | Yes | _(default)_ | Secret for JWT signing |
 | `JWT_EXPIRES_IN` | No | `24h` | Token expiration |
-| `VITE_GEMINI_API_KEY` | Yes | — | Gemini API key for AI analysis |
+| `VITE_LLM_API_KEY` | Yes | — | Local LLM API key for AI analysis |
 | `JIRA_ENABLED` | No | `false` | Enable Jira integration |
 | `JIRA_URL` | No | — | Jira instance URL |
 | `JIRA_EMAIL` | No | — | Jira user email |
@@ -186,7 +186,7 @@ server/
 │   └── governanceRoutes.js
 ├── services/             # Business logic
 │   ├── zapService.js     # OWASP ZAP API client
-│   ├── aiAnalysisService.js  # Gemini AI analysis
+│   ├── aiAnalysisService.js  # Local LLM analysis
 │   ├── governanceService.js  # Release gating
 │   └── jiraService.js    # Jira integration
 └── middleware/           # Security middleware

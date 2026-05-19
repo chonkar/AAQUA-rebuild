@@ -8,7 +8,7 @@ const StatsChart = ({ stats }) => {
 
     const { fakerCount, llmCount, totalFields } = stats;
     const fakerPercent = totalFields > 0 ? Math.round((fakerCount / totalFields) * 100) : 0;
-    const llmPercent = 100 - fakerPercent;
+    const _llmPercent = 100 - fakerPercent;
 
     // SVG parameters
     const size = 160;

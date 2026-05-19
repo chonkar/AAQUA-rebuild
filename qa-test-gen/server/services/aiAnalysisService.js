@@ -3,19 +3,19 @@ import dotenv from 'dotenv';
 import { generateWithRetry } from '../utils/aiUtils.js';
 dotenv.config();
 
-const GEMINI_API_KEY = process.env.VITE_LLM_API_KEY;
+const LLM_API_KEY = process.env.VITE_LLM_API_KEY;
 const LLM_ENDPOINT = process.env.VITE_LLM_ENDPOINT;
 const LLM_MODEL = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
 /**
- * Analyze vulnerabilities using Gemini AI
+ * Analyze vulnerabilities using Local LLM
  * Processes in batches to minimize API calls
  *
  * @param {Array} alerts - Array of ZAP alert objects
  * @returns {Array} Enriched vulnerability objects with AI analysis
  */
 export async function analyzeVulnerabilities(alerts) {
-    if (!GEMINI_API_KEY) {
-        console.warn('[AI] No Gemini API key found — skipping AI analysis');
+    if (!LLM_API_KEY) {
+        console.warn('[AI] No Local LLM API key found — skipping AI analysis');
         return alerts.map(alert => ({
             ...mapAlertToVuln(alert),
             ai_summary: null,
@@ -27,8 +27,11 @@ export async function analyzeVulnerabilities(alerts) {
         }));
     }
 
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY, LLM_ENDPOINT);
-    const model = genAI.getGenerativeModel({ model: LLM_MODEL });
+    const genAI = new GoogleGenerativeAI(LLM_API_KEY, LLM_ENDPOINT);
+    const model = genAI.getGenerativeModel({ 
+        model: LLM_MODEL,
+        generationConfig: { temperature: 0.2 }
+    });
 
     const BATCH_SIZE = 5;
     const results = [];
@@ -113,7 +116,7 @@ function getDefaultRiskScore(risk) {
 }
 
 /**
- * Analyze a batch of alerts using Gemini
+ * Analyze a batch of alerts using Local LLM
  */
 async function analyzeBatch(model, alerts) {
     const alertSummaries = alerts.map((a, i) => {
@@ -160,14 +163,22 @@ DO NOT include any text outside the JSON array.`;
         const aiScore = parseFloat(ai.risk_score);
         const finalScore = (!isNaN(aiScore)) ? aiScore : getDefaultRiskScore(base.risk);
         console.log(`[AI] Vulnerability "${base.alert_name}" assigned score: ${finalScore}/10 (AI: ${aiScore || 'N/A'}, Base: ${base.risk})`);
+        // Ensure fields that MUST be strings are not objects/arrays (avoids DB string violations)
+        const formatString = (val) => {
+            if (!val) return null;
+            if (typeof val === 'string') return val;
+            if (Array.isArray(val)) return val.join('\n');
+            return JSON.stringify(val, null, 2);
+        };
+
         return {
             ...base,
-            ai_summary: ai.ai_summary || null,
-            owasp_category: ai.owasp_category || null,
+            ai_summary: formatString(ai.ai_summary),
+            owasp_category: formatString(ai.owasp_category),
             risk_score: finalScore,
-            exploitability: ai.exploitability || null,
-            remediation: ai.remediation || base.solution || null,
-            code_example: ai.code_example || null,
+            exploitability: formatString(ai.exploitability),
+            remediation: formatString(ai.remediation) || base.solution || null,
+            code_example: formatString(ai.code_example),
         };
     });
 }

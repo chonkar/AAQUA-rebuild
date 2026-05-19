@@ -87,8 +87,7 @@ const isUniqueXPath = (root, xpath) => {
     try {
         const result = document.evaluate(xpath, root, null, XPathResult.ANY_TYPE, null);
         let count = 0;
-        let node;
-        while (node = result.iterateNext()) count++;
+        while (result.iterateNext()) count++;
         return count === 1;
     } catch { return false; }
 };
@@ -103,9 +102,11 @@ const getCssPath = (el) => {
             path.unshift(selector);
             break;
         } else {
-            let sib = el, nth = 1;
-            while (sib = sib.previousElementSibling) {
-                if (sib.nodeName.toLowerCase() == selector) nth++;
+            let sib = el.previousElementSibling;
+            let nth = 1;
+            while (sib) {
+                if (sib.nodeName.toLowerCase() === selector) nth++;
+                sib = sib.previousElementSibling;
             }
             if (nth != 1) selector += `:nth-of-type(${nth})`;
         }

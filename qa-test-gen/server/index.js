@@ -100,7 +100,10 @@ app.post('/api/convert', upload.single('projectZip'), async (req, res) => {
 
         // 3. Initialize AI (Using Local LLM)
         const genAI = new GoogleGenerativeAI(apiKey, process.env.VITE_LLM_ENDPOINT);
-        const model = genAI.getGenerativeModel({ model: process.env.VITE_LLM_MODEL || "gpt-oss-20b" });
+        const model = genAI.getGenerativeModel({ 
+            model: process.env.VITE_LLM_MODEL || "gpt-oss-20b",
+            generationConfig: { temperature: 0.2 }
+        });
 
         // 4. Convert Loop
         fs.mkdirSync(outputPath, { recursive: true });
@@ -130,7 +133,7 @@ app.post('/api/convert', upload.single('projectZip'), async (req, res) => {
             `;
 
             try {
-                let text = await generateWithRetry(prompt);
+                let text = await generateWithRetry(model, prompt);
 
                 // Clean markdown
                 text = text.replace(/```[a-z]*\n?/g, '').replace(/```/g, '');
@@ -267,7 +270,7 @@ export default defineConfig({
     ${features.reporting === 'Allure' ? "['allure-playwright']," : ''}
   ],
   use: {
-    baseURL: 'https://example.com',
+    baseURL: 'https://www.saucedemo.com',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -321,9 +324,9 @@ export class LoginPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.usernameInput = page.locator('#username');
-    this.passwordInput = page.locator('#password');
-    this.loginButton = page.locator('button[type="submit"]');
+    this.usernameInput = page.locator('[data-test="username"]');
+    this.passwordInput = page.locator('[data-test="password"]');
+    this.loginButton = page.locator('[data-test="login-button"]');
   }
 
   async login(username: string, password: string) {
@@ -356,7 +359,6 @@ export const logger = winston.createLogger({
         fs.mkdirSync(path.join(outputPath, 'logs'), { recursive: true });
     }
 
-    // Sample test
     const sampleTest = `import { test, expect } from '@playwright/test';
 ${features.pageObjectModel ? "import { LoginPage } from '../pages/LoginPage';" : ''}
 ${features.logging ? "import { logger } from '../utils/logger';" : ''}
@@ -366,19 +368,49 @@ test.describe('Login Tests', () => {
     ${features.logging ? "logger.info('Starting login test');" : ''}
     ${features.pageObjectModel ? `
     const loginPage = new LoginPage(page);
-    await loginPage.navigate('/login');
-    await loginPage.login('testuser', 'password123');
+    await loginPage.navigate('/');
+    await loginPage.login('standard_user', 'secret_sauce');
     ` : `
-    await page.goto('/login');
-    await page.fill('#username', 'testuser');
-    await page.fill('#password', 'password123');
-    await page.click('button[type="submit"]');
+    await page.goto('/');
+    await page.locator('[data-test="username"]').fill('standard_user');
+    await page.locator('[data-test="password"]').fill('secret_sauce');
+    await page.locator('[data-test="login-button"]').click();
     `}
-    await expect(page).toHaveURL(/dashboard/);
+    await expect(page).toHaveURL(/.*inventory.html/);
     ${features.logging ? "logger.info('Login test completed');" : ''}
   });
 });`;
     fs.writeFileSync(path.join(outputPath, 'tests', 'login.spec.ts'), sampleTest);
+
+    // API Test
+    if (features.apiTesting) {
+        fs.mkdirSync(path.join(outputPath, 'tests', 'api'), { recursive: true });
+        const apiTestTs = `import { test, expect } from '@playwright/test';
+
+test.describe('User API Tests', () => {
+  const baseUrl = 'https://jsonplaceholder.typicode.com';
+
+  test('should fetch user list', async ({ request }) => {
+    const response = await request.get(\`\${baseUrl}/users\`);
+    expect(response.ok()).toBeTruthy();
+    
+    const responseBody = await response.json();
+    expect(responseBody.length).toBeGreaterThan(0);
+    expect(responseBody[0]).toHaveProperty('email');
+  });
+
+  test('should create a new user', async ({ request }) => {
+    const response = await request.post(\`\${baseUrl}/users\`, {
+      data: { name: 'morpheus', username: 'leader' }
+    });
+    expect(response.status()).toBe(201);
+    
+    const responseBody = await response.json();
+    expect(responseBody.name).toBe('morpheus');
+  });
+});`;
+        fs.writeFileSync(path.join(outputPath, 'tests', 'api', 'users.spec.ts'), apiTestTs);
+    }
 
     // CI/CD
     if (features.cicd === 'GitHub Actions') {
@@ -484,7 +516,7 @@ module.exports = defineConfig({
     ${features.reporting === 'Allure' ? "['allure-playwright']," : ''}
   ],
   use: {
-    baseURL: 'https://example.com',
+    baseURL: 'https://www.saucedemo.com',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -515,9 +547,9 @@ module.exports = { BasePage };`;
 class LoginPage extends BasePage {
   constructor(page) {
     super(page);
-    this.usernameInput = page.locator('#username');
-    this.passwordInput = page.locator('#password');
-    this.loginButton = page.locator('button[type="submit"]');
+    this.usernameInput = page.locator('[data-test="username"]');
+    this.passwordInput = page.locator('[data-test="password"]');
+    this.loginButton = page.locator('[data-test="login-button"]');
   }
   async login(username, password) {
     await this.usernameInput.fill(username);
@@ -535,14 +567,45 @@ ${features.pageObjectModel ? "const { LoginPage } = require('../pages/LoginPage'
 test.describe('Login Tests', () => {
   test('should login successfully', async ({ page }) => {
     ${features.pageObjectModel ? `const loginPage = new LoginPage(page);
-    await loginPage.navigate('https://example.com/login');
-    await loginPage.login('testuser', 'password123');` : `await page.goto('https://example.com/login');
-    await page.fill('#username', 'testuser');
-    await page.fill('#password', 'password123');
-    await page.click('button[type="submit"]');`}
+    await loginPage.navigate('/');
+    await loginPage.login('standard_user', 'secret_sauce');` : `await page.goto('/');
+    await page.locator('[data-test="username"]').fill('standard_user');
+    await page.locator('[data-test="password"]').fill('secret_sauce');
+    await page.locator('[data-test="login-button"]').click();`}
+    await expect(page).toHaveURL(/.*inventory.html/);
   });
 });`;
     fs.writeFileSync(path.join(outputPath, 'tests', 'login.spec.js'), sampleTest);
+
+    // API Test
+    if (features.apiTesting) {
+        fs.mkdirSync(path.join(outputPath, 'tests', 'api'), { recursive: true });
+        const apiTestJs = `const { test, expect } = require('@playwright/test');
+
+test.describe('User API Tests', () => {
+  const baseUrl = 'https://jsonplaceholder.typicode.com';
+
+  test('should fetch user list', async ({ request }) => {
+    const response = await request.get(\`\${baseUrl}/users\`);
+    expect(response.ok()).toBeTruthy();
+    
+    const responseBody = await response.json();
+    expect(responseBody.length).toBeGreaterThan(0);
+    expect(responseBody[0]).toHaveProperty('email');
+  });
+
+  test('should create a new user', async ({ request }) => {
+    const response = await request.post(\`\${baseUrl}/users\`, {
+      data: { name: 'morpheus', username: 'leader' }
+    });
+    expect(response.status()).toBe(201);
+    
+    const responseBody = await response.json();
+    expect(responseBody.name).toBe('morpheus');
+  });
+});`;
+        fs.writeFileSync(path.join(outputPath, 'tests', 'api', 'users.spec.js'), apiTestJs);
+    }
 
     const readme = `# ${projectName}\n\nPlaywright JavaScript Framework\n\n## Setup\n\`\`\`bash\nnpm install\nnpx playwright install\n\`\`\`\n\n## Run Tests\n\`\`\`bash\nnpm test\n\`\`\``;
     fs.writeFileSync(path.join(outputPath, 'README.md'), readme);
@@ -563,7 +626,59 @@ async function generateCypress(outputPath, projectName, features, language) {
     };
     fs.writeFileSync(path.join(outputPath, 'package.json'), JSON.stringify(packageJson, null, 2));
 
-    const readme = `# ${projectName}\n\nCypress ${language} Framework`;
+    const cypressConfig = `const { defineConfig } = require("cypress");
+
+module.exports = defineConfig({
+  e2e: {
+    baseUrl: 'https://www.saucedemo.com',
+    setupNodeEvents(on, config) {
+      // implement node event listeners here
+    },
+  },
+});`;
+    fs.writeFileSync(path.join(outputPath, 'cypress.config.js'), cypressConfig);
+
+    fs.mkdirSync(path.join(outputPath, 'cypress', 'e2e'), { recursive: true });
+
+    const ext = language === 'TypeScript' ? 'ts' : 'js';
+    const sampleTest = `describe('Login Tests', () => {
+  it('should login successfully', () => {
+    cy.visit('/');
+    cy.get('[data-test="username"]').type('standard_user');
+    cy.get('[data-test="password"]').type('secret_sauce');
+    cy.get('[data-test="login-button"]').click();
+    cy.url().should('include', 'inventory.html');
+  });
+});`;
+    fs.writeFileSync(path.join(outputPath, 'cypress', 'e2e', `login.cy.${ext}`), sampleTest);
+
+    if (features.apiTesting) {
+        fs.mkdirSync(path.join(outputPath, 'cypress', 'e2e', 'api'), { recursive: true });
+        const apiTestCypress = `describe('User API Tests', () => {
+  const baseUrl = 'https://jsonplaceholder.typicode.com';
+
+  it('should fetch user list', () => {
+    cy.request('GET', \`\${baseUrl}/users\`).then((response) => {
+      expect(response.status).to.eq(200);
+      expect(response.body.length).to.be.greaterThan(0);
+      expect(response.body[0]).to.have.property('email');
+    });
+  });
+
+  it('should create a new user', () => {
+    cy.request('POST', \`\${baseUrl}/users\`, {
+      name: 'morpheus',
+      username: 'leader'
+    }).then((response) => {
+      expect(response.status).to.eq(201);
+      expect(response.body).to.have.property('name', 'morpheus');
+    });
+  });
+});`;
+        fs.writeFileSync(path.join(outputPath, 'cypress', 'e2e', 'api', `users.cy.${ext}`), apiTestCypress);
+    }
+
+    const readme = `# ${projectName}\n\nCypress ${language} Framework\n\n## Setup\n\`\`\`bash\nnpm install\n\`\`\`\n\n## Run Tests\n\`\`\`bash\nnpm run cy:run\n\`\`\``;
     fs.writeFileSync(path.join(outputPath, 'README.md'), readme);
 }
 
@@ -604,7 +719,7 @@ async function generateSelenium(outputPath, projectName, features, language) {
     fs.mkdirSync(path.join(outputPath, '.github', 'workflows'), { recursive: true });
 
     // 2. config.properties
-    const configProperties = `base.url=https://example.com
+    const configProperties = `base.url=https://www.saucedemo.com
 browser=chrome
 headless=false
 implicit.wait=10
@@ -651,11 +766,16 @@ explicit.wait=10`;
         `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
 <suite name="Automation Suite" parallel="methods" thread-count="2">
-    <test name="Login Tests">
+    <test name="UI Tests">
         <classes>
             <class name="${groupId}.${packageName}.tests.LoginTest"/>
         </classes>
-    </test>
+    </test>${features.apiTesting ? `
+    <test name="API Tests">
+        <classes>
+            <class name="${groupId}.${packageName}.api.UsersApiTest"/>
+        </classes>
+    </test>` : ''}
 </suite>`;
     fs.writeFileSync(path.join(testResourcesPath, 'testng.xml'), testngXml);
 
@@ -993,13 +1113,13 @@ import org.openqa.selenium.support.FindBy;
 
 public class LoginPage extends BasePage {
 
-    @FindBy(id = "username")
+    @FindBy(id = "user-name")
     private WebElement usernameInput;
 
     @FindBy(id = "password")
     private WebElement passwordInput;
 
-    @FindBy(xpath = "//button[@type='submit']")
+    @FindBy(id = "login-button")
     private WebElement loginButton;
 
     public LoginPage(WebDriver driver) {
@@ -1054,9 +1174,9 @@ public class LoginTest extends BaseTest {
     public void testLogin() {
         LoginPage loginPage = new LoginPage(driver);
         String baseUrl = ConfigReader.getProperty("base.url");
-        loginPage.navigateTo(baseUrl + "/login");
-        loginPage.login("testuser", "password123");
-        Assert.assertTrue(driver.getCurrentUrl().contains("dashboard"), "Login failed!");
+        loginPage.navigateTo(baseUrl);
+        loginPage.login("standard_user", "secret_sauce");
+        Assert.assertTrue(driver.getCurrentUrl().contains("inventory.html"), "Login failed!");
     }
 }`;
     fs.writeFileSync(path.join(testJavaPath, 'tests', 'LoginTest.java'), loginTest);
@@ -1090,17 +1210,17 @@ public class LoginStepDefinitions {
         DriverManager.setDriver();
         loginPage = new LoginPage(DriverManager.getDriver());
         String baseUrl = ConfigReader.getProperty("base.url");
-        loginPage.navigateTo(baseUrl + "/login");
+        loginPage.navigateTo(baseUrl);
     }
 
     @When("I enter valid username and password")
     public void i_enter_valid_username_and_password() {
-        loginPage.login("testuser", "password123");
+        loginPage.login("standard_user", "secret_sauce");
     }
 
     @Then("I should be redirected to the dashboard")
     public void i_should_be_redirected_to_the_dashboard() {
-        Assert.assertTrue(DriverManager.getDriver().getCurrentUrl().contains("dashboard"));
+        Assert.assertTrue(DriverManager.getDriver().getCurrentUrl().contains("inventory.html"));
         DriverManager.quitDriver();
     }
 }`;
@@ -1128,6 +1248,59 @@ public class CucumberTestRunner extends AbstractTestNGCucumberTests {
         fs.writeFileSync(path.join(testJavaPath, 'runners', 'CucumberTestRunner.java'), runner);
     }
 
+    if (features.apiTesting) {
+        fs.mkdirSync(path.join(testJavaPath, 'api'), { recursive: true });
+        const apiBaseTest = `package ${groupId}.${packageName}.api;
+
+import io.restassured.RestAssured;
+import org.testng.annotations.BeforeClass;
+
+public class ApiBaseTest {
+    @BeforeClass
+    public void setupApi() {
+        RestAssured.baseURI = "https://jsonplaceholder.typicode.com";
+    }
+}`;
+        fs.writeFileSync(path.join(testJavaPath, 'api', 'ApiBaseTest.java'), apiBaseTest);
+
+        const usersApiTest = `package ${groupId}.${packageName}.api;
+
+import io.restassured.RestAssured;
+import io.restassured.http.ContentType;
+import org.testng.annotations.Test;
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.*;
+
+public class UsersApiTest extends ApiBaseTest {
+
+    @Test
+    public void testGetUserList() {
+        given()
+            .when()
+            .get("/users")
+        .then()
+            .statusCode(200)
+            .body("size()", greaterThan(0))
+            .body("[0]", hasKey("email"));
+    }
+
+    @Test
+    public void testCreateUser() {
+        String payload = "{\\"name\\": \\"morpheus\\", \\"job\\": \\"leader\\"}";
+        
+        given()
+            .contentType(ContentType.JSON)
+            .body(payload)
+        .when()
+            .post("/users")
+        .then()
+            .statusCode(201)
+            .body("name", equalTo("morpheus"));
+    }
+}`;
+        fs.writeFileSync(path.join(testJavaPath, 'api', 'UsersApiTest.java'), usersApiTest);
+    }
+
     // 16. README.md
     const readme = `# \${projectName}
 Enterprise-grade Selenium Java Framework
@@ -1146,6 +1319,7 @@ Enterprise-grade Selenium Java Framework
 - ✅ GitHub Actions workflow
 - ✅ Docker support
 - ${isCucumber ? '- ✅ Cucumber BDD Support' : ''}
+- ${features.apiTesting ? '- ✅ REST Assured API Testing' : ''}
 
 ## Setup
 \`\`\`bash
@@ -1236,12 +1410,17 @@ app.post('/api/scrape', async (req, res) => {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
 
+    let targetUrl = url;
+    if (!/^https?:\/\//i.test(targetUrl)) {
+        targetUrl = 'https://' + targetUrl;
+    }
+
     let browser = null;
     let context = null;
     let page = null;
 
     try {
-        console.log(`Launching scraper for: ${url}`);
+        console.log(`Launching scraper for: ${targetUrl}`);
 
         browser = await chromium.launch({
             headless: true
@@ -1261,7 +1440,7 @@ app.post('/api/scrape', async (req, res) => {
         page = await context.newPage();
 
         // Navigate and wait for content
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
         // Extra safety wait for dynamic content
         try {
@@ -1287,7 +1466,7 @@ app.post('/api/scrape', async (req, res) => {
     }
 });
 
-// Localization Analysis Endpoint
+// Localization Analysis Endpoint (Text-extraction + Chunked for large pages)
 app.post('/api/analyze-localization', async (req, res) => {
     const { html, targetLanguage } = req.body;
     const apiKey = req.headers['x-api-key'];
@@ -1299,97 +1478,160 @@ app.post('/api/analyze-localization', async (req, res) => {
         const endpoint = process.env.VITE_LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
         const llmModel = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
         const genAI = new GoogleGenerativeAI(apiKey, endpoint);
-        const model = genAI.getGenerativeModel({ model: llmModel });
+        const model = genAI.getGenerativeModel({ 
+            model: llmModel,
+            generationConfig: { temperature: 0.2 }
+        });
 
-        // Determine if target is an English dialect (American vs British)
         const isEnglishDialect = targetLanguage.includes('American English') || targetLanguage.includes('British English');
         const isAmericanEnglish = targetLanguage.includes('American English');
-        const isBritishEnglish = targetLanguage.includes('British English');
 
-        // Aggressively clean the HTML (strip scripts, styles, SVGs, and empty space) to massively reduce token size
-        const cleanHtml = html
-            .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-            .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-            .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, '')
-            .replace(/<path\b[^<]*(?:(?!<\/path>)<[^<]*)*<\/path>/gi, '')
-            .replace(/<!--[\s\S]*?-->/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
+        // ── Step 1: Safe text extraction — NO complex regex (avoids catastrophic backtracking) ──
+        // Walk the HTML char-by-char, skipping everything inside tags and known invisible blocks
+        function extractVisibleText(rawHtml) {
+            let result = '';
+            let i = 0;
+            const len = rawHtml.length;
 
-        let prompt;
+            while (i < len) {
+                if (rawHtml[i] === '<') {
+                    // Find the tag name
+                    let tagStart = i + 1;
+                    // Skip leading slash for closing tags
+                    if (rawHtml[tagStart] === '/') tagStart++;
+                    // Read tag name
+                    let tagNameEnd = tagStart;
+                    while (tagNameEnd < len && /[a-zA-Z0-9]/.test(rawHtml[tagNameEnd])) tagNameEnd++;
+                    const tagName = rawHtml.substring(tagStart, tagNameEnd).toLowerCase();
 
-        if (isEnglishDialect) {
-            // English dialect prompt: check for spelling/vocabulary inconsistencies
-            const dialectFrom = isAmericanEnglish ? 'British English' : 'American English';
-            const dialectTo = isAmericanEnglish ? 'American English (en-US)' : 'British English (en-GB)';
-            const spellingExamples = isAmericanEnglish
-                ? 'colour→color, organisation→organization, centre→center, behaviour→behavior, whilst→while, autumn→fall, boot (car)→trunk, tyre→tire'
-                : 'color→colour, organize→organise, center→centre, behavior→behaviour, while→whilst, fall→autumn, trunk (car)→boot, tire→tyre';
+                    // For script/style/svg/noscript: skip to closing tag entirely
+                    if (['script', 'style', 'svg', 'noscript'].includes(tagName)) {
+                        const closeTag = `</${tagName}`;
+                        const closeIdx = rawHtml.toLowerCase().indexOf(closeTag, i + 1);
+                        if (closeIdx === -1) { i = len; break; }
+                        // Skip past the closing >
+                        i = rawHtml.indexOf('>', closeIdx) + 1;
+                        if (i === 0) i = len;
+                        result += ' ';
+                        continue;
+                    }
 
-            prompt = `
-                You are a Localization QA Expert specializing in English dialect consistency.
-                The page SHOULD be written in ${dialectTo}.
-                
-                Scan the visible text in the provided HTML for words or phrases that use ${dialectFrom} spelling or vocabulary instead of ${dialectTo}.
-                
-                Focus on:
-                1. Spelling differences (examples: ${spellingExamples}).
-                2. Vocabulary differences (e.g., "elevator" vs "lift", "cookie" vs "biscuit", "vacation" vs "holiday").
-                3. Date/number format issues (e.g., MM/DD/YYYY vs DD/MM/YYYY if visible).
-                
-                Ignore proper nouns, brand names, and technical terms.
-                
-                For each issue found, provide:
-                - "original": The text as found on the page.
-                - "suggestion": The corrected ${dialectTo} version.
-                - "context": A brief description of where it appears (e.g., "Submit Button", "Error Message").
-                
-                HTML CONTENT (Truncated for analysis):
-                ${cleanHtml.substring(0, 200000)}
-                
-                OUTPUT FORMAT:
-                Return ONLY a valid JSON array of objects. No markdown.
-                [
-                    { "original": "colour", "suggestion": "color", "context": "Label in Settings Panel" }
-                ]
-            `;
-        } else {
-            // Standard foreign language prompt: check for English text leaking into non-English pages
-            prompt = `
-                You are a highly precise Localization QA Expert. Your sole task is to exhaustively scan the provided HTML for a non-English website and find EVERY piece of English text. The web page SHOULD be fully translated into ${targetLanguage}.
-                
-                You MUST identify EVERY SINGLE INSTANCE of text visible to the user that is leaking in ENGLISH (or any language other than ${targetLanguage}).
-                
-                RULES:
-                1. Only check the visible text content INSIDE the HTML tags. CRITICAL: Do NOT flag HTML tag names, CSS classes, URLs, or code attribute values as English text!
-                2. Explicitly ignore proper nouns, global brand names, and technical product names.
-                3. Do not summarize or be lazy. You must extract every single sentence, button label, or paragraph that failed to translate.
+                    // For HTML comments: skip to -->
+                    if (rawHtml.substring(i, i + 4) === '<!--') {
+                        const closeIdx = rawHtml.indexOf('-->', i + 4);
+                        i = closeIdx === -1 ? len : closeIdx + 3;
+                        continue;
+                    }
 
-                For each issue found, provide:
-                - "original": The text found.
-                - "suggestion": A purely hypothetical translation to ${targetLanguage} (just to show intent).
-                - "context": A brief CSS selector or description of where it is (e.g., "Login Button", "Footer Link").
+                    // For all other tags: skip to closing >
+                    const closeIdx = rawHtml.indexOf('>', i);
+                    i = closeIdx === -1 ? len : closeIdx + 1;
+                    result += ' ';
+                } else {
+                    result += rawHtml[i];
+                    i++;
+                }
+            }
 
-                HTML CONTENT (Truncated for analysis):
-                ${cleanHtml.substring(0, 200000)}
-
-                OUTPUT FORMAT:
-                Return ONLY a valid JSON array of objects. No markdown.
-                [
-                    { "original": "Sign In", "suggestion": "Inloggen", "context": "button.login-btn" }
-                ]
-            `;
+            return result
+                .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+                .replace(/&#\d+;/g, ' ')
+                .replace(/[ \t]+/g, ' ')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
         }
 
-        const responseText = (await generateWithRetry(model, prompt)).replace(/```json/g, '').replace(/```/g, '').trim();
+        const visibleText = extractVisibleText(html);
+        console.log(`[Localization] HTML ${html.length} chars → visible text ${visibleText.length} chars`);
 
-        try {
-            const issues = JSON.parse(responseText);
-            res.json({ issues });
-        } catch (e) {
-            console.error("AI response parsing failed:", responseText);
-            res.status(500).json({ error: "Failed to parse analysis results", raw: responseText });
+        // ── Step 2: Deduplicate repeated lines (nav/footer repeating) ──
+        const uniqueLines = [...new Set(
+            visibleText.split('\n')
+                .map(l => l.trim())
+                .filter(l => l.length > 2)
+        )];
+        const textContent = uniqueLines.join('\n');
+        console.log(`[Localization] After dedup: ${textContent.length} chars`);
+
+
+        // ── Step 3: Chunk at 20,000 chars (~10k tokens — very safe under the 65k limit) ──
+        const CHUNK_SIZE = 20000;
+        const chunks = [];
+        for (let i = 0; i < textContent.length; i += CHUNK_SIZE) {
+            chunks.push(textContent.substring(i, i + CHUNK_SIZE));
         }
+
+        console.log(`[Localization] Raw HTML: ${html.length} chars → Extracted text: ${textContent.length} chars → ${chunks.length} chunk(s)`);
+
+        const buildPrompt = (chunk, chunkIndex, totalChunks) => {
+            const chunkNote = totalChunks > 1
+                ? ` (Part ${chunkIndex + 1} of ${totalChunks})`
+                : '';
+
+            if (isEnglishDialect) {
+                const dialectFrom = isAmericanEnglish ? 'British English' : 'American English';
+                const dialectTo = isAmericanEnglish ? 'American English (en-US)' : 'British English (en-GB)';
+                const spellingExamples = isAmericanEnglish
+                    ? 'colour→color, organisation→organization, centre→center, behaviour→behavior, whilst→while'
+                    : 'color→colour, organize→organise, center→centre, behavior→behaviour, while→whilst';
+
+                return `You are a Localization QA Expert${chunkNote}.
+The page SHOULD use ${dialectTo}. Scan the text below for ${dialectFrom} words/phrases.
+Focus: spelling (${spellingExamples}), vocabulary, date formats. Ignore brand names and proper nouns.
+
+For each issue: { "original": "exact text", "suggestion": "corrected text", "context": "brief description" }
+
+PAGE TEXT:
+${chunk}
+
+Return ONLY a JSON array. Empty array [] if no issues.`;
+            } else {
+                return `You are a Localization QA Expert${chunkNote}.
+The page SHOULD be fully in ${targetLanguage}. Find every English word or sentence visible to users.
+Ignore: brand names, proper nouns, technical product names, URLs.
+
+For each issue: { "original": "english text", "suggestion": "intended ${targetLanguage} translation", "context": "brief location" }
+
+PAGE TEXT:
+${chunk}
+
+Return ONLY a JSON array. Empty array [] if no issues.`;
+            }
+        };
+
+        // ── Step 4: Analyze all chunks sequentially ──
+        const allIssues = [];
+        for (let i = 0; i < chunks.length; i++) {
+            console.log(`[Localization] Chunk ${i + 1}/${chunks.length} (~${Math.round(chunks[i].length / 4)} estimated tokens)...`);
+            try {
+                const prompt = buildPrompt(chunks[i], i, chunks.length);
+                const responseText = (await generateWithRetry(model, prompt))
+                    .replace(/```json/g, '').replace(/```/g, '').trim();
+
+                const jsonStart = responseText.indexOf('[');
+                const jsonEnd = responseText.lastIndexOf(']');
+                if (jsonStart !== -1 && jsonEnd !== -1) {
+                    const parsed = JSON.parse(responseText.substring(jsonStart, jsonEnd + 1));
+                    allIssues.push(...parsed);
+                }
+            } catch (chunkErr) {
+                console.warn(`[Localization] Chunk ${i + 1} failed: ${chunkErr.message}`);
+                // Continue — partial results are better than none
+            }
+        }
+
+        // ── Step 5: Deduplicate results by 'original' text ──
+        const seen = new Set();
+        const dedupedIssues = allIssues.filter(issue => {
+            const key = (issue.original || '').toLowerCase().trim();
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+
+        console.log(`[Localization] Done. ${dedupedIssues.length} unique issues found (${allIssues.length} raw).`);
+        res.json({ issues: dedupedIssues, chunks: chunks.length });
 
     } catch (error) {
         console.error('Localization Analysis Error:', error);
@@ -1398,11 +1640,13 @@ app.post('/api/analyze-localization', async (req, res) => {
 });
 
 // Accessibility Analysis Endpoint
+
+
 app.post('/api/analyze-accessibility', async (req, res) => {
     if (!activeContext || !activePage) {
         return res.status(400).json({ error: 'No active browser session found' });
     }
-    const apiKey = req.headers['x-api-key']; // Should be passed from frontend if client manages it, but we can also use env if backend manages it.
+    const _apiKey = req.headers['x-api-key']; // Should be passed from frontend if client manages it, but we can also use env if backend manages it.
     // However, other endpoints use req.headers['x-api-key'], let's check if frontend sends it. 
     // accessibilityService.js currently DOES NOT send x-api-key. 
     // We should probably rely on the Backend environment variable here since it's a backend feature, OR update frontend to send it.
@@ -1411,7 +1655,7 @@ app.post('/api/analyze-accessibility', async (req, res) => {
     // Framework generator uses env? 
     // Locator generator uses client side.
 
-    // Let's assume we use the process.env.VITE_GEMINI_API_KEY (or similar) if header is missing, 
+    // Let's assume we use the Local LLM key if header is missing, 
     // but the backend might not have access to VITE_ vars directly unless loaded. 
     // This file uses `const require = createRequire...`. 
     // I'll try to use a hardcoded key or assume the User has set it up? 
@@ -1445,7 +1689,7 @@ app.post('/api/analyze-accessibility', async (req, res) => {
         }
 
         if (authKey) {
-            console.log(`Running AI Audit via Gemini... Key present (Starts with ${authKey.substring(0, 4)}...)`);
+            console.log(`Running AI Audit via Local LLM... Key present (Starts with ${authKey.substring(0, 4)}...)`);
             try {
                 // Optimize HTML to reduce token usage
                 let html = await activePage.content();
@@ -1459,7 +1703,10 @@ app.post('/api/analyze-accessibility', async (req, res) => {
 
                 const genAI = new GoogleGenerativeAI(authKey, process.env.VITE_LLM_ENDPOINT);
                 // Switch to configured local model
-                const model = genAI.getGenerativeModel({ model: process.env.VITE_LLM_MODEL || "gpt-oss-20b" });
+                const model = genAI.getGenerativeModel({ 
+                    model: process.env.VITE_LLM_MODEL || "gpt-oss-20b",
+                    generationConfig: { temperature: 0.2 }
+                });
 
                 const passedRules = axeResults.passes.map(p => p.id).join(', ');
                 const failedRules = axeResults.violations.map(v => v.id).join(', ');
@@ -1585,6 +1832,49 @@ function findProjectRoot(extractDir, framework) {
     return extractDir;
 }
 
+// ── Auto-Heal helpers (defined here so parseMavenResults/parsePlaywrightResults can call them) ──
+const HEALABLE_PATTERNS = [
+    /NoSuchElementException/i,
+    /no such element/i,
+    /Unable to locate element/i,
+    /StaleElementReferenceException/i,
+    /ElementNotInteractableException/i,
+    /ElementClickInterceptedException/i,
+    /element not found/i,
+    /locator\..*timeout/i,
+    /strict mode violation/i,
+    /element is not attached/i,
+    /getBy.*timeout exceeded/i,
+    /TimeoutError.*locator/i,
+    /Timed out retrying.*get\(\)/i,
+];
+
+function isHealable(errorMessage, stackTrace, errorType) {
+    // Also check errorType (XML @_type attribute, e.g. org.openqa.selenium.NoSuchElementException)
+    const text = `${errorMessage || ''} ${stackTrace || ''} ${errorType || ''}`;
+    return HEALABLE_PATTERNS.some(p => p.test(text));
+}
+
+function extractLocator(errorMessage, stackTrace) {
+    const text = `${errorMessage || ''} ${stackTrace || ''}`;
+    // Selenium: {"method":"css selector","selector":"#id"} or {"method":"xpath","selector":"//btn"}
+    const jsonSel = text.match(/\{"method":"([^"]+)","selector":"([^"]+)"\}/);
+    if (jsonSel) return { strategy: jsonSel[1], value: jsonSel[2] };
+    // Selenium: By.xpath("...") or By.id("...")
+    const byMatch = text.match(/By\.(xpath|cssSelector|id|name|className|tagName|linkText)\("([^"]+)"\)/i);
+    if (byMatch) return { strategy: byMatch[1], value: byMatch[2] };
+    // Selenium findElement using= id/css
+    const cmdMatch = text.match(/findElement \{using=([^,]+), value=([^}]+)\}/);
+    if (cmdMatch) return { strategy: cmdMatch[1].trim(), value: cmdMatch[2].trim() };
+    // Playwright: locator('...')
+    const pwLocator = text.match(/locator\('([^']+)'\)/i);
+    if (pwLocator) return { strategy: 'css', value: pwLocator[1] };
+    // Playwright: getByRole
+    const pwRole = text.match(/getByRole\('([^']+)'\)/i);
+    if (pwRole) return { strategy: 'role', value: pwRole[1] };
+    return null;
+}
+
 // Helper: parse Maven surefire XML reports
 function parseMavenResults(projectRoot) {
     const suites = [];
@@ -1644,13 +1934,21 @@ function parseMavenResults(projectRoot) {
 
                         const failed = tc.failure || tc.error;
                         const skipped = tc.skipped !== undefined;
+                        const errorType = failed?.['@_type'] || failed?.type || '';
+                        const errMsg = failed ? (failed['@_message'] || failed.message || String(failed).substring(0, 300)) : null;
+                        const stackTr = failed ? (typeof failed === 'string' ? failed : (failed['#text'] || JSON.stringify(failed))) : null;
+                        const healable = failed ? isHealable(errMsg, stackTr, errorType) : false;
+                        // DEBUG — remove after confirmed working
+                        if (failed) console.log(`[HEAL-DEBUG] test="${testName}" type="${errorType}" errMsgStart="${String(errMsg||'').substring(0,80)}" healable=${healable}`);
                         tests.push({
                             name: testName,
                             classname: className,
                             status: skipped ? 'SKIPPED' : failed ? 'FAILED' : 'PASSED',
                             duration: parseFloat(tc['@_time'] || 0).toFixed(3) + 's',
-                            errorMessage: failed ? (failed['@_message'] || failed.message || String(failed).substring(0, 200)) : null,
-                            stackTrace: failed ? (typeof failed === 'string' ? failed : JSON.stringify(failed)) : null,
+                            errorMessage: errMsg,
+                            stackTrace: stackTr,
+                            healable,
+                            failedLocator: failed ? extractLocator(errMsg, stackTr) : null,
                         });
                     }
                     if (tests.length > 0) {
@@ -1681,13 +1979,17 @@ function parsePlaywrightResults(jsonOutput) {
                 const status = result?.status === 'passed' ? 'PASSED'
                     : result?.status === 'failed' ? 'FAILED'
                         : result?.status === 'skipped' ? 'SKIPPED' : 'UNKNOWN';
+                const errMsg = result?.error?.message || null;
+                const stackTr = result?.error?.stack || null;
                 return {
                     name: spec.title,
                     classname: suite.title,
                     status,
                     duration: result ? ((result.duration || 0) / 1000).toFixed(3) + 's' : '0s',
-                    errorMessage: result?.error?.message || null,
-                    stackTrace: result?.error?.stack || null,
+                    errorMessage: errMsg,
+                    stackTrace: stackTr,
+                    healable: status === 'FAILED' ? isHealable(errMsg, stackTr) : false,
+                    failedLocator: status === 'FAILED' ? extractLocator(errMsg, stackTr) : null,
                 };
             });
             if (tests.length > 0) {
@@ -1788,7 +2090,7 @@ function runCommand(cmd, args, cwd, runId, onComplete) {
 
 // POST /api/run-tests-local — Run tests from a local project directory
 app.post('/api/run-tests-local', async (req, res) => {
-    const { projectPath } = req.body;
+    const { projectPath, isHeadless = true } = req.body;
     if (!projectPath) return res.status(400).json({ error: 'projectPath is required' });
 
     // Normalize path separators
@@ -1849,7 +2151,9 @@ app.post('/api/run-tests-local', async (req, res) => {
                     console.log(`[Runner] Deleted old reports: ${dir}`);
                 }
             }
-            runCommand('mvn', ['clean', 'test', '-fae', '--no-transfer-progress'], projectRoot, runId, (code) => {
+            const mvnArgs = ['clean', 'test', '-fae', '--no-transfer-progress'];
+            if (!isHeadless) mvnArgs.push('-Dheadless=false');
+            runCommand('mvn', mvnArgs, projectRoot, runId, (code) => {
                 const r = runStore.get(runId);
                 r.logs.push(`\n[AAQUA] Process exited with code ${code}\n`);
                 const suites = parseMavenResults(projectRoot);
@@ -1861,14 +2165,16 @@ app.post('/api/run-tests-local', async (req, res) => {
             runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
                 const r2 = runStore.get(runId);
                 r2.logs.push(`[AAQUA] Dependencies installed. Running Playwright...\n`);
-                runCommand('npx', ['playwright', 'test', '--reporter=line,json', '--output=playwright-results'], projectRoot, runId, (code) => {
+                const pwArgs = ['playwright', 'test', '--reporter=line,json', '--output=playwright-results'];
+                if (!isHeadless) pwArgs.push('--headed');
+                runCommand('npx', pwArgs, projectRoot, runId, (code) => {
                     const r3 = runStore.get(runId);
                     r3.logs.push(`\n[AAQUA] Process exited with code ${code}\n`);
                     const allLogs = r3.logs.join('');
                     const jsonStart = allLogs.lastIndexOf('{"version"');
                     let suites = [];
                     if (jsonStart !== -1) {
-                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_) { }
+                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_) { /* ignored */ }
                     }
                     r3.results = { suites, summary: buildSummary(suites) };
                     r3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
@@ -1877,7 +2183,9 @@ app.post('/api/run-tests-local', async (req, res) => {
             });
         } else if (framework === 'cypress') {
             runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
-                runCommand('npx', ['cypress', 'run', '--reporter', 'json'], projectRoot, runId, (code) => {
+                const cyArgs = ['cypress', 'run', '--reporter', 'json'];
+                if (!isHeadless) cyArgs.push('--headed');
+                runCommand('npx', cyArgs, projectRoot, runId, (code) => {
                     const r3 = runStore.get(runId);
                     r3.logs.push(`\n[AAQUA] Cypress exited with code ${code}\n`);
                     r3.results = { suites: [], summary: { total: 0, passed: 0, failed: 0, skipped: 0, duration: '—' } };
@@ -1966,7 +2274,7 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
                     const jsonStart = allLogs.lastIndexOf('{"version"');
                     let suites = [];
                     if (jsonStart !== -1) {
-                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_) { }
+                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_) { /* ignored */ }
                     }
                     run3.results = { suites, summary: buildSummary(suites) };
                     run3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
@@ -1992,21 +2300,123 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
     }
 });
 
+// GET /api/heal-debug — Inspect all runs and healable detection (temporary debug route)
+app.get('/api/heal-debug', (req, res) => {
+    const runs = [];
+    runStore.forEach((run, id) => {
+        const failedTests = [];
+        (run.results?.suites || []).forEach(suite => {
+            suite.tests.forEach(t => {
+                if (t.status === 'FAILED') {
+                    failedTests.push({
+                        name: t.name, classname: t.classname,
+                        healable: t.healable, failedLocator: t.failedLocator,
+                        errorMessageStart: String(t.errorMessage || '').substring(0, 150),
+                    });
+                }
+            });
+        });
+        runs.push({ runId: id, status: run.status, framework: run.framework, failedTests });
+    });
+    res.json({ runs });
+});
+
 // GET /api/run-status/:runId — Poll status, logs, results
 app.get('/api/run-status/:runId', (req, res) => {
     const run = runStore.get(req.params.runId);
     if (!run) return res.status(404).json({ error: 'Run not found' });
 
-    // Build live dashboard from partial surefire reports while still running
+    // ── Live dashboard: parse console logs in real-time (works from the very first test) ──
     let liveResults = null;
-    if (run.status === 'running' && run.framework === 'maven' && run.projectRoot) {
+    if (run.status === 'running') {
         try {
-            const suites = parseMavenResults(run.projectRoot);
-            if (suites.length > 0) {
-                const summary = buildSummary(suites);
-                liveResults = { suites, summary };
+            const logText = run.logs.join('');
+
+            if (run.framework === 'maven') {
+                // ─ Parse Maven console output lines ─
+                const suites = [];
+                const suiteMap = {};
+
+                // "Running com.example.LoginTest"
+                const runningRe = /\[INFO\]\s+Running\s+([\w.]+)/g;
+                let m;
+                while ((m = runningRe.exec(logText)) !== null) {
+                    const cls = m[1];
+                    if (!suiteMap[cls]) {
+                        suiteMap[cls] = { name: cls, tests: [], duration: '—', _passed: 0, _failed: 0, _skipped: 0, _running: true };
+                        suites.push(suiteMap[cls]);
+                    }
+                }
+
+                // "Tests run: 3, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 5.12 s -- in com.example.LoginTest"
+                const doneRe = /Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+),\s*Time elapsed:\s*([\d.]+)\s*s\s*--\s*in\s+([\w.]+)/g;
+                while ((m = doneRe.exec(logText)) !== null) {
+                    const [, total, failures, errors, skipped, elapsed, cls] = m;
+                    const passed = parseInt(total) - parseInt(failures) - parseInt(errors) - parseInt(skipped);
+                    if (!suiteMap[cls]) {
+                        suiteMap[cls] = { name: cls, tests: [], duration: elapsed + 's', _passed: 0, _failed: 0, _skipped: 0, _running: false };
+                        suites.push(suiteMap[cls]);
+                    }
+                    const suite = suiteMap[cls];
+                    suite._passed = passed;
+                    suite._failed = parseInt(failures) + parseInt(errors);
+                    suite._skipped = parseInt(skipped);
+                    suite.duration = elapsed + 's';
+                    suite._running = false;
+                }
+
+                // "FAILURE! testLogin(com.example.LoginTest)  Time elapsed: 4.98 s"
+                const failRe = /\[ERROR\]\s+([\w]+)\(([\w.]+)\)\s+Time elapsed:\s*([\d.]+)\s*s\s+<<<\s+FAILURE/g;
+                while ((m = failRe.exec(logText)) !== null) {
+                    const [, testName, cls, elapsed] = m;
+                    if (suiteMap[cls]) {
+                        const already = suiteMap[cls].tests.find(t => t.name === testName);
+                        if (!already) {
+                            suiteMap[cls].tests.push({ name: testName, classname: cls, status: 'FAILED', duration: elapsed + 's', errorMessage: 'See logs', healable: false });
+                        }
+                    }
+                }
+
+                // Build test rows from counted stats where no individual test rows were captured
+                suites.forEach(s => {
+                    if (s.tests.length === 0 && !s._running) {
+                        for (let i = 0; i < s._passed; i++) s.tests.push({ name: `Test ${i + 1}`, status: 'PASSED', duration: '—' });
+                        for (let i = 0; i < s._failed; i++) s.tests.push({ name: `Failed Test ${i + 1}`, status: 'FAILED', duration: '—' });
+                        for (let i = 0; i < s._skipped; i++) s.tests.push({ name: `Skipped Test ${i + 1}`, status: 'SKIPPED', duration: '—' });
+                    } else if (s._running) {
+                        s.tests.push({ name: '⏳ Running...', status: 'RUNNING', duration: '—' });
+                    }
+                });
+
+                // Also try reading XML for completed classes (more accurate individual test names)
+                try {
+                    const xmlSuites = parseMavenResults(run.projectRoot);
+                    xmlSuites.forEach(xs => {
+                        const existing = suites.find(s => s.name === xs.name);
+                        if (existing) {
+                            // Replace generic rows with accurate XML rows
+                            existing.tests = xs.tests;
+                            existing.duration = xs.duration;
+                        } else {
+                            suites.push(xs);
+                        }
+                    });
+                } catch (_) { /* ignored */ }
+
+                if (suites.length > 0) {
+                    const summary = buildSummary(suites);
+                    liveResults = { suites, summary };
+                }
+            } else if (run.framework === 'playwright') {
+                // Playwright: parse dot reporter or console lines
+                const passed = (logText.match(/✓|passed/g) || []).length;
+                const failed = (logText.match(/✗|×|failed/gi) || []).length;
+                if (passed + failed > 0) {
+                    const suites = [{ name: 'Live Progress', tests: [], duration: '—' }];
+                    liveResults = { suites, summary: { total: passed + failed, passed, failed, skipped: 0, duration: '—' } };
+                }
             }
-        } catch (e) { /* ignore parse errors during execution */ }
+        } catch (e) { /* ignore live parse errors */ }
     }
 
     res.json({
@@ -2016,6 +2426,7 @@ app.get('/api/run-status/:runId', (req, res) => {
         results: run.results,
         liveResults: liveResults,
         failedCount: run.failedTests?.length || 0,
+        projectRoot: run.projectRoot || null,
         error: run.error || null,
     });
 });
@@ -2066,7 +2477,7 @@ app.post('/api/retry-tests/:runId', (req, res) => {
             const allLogs = run.logs.join('');
             const jsonStart = allLogs.lastIndexOf('{"version"');
             let suites = [];
-            if (jsonStart !== -1) { try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_) { } }
+            if (jsonStart !== -1) { try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_) { /* ignored */ } }
             run.results = { suites, summary: buildSummary(suites) };
             run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
             run.status = 'completed';
@@ -2090,6 +2501,380 @@ app.get('/api/security/zap/health', async (req, res) => {
     } catch (err) {
         res.json({ status: 'error', error: err.message });
     }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── AUTO-HEAL ENDPOINTS (purely additive) ───
+// ═══════════════════════════════════════════════════════════════
+
+// In-memory store for batch heal jobs
+const batchStore = new Map();
+
+// ── POST /api/auto-heal — Analyse one test, return locator suggestions ──
+app.post('/api/auto-heal', async (req, res) => {
+    const { testName, classname, errorMessage, stackTrace, pageUrl } = req.body;
+    if (!pageUrl) return res.status(400).json({ error: 'pageUrl is required' });
+
+    let browser;
+    try {
+        const { chromium } = require('playwright');
+        browser = await chromium.launch({ headless: true });
+        const page = await browser.newPage();
+        await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        const dom = await page.content();
+        const domTruncated = dom.substring(0, 18000); // keep under token limit
+
+        const failedLocatorInfo = extractLocator(errorMessage, stackTrace);
+        const locatorDesc = failedLocatorInfo
+            ? `${failedLocatorInfo.strategy}("${failedLocatorInfo.value}")`
+            : '(locator not extractable from error)';
+
+        const prompt = `You are a test automation expert. A Selenium/Playwright locator has broken.
+
+Failed locator: ${locatorDesc}
+Error message: ${errorMessage || '(none)'}
+Test: ${classname || ''}.${testName || ''}
+
+Here is the current live page DOM (truncated):
+${domTruncated}
+
+Suggest 5 alternative locators for the same element that is likely missing or renamed.
+Return ONLY valid JSON — no explanation, no markdown:
+{ "suggestions": [ { "strategy": "xpath|css|id|name", "locator": "...", "confidence": 0-100, "description": "why this works" } ] }`;
+
+        const apiKey = process.env.VITE_LLM_API_KEY;
+        const endpoint = process.env.VITE_LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
+        const llmModel = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
+        const genAI = new GoogleGenerativeAI(apiKey, endpoint);
+        const model = genAI.getGenerativeModel({ 
+            model: llmModel,
+            generationConfig: { temperature: 0.2 }
+        });
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+
+        // Parse JSON from response
+        const jsonStart = text.indexOf('{');
+        const jsonEnd = text.lastIndexOf('}');
+        let suggestions = [];
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+            const parsed = JSON.parse(text.substring(jsonStart, jsonEnd + 1));
+            suggestions = parsed.suggestions || [];
+        }
+        // Sort by confidence desc
+        suggestions.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+        res.json({ suggestions, failedLocator: failedLocatorInfo });
+
+    } catch (err) {
+        console.error('[AutoHeal] Error:', err.message);
+        res.status(500).json({ error: err.message });
+    } finally {
+        if (browser) await browser.close().catch(() => {});
+    }
+});
+
+// ── POST /api/auto-heal-batch — Queue multiple healable tests ──
+app.post('/api/auto-heal-batch', async (req, res) => {
+    const { runId, tests } = req.body;
+    if (!Array.isArray(tests) || tests.length === 0) {
+        return res.status(400).json({ error: 'tests array is required' });
+    }
+
+    const batchId = crypto.randomBytes(6).toString('hex');
+    const batchResults = tests.map(t => ({
+        testName: t.testName,
+        classname: t.classname,
+        pageUrl: t.pageUrl,
+        errorMessage: t.errorMessage,
+        stackTrace: t.stackTrace,
+        status: 'pending',
+        suggestions: [],
+        appliedLocator: null,
+        reRunStatus: null,
+        reason: null,
+    }));
+
+    batchStore.set(batchId, { total: tests.length, processed: 0, results: batchResults, runId });
+    res.json({ batchId });
+
+    // Process sequentially in background
+    (async () => {
+        const batch = batchStore.get(batchId);
+        for (let i = 0; i < batch.results.length; i++) {
+            const item = batch.results[i];
+            item.status = 'healing';
+            let browser;
+            try {
+                if (!item.pageUrl) {
+                    item.status = 'conflict';
+                    item.reason = 'No page URL provided';
+                    batch.processed++;
+                    continue;
+                }
+
+                const { chromium } = require('playwright');
+                browser = await chromium.launch({ headless: true });
+                const page = await browser.newPage();
+                await page.goto(item.pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                const dom = (await page.content()).substring(0, 18000);
+
+                const failedLocatorInfo = extractLocator(item.errorMessage, item.stackTrace);
+                const locatorDesc = failedLocatorInfo
+                    ? `${failedLocatorInfo.strategy}("${failedLocatorInfo.value}")`
+                    : '(locator not extractable)';
+
+                const prompt = `You are a test automation expert. A Selenium/Playwright locator has broken.
+
+Failed locator: ${locatorDesc}
+Error: ${item.errorMessage || '(none)'}
+Test: ${item.classname || ''}.${item.testName || ''}
+
+Current page DOM (truncated):
+${dom}
+
+Suggest 5 alternative locators. Return ONLY valid JSON:
+{ "suggestions": [ { "strategy": "xpath|css|id|name", "locator": "...", "confidence": 0-100, "description": "why this works" } ] }`;
+
+                const apiKey = process.env.VITE_LLM_API_KEY;
+                const endpoint = process.env.VITE_LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
+                const llmModel = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
+                const genAI = new GoogleGenerativeAI(apiKey, endpoint);
+                const model = genAI.getGenerativeModel({ 
+                    model: llmModel,
+                    generationConfig: { temperature: 0.2 }
+                });
+                const result = await model.generateContent(prompt);
+                const text = result.response.text();
+
+                const jsonStart = text.indexOf('{');
+                const jsonEnd = text.lastIndexOf('}');
+                if (jsonStart !== -1 && jsonEnd !== -1) {
+                    const parsed = JSON.parse(text.substring(jsonStart, jsonEnd + 1));
+                    item.suggestions = (parsed.suggestions || []).sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+                }
+
+                item.status = item.suggestions.length > 0 ? 'suggestions-ready' : 'no-suggestion';
+            } catch (err) {
+                console.error(`[AutoHeal Batch] ${item.testName} error:`, err.message);
+                item.status = 'no-suggestion';
+                item.reason = err.message;
+            } finally {
+                if (browser) await browser.close().catch(() => {});
+                batch.processed++;
+            }
+        }
+    })();
+});
+
+// ── GET /api/heal-batch-status/:batchId — Poll batch progress ──
+app.get('/api/heal-batch-status/:batchId', (req, res) => {
+    const batch = batchStore.get(req.params.batchId);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    res.json({ total: batch.total, processed: batch.processed, results: batch.results });
+});
+
+// ── POST /api/apply-heal — Patch source file + re-run single test ──
+app.post('/api/apply-heal', async (req, res) => {
+    const { runId, testName, classname, oldLocator, newLocator, newStrategy, projectRoot: bodyProjectRoot, framework: bodyFramework } = req.body;
+    if (!classname || !oldLocator || !newLocator) {
+        return res.status(400).json({ error: 'classname, oldLocator, newLocator are required' });
+    }
+
+    try {
+        // Prefer values from body (always available); fall back to runStore if provided
+        let projectRoot = bodyProjectRoot;
+        let framework = bodyFramework;
+        if (framework) framework = framework.toLowerCase();
+        if (runId && runStore.has(runId)) {
+            const run = runStore.get(runId);
+            projectRoot = projectRoot || run.projectRoot;
+            framework = framework || run.framework;
+            if (framework) framework = framework.toLowerCase();
+        }
+        if (!projectRoot || !framework) {
+            return res.status(400).json({ error: 'projectRoot and framework are required (or a valid runId)' });
+        }
+
+        // ── We will search all project files for the locator later ──
+
+        // ── Normalize the failed locator: strip CSS escapes and leading # ──
+        // "#user\-name1" → "user-name1"
+        const rawId = oldLocator.replace(/\\-/g, '-').replace(/\\./g, '.').replace(/^#/, '').trim();
+
+        // ── Build candidate search patterns ──
+        const searchPatterns = [];
+        if (framework === 'playwright' || framework === 'cypress') {
+            searchPatterns.push(`locator("${oldLocator}")`);
+            searchPatterns.push(`locator('${oldLocator}')`);
+            searchPatterns.push(`locator(\`${oldLocator}\`)`);
+            searchPatterns.push(`get("${oldLocator}")`);
+            searchPatterns.push(`get('${oldLocator}')`);
+            searchPatterns.push(`get(\`${oldLocator}\`)`);
+            searchPatterns.push(`"${oldLocator}"`);
+            searchPatterns.push(`'${oldLocator}'`);
+            searchPatterns.push(`\`${oldLocator}\``);
+        } else {
+            if (oldLocator.startsWith('#') || oldLocator.replace(/\\-/g, '-').startsWith('#')) {
+                // CSS id selector — could be By.id or By.cssSelector in source
+                searchPatterns.push(`By.id("${rawId}")`);
+                searchPatterns.push(`By.cssSelector("#${rawId}")`);
+                searchPatterns.push(`@FindBy(id = "${rawId}")`);
+                searchPatterns.push(`@FindBy(css = "#${rawId}")`);
+                searchPatterns.push(`"${rawId}"`);
+            } else if (oldLocator.startsWith('//') || oldLocator.startsWith('(//')) {
+                searchPatterns.push(`By.xpath("${oldLocator}")`);
+                searchPatterns.push(`"${oldLocator}"`);
+            } else if (oldLocator.startsWith('[name=') || (newStrategy || '').toLowerCase() === 'name') {
+                searchPatterns.push(`By.name("${rawId}")`);
+                searchPatterns.push(`"${rawId}"`);
+            } else {
+                searchPatterns.push(`By.cssSelector("${oldLocator}")`);
+                searchPatterns.push(`"${rawId}"`);
+            }
+        }
+
+        // ── Find the pattern in any project file ──
+        const glob = require('glob');
+        let allFiles = [];
+        if (framework === 'maven') {
+            allFiles = glob.sync('**/*.java', { cwd: projectRoot, ignore: ['**/target/**', '**/node_modules/**'] }).map(f => require('path').join(projectRoot, f));
+        } else {
+            allFiles = glob.sync('**/*.{js,ts}', { cwd: projectRoot, ignore: ['**/node_modules/**', '**/dist/**'] }).map(f => require('path').join(projectRoot, f));
+        }
+
+        let sourceFile = null;
+        let foundPattern = null;
+        let fileContent = null;
+
+        for (const f of allFiles) {
+            const contentStr = fs.readFileSync(f, 'utf-8');
+            for (const p of searchPatterns) {
+                const count = contentStr.split(p).length - 1;
+                if (count === 1) {
+                    sourceFile = f;
+                    foundPattern = p;
+                    fileContent = contentStr;
+                    break;
+                }
+                if (count > 1) {
+                    return res.status(409).json({ error: `Pattern "${p}" found ${count} times in ${require('path').basename(f)} — manual review required` });
+                }
+            }
+            if (foundPattern) break;
+        }
+
+        if (!foundPattern || !sourceFile) {
+            return res.status(400).json({
+                error: `Could not locate the locator in any project file.\nSearched for:\n• ${searchPatterns.join('\n• ')}\n\nPlease apply the fix manually.`
+            });
+        }
+        
+        const content = fileContent;
+
+        // ── Convert LLM suggestion to Java Selenium syntax ──
+
+        function toJavaSyntax(val, strat) {
+            const s = (strat || '').toLowerCase();
+            if (s === 'id') return `By.id("${val}")`;
+            if (s === 'xpath') return `By.xpath("${val}")`;
+            if (s === 'name') return `By.name("${val}")`;
+            if (s === 'classname' || s === 'class') return `By.className("${val}")`;
+            if (s === 'linktext') return `By.linkText("${val}")`;
+            if (s === 'partiallinktext') return `By.partialLinkText("${val}")`;
+            if (s === 'tagname') return `By.tagName("${val}")`;
+            return `By.cssSelector("${val}")`;
+        }
+
+        let replacement;
+        if (framework === 'playwright' || framework === 'cypress') {
+            if (foundPattern.startsWith('locator(')) {
+                const quote = foundPattern.charAt(8);
+                replacement = `locator(${quote}${newLocator}${quote})`;
+            } else if (foundPattern.startsWith('get(')) {
+                const quote = foundPattern.charAt(4);
+                replacement = `get(${quote}${newLocator}${quote})`;
+            } else {
+                const quote = foundPattern.charAt(0);
+                replacement = `${quote}${newLocator}${quote}`;
+            }
+        } else {
+            if (foundPattern.startsWith('@FindBy')) {
+                const s = (newStrategy || 'css').toLowerCase();
+                if (s === 'id') replacement = `@FindBy(id = "${newLocator}")`;
+                else if (s === 'xpath') replacement = `@FindBy(xpath = "${newLocator}")`;
+                else if (s === 'name') replacement = `@FindBy(name = "${newLocator}")`;
+                else replacement = `@FindBy(css = "${newLocator}")`;
+            } else if (foundPattern.startsWith('"') && foundPattern.endsWith('"')) {
+                replacement = `"${newLocator}"`;
+            } else {
+                replacement = toJavaSyntax(newLocator, newStrategy);
+            }
+        }
+
+        // Create backup before patching
+        fs.writeFileSync(sourceFile + '.bak', content, 'utf-8');
+        const patched = content.replace(foundPattern, replacement);
+        fs.writeFileSync(sourceFile, patched, 'utf-8');
+        console.log(`[ApplyHeal] Patched: "${foundPattern}" → "${replacement}" in ${path.basename(sourceFile)}`);
+
+        // Re-run only this test
+        const healRunId = crypto.randomBytes(6).toString('hex');
+        runStore.set(healRunId, {
+            status: 'running', logs: [], results: null, framework,
+            projectPath: projectRoot, projectRoot, failedTests: [], liveResults: [], exitCode: null, error: null,
+        });
+
+        res.json({ healRunId, sourceFile, backupFile: sourceFile + '.bak', patchedFrom: foundPattern, patchedTo: replacement });
+
+        // Fire the re-run asynchronously
+        if (framework === 'maven') {
+            const simpleClass = classname.split('.').pop();
+            runCommand('mvn', ['test', `-Dtest=${simpleClass}`, '-fae', '--no-transfer-progress'], projectRoot, healRunId, (code) => {
+                const r = runStore.get(healRunId);
+                r.logs.push(`\n[AAQUA] Heal re-run exited with code ${code}\n`);
+                const suites = parseMavenResults(projectRoot);
+                r.results = { suites, summary: buildSummary(suites) };
+                r.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
+                r.status = 'completed';
+            });
+        } else if (framework === 'playwright' && sourceFile) {
+            const relSpec = path.relative(projectRoot, sourceFile);
+            runCommand('npx', ['playwright', 'test', relSpec, `--grep=${testName}`, '--reporter=json'], projectRoot, healRunId, (code) => {
+                const r = runStore.get(healRunId);
+                r.logs.push(`\n[AAQUA] Heal re-run exited with code ${code}\n`);
+                const allLogs = r.logs.join('');
+                const jsonStart = allLogs.lastIndexOf('{"version"');
+                let suites = [];
+                if (jsonStart !== -1) { try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_err) { /* Ignored */ } }
+                r.results = { suites, summary: buildSummary(suites) };
+                r.status = 'completed';
+            });
+        }
+
+    } catch (err) {
+        console.error('[ApplyHeal] Error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Browse Directory Endpoint ───────────────────────────
+app.get('/api/browse-folder', (req, res) => {
+    const psScript = `
+Add-Type -AssemblyName System.windows.forms
+$f = New-Object System.Windows.Forms.FolderBrowserDialog
+$f.Description = 'Select Project Folder'
+$f.ShowNewFolderButton = $false
+if($f.ShowDialog() -eq 'OK'){
+    Write-Output $f.SelectedPath
+}
+`;
+    const { exec } = require('child_process');
+    exec(`powershell -Sta -NoProfile -WindowStyle Hidden -Command "${psScript.replace(/\n/g, ';')}"`, (err, stdout) => {
+        if (err || !stdout.trim()) {
+            return res.json({ path: '' });
+        }
+        res.json({ path: stdout.trim() });
+    });
 });
 
 // ─── Start server ────────────────────────────────────────

@@ -25,23 +25,27 @@ export async function calculateGovernanceMetrics(scanId) {
         }
     }
 
-    // Release gate: block if critical+high > 30% of total
+    // Calculate overall health score (0-10 scale)
+    // Formula: 10 - weighted deductions
+    let deductions = (counts.critical * 3.0) + (counts.high * 1.5) + (counts.medium * 0.5) + (counts.low * 0.1) + (counts.info * 0.05);
+    // Cap deductions at 10, ensure non-negative
+    const healthScore = Math.max(0, Math.min(10, 10 - deductions));
+
+    // Release gate: block if:
+    // 1. Any Critical vulnerability is detected (critical > 0)
+    // 2. More than 2 High-severity vulnerabilities are found (high > 2)
+    // 3. Overall health score is poor (healthScore < 6.0)
+    // 4. Critical+High issues exceed 30% of total
     const critHighPct = counts.total > 0
         ? ((counts.critical + counts.high) / counts.total) * 100
         : 0;
-    const releaseBlocked = critHighPct > 30;
+    const releaseBlocked = counts.critical > 0 || counts.high > 2 || healthScore < 6.0 || critHighPct > 30;
 
     // Count regressions
     const regressionCount = vulnerabilities.filter(v => v.is_regression).length;
 
     // Generate executive summary
-    const executiveSummary = generateExecutiveSummary(counts, critHighPct, releaseBlocked, regressionCount);
-
-    // Calculate overall health score (0-10 scale)
-    // Formula: 10 - weighted deductions
-    let deductions = (counts.critical * 3.0) + (counts.high * 1.5) + (counts.medium * 0.5) + (counts.low * 0.1);
-    // Cap deductions at 10, ensure non-negative
-    const healthScore = Math.max(0, Math.min(10, 10 - deductions));
+    const executiveSummary = generateExecutiveSummary(counts, healthScore, releaseBlocked, regressionCount, critHighPct);
 
     // Persist
     const [metric] = await GovernanceMetric.upsert({
@@ -65,24 +69,34 @@ export async function calculateGovernanceMetrics(scanId) {
 /**
  * Generate a plain-language executive summary
  */
-function generateExecutiveSummary(counts, critHighPct, releaseBlocked, regressionCount) {
+function generateExecutiveSummary(counts, healthScore, releaseBlocked, regressionCount, critHighPct) {
     const parts = [];
 
     parts.push(`Security scan identified ${counts.total} vulnerabilities across the target application.`);
     parts.push(`Breakdown: ${counts.critical} Critical, ${counts.high} High, ${counts.medium} Medium, ${counts.low} Low, ${counts.info} Informational.`);
-
-    if (critHighPct > 0) {
-        parts.push(`Critical and High severity issues account for ${critHighPct.toFixed(1)}% of all findings.`);
-    }
+    parts.push(`Overall security health score: ${healthScore.toFixed(1)}/10.`);
 
     if (regressionCount > 0) {
         parts.push(`⚠️ ${regressionCount} vulnerability(ies) have been flagged as regressions — previously resolved issues that have reappeared.`);
     }
 
     if (releaseBlocked) {
-        parts.push(`🚫 RELEASE BLOCKED: Critical+High issues exceed the 30% governance threshold. These must be addressed before deployment.`);
+        parts.push(`🚫 RELEASE BLOCKED due to security policy violations:`);
+        if (counts.critical > 0) {
+            parts.push(`  - CRITICAL vulnerability detected (Count: ${counts.critical}, Policy Gate Limit: 0).`);
+        }
+        if (counts.high > 2) {
+            parts.push(`  - High-severity vulnerability count exceeds threshold (Count: ${counts.high}, Policy Gate Limit: 2).`);
+        }
+        if (healthScore < 6.0) {
+            parts.push(`  - Overall security health score is critically low (Score: ${healthScore.toFixed(1)}/10, Policy Gate Limit: 6.0/10).`);
+        }
+        if (critHighPct > 30) {
+            parts.push(`  - Critical+High severity concentration is too high (Percentage: ${critHighPct.toFixed(1)}%, Policy Gate Limit: 30.0%).`);
+        }
+        parts.push(`These issues must be resolved before this application version can be approved for release.`);
     } else {
-        parts.push(`✅ RELEASE APPROVED: Critical+High issues are within the acceptable 30% threshold.`);
+        parts.push(`✅ RELEASE APPROVED: The application meets all defined security governance thresholds.`);
     }
 
     return parts.join('\n');

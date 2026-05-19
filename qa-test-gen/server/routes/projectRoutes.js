@@ -49,7 +49,7 @@ router.get('/', authenticateToken, async (req, res) => {
             include: [{
                 model: Scan,
                 as: 'scans',
-                attributes: ['id', 'scan_type', 'status', 'completed_at'],
+                attributes: ['id', 'scan_type', 'status', 'completed_at', 'created_at'],
                 order: [['created_at', 'DESC']],
                 limit: 1,
                 separate: true,
@@ -76,6 +76,8 @@ router.get('/:id', authenticateToken, async (req, res) => {
                 as: 'scans',
                 attributes: ['id', 'scan_type', 'status', 'started_at', 'completed_at', 'progress'],
                 order: [['created_at', 'DESC']],
+                limit: 30,
+                separate: true,
                 include: [{
                     model: GovernanceMetric,
                     as: 'governance',

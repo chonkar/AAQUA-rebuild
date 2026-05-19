@@ -175,7 +175,7 @@ const LocatorGenerator = () => {
                     >
                         <Globe size={18} /> Scrape URL
                     </button>
-                    <span className="badge-beta">BETA</span>
+
                 </div>
 
                 <div className="input-card">

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Play, Search, AlertTriangle, CheckCircle, ExternalLink, Loader2, User, Sparkles, BrainCircuit } from 'lucide-react';
-import { launchBrowser, runAccessibilityScan } from '../services/accessibilityService';
+import { launchBrowser } from '../services/accessibilityService';
 
 const AccessibilityScanner = () => {
     const [url, setUrl] = useState('');
@@ -75,9 +75,9 @@ const AccessibilityScanner = () => {
 
     return (
         <div className="accessibility-scanner animate-fade-in">
-            <div className="page-header">
+            <div className="ac-header">
                 <h2><User className="inline-icon" /> Hybrid Accessibility Scanner (WCAG 2.2)</h2>
-                <p>Detect violations using Axe-core automation + AI Expert Audit.</p>
+                <p className="ac-subtitle">Detect violations using Axe-core automation + AI Expert Audit.</p>
             </div>
 
             <div className="scanner-container">
@@ -106,7 +106,8 @@ const AccessibilityScanner = () => {
                         <button
                             onClick={handleScan}
                             disabled={!isBrowserActive || isScanning}
-                            className="btn btn-accent full-width"
+                            className="btn full-width"
+                            style={{ background: '#2563eb', color: '#fff', border: 'none' }}
                         >
                             {isScanning ? <Loader2 className="spin" /> : <Search size={18} />}
                             {isScanning ? "Scanning..." : "Scan Page"}
@@ -467,7 +468,21 @@ const AccessibilityScanner = () => {
             <style>{`
                 .accessibility-scanner { max-width: 1200px; margin: 0 auto; }
                 .inline-icon { display: inline; vertical-align: middle; margin-right: 0.5rem; }
-                
+
+                /* Header — matches Test Runner format */
+                .ac-header { margin-bottom: 2rem; }
+                .ac-header h2 {
+                    font-size: 2rem;
+                    margin-bottom: 0.5rem;
+                    background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .ac-subtitle { color: var(--text-secondary); }
+
                 .scanner-container {
                     display: grid;
                     grid-template-columns: 1fr 2fr;

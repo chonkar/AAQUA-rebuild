@@ -70,11 +70,17 @@ const TestConverter = () => {
 
             // Auto download
             const a = document.createElement('a');
+            a.style.display = 'none';
             a.href = url;
             a.download = `converted_${targetFramework.toLowerCase()}.zip`;
             document.body.appendChild(a);
             a.click();
-            a.remove();
+            
+            // Delay revocation to ensure the browser captures the filename and starts downloading before blob is destroyed
+            setTimeout(() => {
+                window.URL.revokeObjectURL(url);
+                a.remove();
+            }, 5000);
 
         } catch (err) {
             clearInterval(progressInterval);

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Project, Scan, Vulnerability, GovernanceMetric } from '../models/index.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { Op, fn, col, literal } from 'sequelize';
+import { Op } from 'sequelize';
 
 const router = Router();
 
@@ -52,7 +52,7 @@ router.get('/summary/:projectId', authenticateToken, async (req, res) => {
 
             // OWASP breakdown
             for (const vuln of latestVulnerabilities) {
-                const cat = vuln.owasp_category || 'Uncategorized';
+                const cat = vuln.owasp_category || 'General Security / NA';
                 owaspBreakdown[cat] = (owaspBreakdown[cat] || 0) + 1;
             }
         }

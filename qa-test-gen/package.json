@@ -21,6 +21,7 @@
     "express-rate-limit": "^8.2.1",
     "fast-xml-parser": "^5.3.7",
     "file-saver": "^2.0.5",
+    "glob": "^13.0.6",
     "html-docx-js": "^0.3.1",
     "html-docx-js-typescript": "^0.1.5",
     "jsonwebtoken": "^9.0.3",

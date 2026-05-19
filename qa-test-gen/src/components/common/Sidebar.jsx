@@ -96,11 +96,20 @@ const Sidebar = () => {
 
         .sidebar-content {
           padding: 1.5rem;
+          padding-bottom: 2rem;
           display: flex;
           flex-direction: column;
           gap: 2rem;
           height: 100%;
+          overflow-y: auto;
+          overflow-x: hidden;
         }
+
+        /* Custom thin scrollbar for sidebar */
+        .sidebar-content::-webkit-scrollbar { width: 4px; }
+        .sidebar-content::-webkit-scrollbar-track { background: transparent; }
+        .sidebar-content::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
+        .sidebar-content::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
         .section-label {
           font-size: 0.75rem;

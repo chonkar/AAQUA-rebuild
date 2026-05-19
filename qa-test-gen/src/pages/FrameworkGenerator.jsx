@@ -13,7 +13,8 @@ const FrameworkGenerator = () => {
         docker: true,
         parallel: true,
         logging: true,
-        cucumber: false
+        cucumber: false,
+        apiTesting: false
     });
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState(null);
@@ -70,19 +71,21 @@ const FrameworkGenerator = () => {
                 features
             };
             const blob = await generateFramework(config);
-            const url = window.URL.createObjectURL(blob);
-
             setProgress(100);
             setProgressDetail('Done!');
 
-            // Auto download
+            console.log('[Framework] Triggering zip download');
+            const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             a.download = `${projectName}.zip`;
             document.body.appendChild(a);
             a.click();
-            a.remove();
-            window.URL.revokeObjectURL(url);
+            
+            setTimeout(() => {
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            }, 5000);
 
         } catch (err) {
             clearInterval(progressInterval);
@@ -224,6 +227,16 @@ const FrameworkGenerator = () => {
                             <span>Parallel Execution</span>
                         </label>
 
+                        <label className="checkbox-label" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', marginTop: '1rem' }}>
+                            <input
+                                type="checkbox"
+                                checked={features.apiTesting}
+                                onChange={() => handleFeatureToggle('apiTesting')}
+                                disabled={isGenerating}
+                            />
+                            <span style={{ color: 'var(--accent-secondary)', fontWeight: '600' }}>🌐 Include API Testing Support</span>
+                        </label>
+
                         {framework === 'Selenium' && language === 'Java' && (
                             <label className="checkbox-label" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', marginTop: '1rem' }}>
                                 <input
@@ -304,6 +317,13 @@ const FrameworkGenerator = () => {
                                     <>
                                         <div className="folder-item indent-3">📁 tests/</div>
                                         <div className="folder-item indent-4">📄 LoginTest.java</div>
+                                        {features.apiTesting && (
+                                            <>
+                                                <div className="folder-item indent-3">📁 api/</div>
+                                                <div className="folder-item indent-4">📄 ApiBaseTest.java</div>
+                                                <div className="folder-item indent-4">📄 UsersApiTest.java</div>
+                                            </>
+                                        )}
                                     </>
                                 )}
                                 <div className="folder-item indent-3">📁 utils/</div>
@@ -320,6 +340,12 @@ const FrameworkGenerator = () => {
                                     </>
                                 )}
                                 <div className="folder-item indent-2">📁 tests/</div>
+                                {features.apiTesting && (
+                                    <>
+                                        <div className="folder-item indent-3">📁 api/</div>
+                                        <div className="folder-item indent-4">📄 users.spec.{language === 'TypeScript' ? 'ts' : 'js'}</div>
+                                    </>
+                                )}
                                 <div className="folder-item indent-3">📄 login.spec.{language === 'TypeScript' ? 'ts' : 'js'}</div>
                                 <div className="folder-item indent-2">📁 utils/</div>
                                 {features.logging && (
@@ -366,6 +392,7 @@ const FrameworkGenerator = () => {
                             {features.docker && <li><Check size={14} /> Docker Support</li>}
                             {features.parallel && <li><Check size={14} /> Parallel Execution</li>}
                             {features.cucumber && <li><Check size={14} /> Cucumber BDD Framework</li>}
+                            {features.apiTesting && <li><Check size={14} /> API Testing Support</li>}
                         </ul>
                     </div>
                 </div>
