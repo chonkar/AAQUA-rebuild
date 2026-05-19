@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ShieldCheck, Play, Loader2, AlertTriangle, CheckCircle, XCircle, Lock, LogIn, Plus, ArrowLeft, BarChart3, Shield, Bug, Code, RefreshCw, Download, Clock, TrendingUp, Eye, BrainCircuit, Sparkles, ChevronDown, ChevronUp, StopCircle } from 'lucide-react';
+import { useAuth } from 'react-oidc-context';
+import { createApiClient } from '../utils/apiClient';
 
 const API = 'http://localhost:3001/api/security';
 
 const SecurityScanner = () => {
-    // ─── Auth state ──────────────────────────────────────
-    const [token, setToken] = useState(localStorage.getItem('sec_token') || '');
-    const [_user, setUser] = useState(null);
-    const [authMode, setAuthMode] = useState('login'); // login | register
-    const [authForm, setAuthForm] = useState({ email: '', password: '', name: '' });
-    const [authError, setAuthError] = useState('');
-    const [authLoading, setAuthLoading] = useState(false);
+    // ─── Auth state (Keycloak OIDC) ──────────────────────
+    const auth = useAuth();
+    const token = auth.user?.access_token || '';
+    const api = createApiClient(() => token);
 
     // ─── App state ───────────────────────────────────────
     const [view, setView] = useState('projects'); // projects | project-detail | scan-results | new-project
@@ -54,52 +53,12 @@ const SecurityScanner = () => {
     // ─── Effects ─────────────────────────────────────────
 
     useEffect(() => {
-        if (token) {
+        if (auth.isAuthenticated) {
             fetchProjects();
             checkZapHealth();
         }
         return () => { if (pollRef.current) clearInterval(pollRef.current); };
-    }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // ─── Auth handlers ───────────────────────────────────
-
-    const handleAuth = async (e) => {
-        e.preventDefault();
-        console.log(`[SecurityScanner] Attempting ${authMode}...`);
-        setAuthError('');
-        setAuthLoading(true);
-        try {
-            const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register';
-            const body = authMode === 'login'
-                ? { email: authForm.email, password: authForm.password }
-                : authForm;
-
-            const res = await fetch(`${API}${endpoint}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const text = await res.text();
-            const data = text ? JSON.parse(text) : {};
-            if (!res.ok) throw new Error(data.error || 'Auth failed');
-
-            localStorage.setItem('sec_token', data.token);
-            setToken(data.token);
-            setUser(data.user);
-        } catch (err) {
-            setAuthError(err.message);
-        } finally {
-            setAuthLoading(false);
-        }
-    };
-
-    const handleLogout = () => {
-        localStorage.removeItem('sec_token');
-        setToken('');
-        setUser(null);
-        setProjects([]);
-        setView('projects');
-    };
+    }, [auth.isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── Project handlers ────────────────────────────────
 

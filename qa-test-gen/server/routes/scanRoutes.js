@@ -137,10 +137,6 @@ async function executeScan(scan, project, openapiUrl) {
         await scan.update({ status: 'spidering' });
         await flushScanLogs(scan);
 
-        // Progress callback from zapService. We flush logs on each phase
-        // transition so a tester reloading mid-scan sees up-to-date history
-        // even if the in-memory buffer is dropped.
-        let lastStatus = scan.status;
         const updateProgress = async (status, progress) => {
             console.log(`[Scan] Progress update: ${status} (${progress}%)`);
             // Check if aborted in-between to avoid database writes

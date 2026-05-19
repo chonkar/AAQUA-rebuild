@@ -1449,7 +1449,7 @@ app.post('/api/scrape', async (req, res) => {
         // Extra safety wait for dynamic content
         try {
             await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => { });
-        } catch (e) {
+        } catch {
             // Ignore network idle timeout, proceed with what we have
         }
 
@@ -2118,12 +2118,6 @@ function runCommand(cmd, args, cwd, runId, onComplete) {
 app.post('/api/run-tests-local', async (req, res) => {
     const { projectPath, isHeadless = true } = req.body;
     if (!projectPath) return res.status(400).json({ error: 'projectPath is required' });
-    // headed is only honoured when the host has a display server. We still
-    // accept the flag here and let Playwright fail loudly in a headless
-    // container — the UI hides the toggle when /api/runtime-info reports no
-    // display so misconfiguration is rare in practice.
-    const runHeaded = headed === true || headed === 'true';
-
     // Normalize path separators
     const normalizedPath = path.resolve(projectPath);
 
@@ -2206,7 +2200,7 @@ app.post('/api/run-tests-local', async (req, res) => {
                     const jsonStart = allLogs.lastIndexOf('{"version"');
                     let suites = [];
                     if (jsonStart !== -1) {
-                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_) { /* ignored */ }
+                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch { /* ignored */ }
                     }
                     r3.results = { suites, summary: buildSummary(suites) };
                     r3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
@@ -2315,7 +2309,7 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
                     const jsonStart = allLogs.lastIndexOf('{"version"');
                     let suites = [];
                     if (jsonStart !== -1) {
-                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_) { /* ignored */ }
+                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch { /* ignored */ }
                     }
                     run3.results = { suites, summary: buildSummary(suites) };
                     run3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
@@ -2444,7 +2438,7 @@ app.get('/api/run-status/:runId', (req, res) => {
                             suites.push(xs);
                         }
                     });
-                } catch (_) { /* ignored */ }
+                } catch { /* ignored */ }
 
                 if (suites.length > 0) {
                     const summary = buildSummary(suites);
@@ -2459,7 +2453,7 @@ app.get('/api/run-status/:runId', (req, res) => {
                     liveResults = { suites, summary: { total: passed + failed, passed, failed, skipped: 0, duration: '—' } };
                 }
             }
-        } catch (e) { /* ignore live parse errors */ }
+        } catch { /* ignore live parse errors */ }
     }
 
     const since = Math.max(0, parseInt(req.query.since, 10) || 0);
@@ -2526,7 +2520,7 @@ app.post('/api/retry-tests/:runId', (req, res) => {
             const allLogs = run.logs.join('');
             const jsonStart = allLogs.lastIndexOf('{"version"');
             let suites = [];
-            if (jsonStart !== -1) { try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_) { /* ignored */ } }
+            if (jsonStart !== -1) { try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch { /* ignored */ } }
             run.results = { suites, summary: buildSummary(suites) };
             run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
             run.status = 'completed';
@@ -2909,7 +2903,7 @@ app.post('/api/apply-heal', async (req, res) => {
                 const allLogs = r.logs.join('');
                 const jsonStart = allLogs.lastIndexOf('{"version"');
                 let suites = [];
-                if (jsonStart !== -1) { try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch (_err) { /* Ignored */ } }
+                if (jsonStart !== -1) { try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch { /* Ignored */ } }
                 r.results = { suites, summary: buildSummary(suites) };
                 r.status = 'completed';
             });

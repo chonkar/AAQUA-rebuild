@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Clock, FolderOpen, ChevronDown, ChevronRight, Terminal, BarChart3, Download, CalendarClock, Wrench } from 'lucide-react';
-import { runTestsLocal, getRunStatus, retryFailedTests } from '../services/testRunnerService';
+import { runTestsLocal, getRunStatus, retryFailedTests, getRuntimeInfo } from '../services/testRunnerService';
 import { startBatchHeal, getBatchHealStatus, applyHeal } from '../services/autoHealService';
+
+const HEADED_PREF_KEY = 'aaqua.testrunner.headed';
 
 const STATUS_COLORS = { PASSED: 'var(--success)', FAILED: 'var(--error)', SKIPPED: 'var(--warning)' };
 const STATUS_ICONS = { PASSED: CheckCircle2, FAILED: XCircle, SKIPPED: MinusCircle };
@@ -140,7 +142,11 @@ const TestRunner = () => {
     const [projectPath, setProjectPath] = useState('');
     const [runId, setRunId] = useState(null);
     const [retrySourceRunId, setRetrySourceRunId] = useState(null);
-    const [isHeaded, setIsHeaded] = useState(false);
+    const [headed, setHeaded] = useState(() => {
+        try { return localStorage.getItem(HEADED_PREF_KEY) === 'true'; } catch { return false; }
+    });
+    const [hasDisplayServer, setHasDisplayServer] = useState(false);
+    const logCursorRef = useRef(0);
     const [framework, setFramework] = useState(null);
     const [projectRoot, setProjectRoot] = useState(null); // real server-side project root (may differ from projectPath if ZIP was uploaded)
     const [status, setStatus] = useState('idle'); // idle | running | completed | error
@@ -249,7 +255,7 @@ const TestRunner = () => {
         setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
         logCursorRef.current = 0;
         try {
-            const data = await runTestsLocal(projectPath.trim(), !isHeaded);
+            const data = await runTestsLocal(projectPath.trim(), !headed);
             if (data.error) { setStatus('error'); setError(data.error); setHasRun(true); return; }
             setRunId(data.runId);
             setRetrySourceRunId(data.runId);
@@ -492,12 +498,12 @@ const TestRunner = () => {
                             Browse
                         </button>
                     </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem', cursor: hasDisplayServer ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', opacity: hasDisplayServer ? 1 : 0.5 }} title={!hasDisplayServer ? "No display server detected on host. Headed mode is disabled." : ""}>
                         <input
                             type="checkbox"
-                            checked={isHeaded}
-                            onChange={(e) => setIsHeaded(e.target.checked)}
-                            disabled={isRunning || isScheduled}
+                            checked={headed}
+                            onChange={(e) => setHeaded(e.target.checked)}
+                            disabled={isRunning || isScheduled || !hasDisplayServer}
                         />
                         Show Browser (Headed)
                     </label>

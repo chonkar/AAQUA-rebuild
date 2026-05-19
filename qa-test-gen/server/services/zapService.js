@@ -463,14 +463,7 @@ export async function setupZapContext(project) {
 
 // ─── Full Scan Orchestration ─────────────────────────────
 
-// Each orchestrator accepts an optional `onLog(line)` callback so the route
-// layer can capture phase-level events (session create, spider start, alert
-// count) and surface them to the tester via the /status endpoint's log tail.
-// Falls back to console.log when not provided so server logs are unchanged.
-const mkLog = (onLog) => (line) => {
-    if (onLog) onLog(line);
-    else console.log(line);
-};
+const log = (line) => console.log(line);
 
 /**
  * Run a complete baseline scan (spider → passive scan → get alerts)
