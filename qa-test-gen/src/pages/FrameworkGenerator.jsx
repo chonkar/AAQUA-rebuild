@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { Download, Layers, Check, AlertCircle, Loader2, Code2, FileCode, Settings } from 'lucide-react';
 import { generateFramework } from '../services/frameworkGeneratorService';
+import { useProject } from '../context/ProjectContext';
 
 const FrameworkGenerator = () => {
+    const { selectedProjectId } = useProject();
     const [projectName, setProjectName] = useState('my-test-framework');
     const [framework, setFramework] = useState('Playwright');
     const [language, setLanguage] = useState('TypeScript');
@@ -68,7 +70,8 @@ const FrameworkGenerator = () => {
                 projectName,
                 framework,
                 language,
-                features
+                features,
+                projectId: selectedProjectId || null
             };
             const blob = await generateFramework(config);
             setProgress(100);

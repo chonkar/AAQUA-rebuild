@@ -1,18 +1,128 @@
-import React, { useState } from 'react';
-import { Play, Search, AlertTriangle, CheckCircle, ExternalLink, Loader2, User, Sparkles, BrainCircuit } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from 'react-oidc-context';
+import { Play, Search, AlertTriangle, CheckCircle, ExternalLink, Loader2, User, Sparkles, BrainCircuit, XCircle } from 'lucide-react';
 import { launchBrowser } from '../services/accessibilityService';
+import { useProject } from '../context/ProjectContext';
+import { createApiClient } from '../utils/apiClient';
+import JiraDefectButton from '../components/features/JiraDefectButton';
+import UrlScopeWarning from '../components/common/UrlScopeWarning';
+
+// Heuristic scan phases. The backend runs synchronously with no progress
+// stream, so we model the work it actually does (axe injection → rules →
+// optional AI audit) and asymptote at the phase ceiling. Real completion
+// snaps the bar to 100%; failure paints it red.
+const SCAN_PHASES_WITH_AI = [
+    { label: 'Initializing browser context…',  ceiling: 12, durationMs: 1500 },
+    { label: 'Injecting axe-core engine…',     ceiling: 25, durationMs: 2000 },
+    { label: 'Running WCAG 2.2 AA rules…',     ceiling: 50, durationMs: 6000 },
+    { label: 'Capturing DOM snapshot…',        ceiling: 60, durationMs: 1500 },
+    { label: 'AI expert audit in progress…',   ceiling: 90, durationMs: 22000 },
+];
+const SCAN_PHASES_NO_AI = [
+    { label: 'Initializing browser context…',  ceiling: 20, durationMs: 1500 },
+    { label: 'Injecting axe-core engine…',     ceiling: 40, durationMs: 2000 },
+    { label: 'Running WCAG 2.2 AA rules…',     ceiling: 80, durationMs: 5000 },
+    { label: 'Finalizing report…',             ceiling: 90, durationMs: 1500 },
+];
 
 // Same BASE_URL pattern as the service layer — see src/services/testRunnerService.js for the rationale.
 const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
 const AccessibilityScanner = () => {
+    const { selectedProjectId, selectedProject } = useProject();
+    const auth = useAuth();
+    const api = createApiClient(() => auth.user?.access_token || '');
     const [url, setUrl] = useState('');
     const [isBrowserActive, setIsBrowserActive] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
+    const [includeAiAudit, setIncludeAiAudit] = useState(false);
     const [results, setResults] = useState(null);
     const [scanHistory, setScanHistory] = useState([]);
     const [error, setError] = useState(null);
     const [activeTab, setActiveTab] = useState('violations');
+    const [scanProgress, setScanProgress] = useState(0);
+    const [scanPhaseLabel, setScanPhaseLabel] = useState('');
+    const [scanFailed, setScanFailed] = useState(false);
+    // Per-issue JIRA logging state. Keys are `${source}-${id}` (e.g. axe-color-contrast, ai-3).
+    // Values: { status: 'idle'|'logging'|'logged'|'error', key?, url?, error? }
+    const [jiraState, setJiraState] = useState({});
+    const scanStartRef = useRef(0);
+    const scanTickRef = useRef(null);
+
+    // Drive the heuristic progress bar while a scan is in flight. Phases
+    // advance based on elapsed wall time against their `durationMs`, and
+    // the bar eases toward each phase ceiling rather than jumping — so the
+    // user always sees motion. Capped at 90% until the API resolves; the
+    // success/error handler sets the final value.
+    useEffect(() => {
+        if (!isScanning) {
+            if (scanTickRef.current) {
+                clearInterval(scanTickRef.current);
+                scanTickRef.current = null;
+            }
+            return;
+        }
+
+        const phases = includeAiAudit ? SCAN_PHASES_WITH_AI : SCAN_PHASES_NO_AI;
+        scanStartRef.current = Date.now();
+        setScanProgress(0);
+        setScanPhaseLabel(phases[0].label);
+
+        scanTickRef.current = setInterval(() => {
+            const elapsed = Date.now() - scanStartRef.current;
+            let cumulative = 0;
+            let phaseStart = 0;
+            for (const phase of phases) {
+                const phaseEnd = phaseStart + phase.durationMs;
+                if (elapsed < phaseEnd) {
+                    const phaseElapsed = elapsed - phaseStart;
+                    const ratio = phaseElapsed / phase.durationMs;
+                    // Ease-out so the bar slows as it approaches each ceiling.
+                    const eased = 1 - Math.pow(1 - ratio, 2);
+                    setScanPhaseLabel(phase.label);
+                    setScanProgress(Math.min(90, Math.round(cumulative + eased * (phase.ceiling - cumulative))));
+                    return;
+                }
+                cumulative = phase.ceiling;
+                phaseStart = phaseEnd;
+            }
+            // All phases elapsed and still no response — pin to 90% with
+            // the last phase's label so the user knows we're still waiting
+            // on the server, not stuck.
+            setScanPhaseLabel(phases[phases.length - 1].label);
+            setScanProgress(90);
+        }, 200);
+
+        return () => {
+            if (scanTickRef.current) {
+                clearInterval(scanTickRef.current);
+                scanTickRef.current = null;
+            }
+        };
+    }, [isScanning, includeAiAudit]);
+
+    // Raise a single JIRA bug for an a11y issue. Source is 'axe' or 'ai' —
+    // the backend normalizes both shapes into a single Bug ticket.
+    const logJiraDefect = async (issue, source, issueKey) => {
+        setJiraState(prev => ({ ...prev, [issueKey]: { status: 'logging' } }));
+        try {
+            const payload = {
+                issue: { ...issue, source },
+                projectName: selectedProject?.name || 'Untitled Project',
+                scannedUrl: results?.scannedUrl,
+            };
+            const data = await api.post('/api/jira/accessibility-defect', payload);
+            setJiraState(prev => ({
+                ...prev,
+                [issueKey]: { status: 'logged', key: data.key, url: data.url },
+            }));
+        } catch (err) {
+            setJiraState(prev => ({
+                ...prev,
+                [issueKey]: { status: 'error', error: err.message || 'Failed to raise JIRA ticket' },
+            }));
+        }
+    };
 
     const handleLaunch = async () => {
         try {
@@ -28,12 +138,19 @@ const AccessibilityScanner = () => {
         try {
             setIsScanning(true);
             setError(null);
+            setScanFailed(false);
+            setScanProgress(0);
+            setJiraState({}); // wipe per-issue JIRA badges from any previous scan
             const response = await fetch(`${API_URL}/analyze-accessibility`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'x-api-key': import.meta.env.VITE_LLM_API_KEY // Send key for AI audit
-                }
+                },
+                body: JSON.stringify({
+                    projectId: selectedProjectId,
+                    includeAiAudit: includeAiAudit
+                })
             });
 
             if (!response.ok) {
@@ -59,8 +176,12 @@ const AccessibilityScanner = () => {
 
             setScanHistory(prev => [newHistoryItem, ...prev]);
             setResults(data);
+            setScanProgress(100);
+            setScanPhaseLabel('Scan complete');
         } catch (err) {
             setError(err.message);
+            setScanFailed(true);
+            setScanPhaseLabel('Scan failed');
         } finally {
             setIsScanning(false);
         }
@@ -75,6 +196,19 @@ const AccessibilityScanner = () => {
             default: return 'text-gray-600 bg-gray-100';
         }
     };
+
+    // Release verdict derived from ACTUAL findings, not solely the AI string.
+    // Previously this was `aiAudit?.releasability === 'Ready'`, which defaulted to
+    // "NOT READY" whenever the AI audit was off/failed — contradicting a clean
+    // (zero-violation) scan. Now: ready when there are no critical/serious
+    // blockers (axe or AI), unless the AI audit explicitly flags "Not Ready".
+    const releaseReady = (() => {
+        if (!results) return false;
+        const isBlocker = (sev) => ['critical', 'serious'].includes(String(sev || '').toLowerCase());
+        const axeBlockers = (results.violations || []).filter(v => isBlocker(v.impact)).length;
+        const aiBlockers = (results.aiAudit?.issues || []).filter(i => isBlocker(i.severity)).length;
+        return axeBlockers + aiBlockers === 0 && results.aiAudit?.releasability !== 'Not Ready';
+    })();
 
     return (
         <div className="accessibility-scanner animate-fade-in">
@@ -103,6 +237,19 @@ const AccessibilityScanner = () => {
                                 <Play size={16} /> Launch
                             </button>
                         </div>
+                        <UrlScopeWarning url={url} />
+                    </div>
+
+                    <div className="form-group" style={{ marginTop: '1rem', display: 'flex', alignItems: 'center' }}>
+                        <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            <input
+                                type="checkbox"
+                                checked={includeAiAudit}
+                                onChange={(e) => setIncludeAiAudit(e.target.checked)}
+                                style={{ cursor: 'pointer', width: 'auto', margin: 0 }}
+                            />
+                            <span>Enable AI WCAG Expert Audit</span>
+                        </label>
                     </div>
 
                     <div className="action-area">
@@ -116,6 +263,21 @@ const AccessibilityScanner = () => {
                             {isScanning ? "Scanning..." : "Scan Page"}
                         </button>
                     </div>
+
+                    {(isScanning || scanProgress > 0) && (
+                        <div className="ac-progress" role="progressbar" aria-valuenow={scanProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Accessibility scan progress">
+                            <div className="ac-progress-header">
+                                <span className="ac-progress-label">{scanPhaseLabel}</span>
+                                <span className="ac-progress-pct">{scanProgress}%</span>
+                            </div>
+                            <div className="ac-progress-track">
+                                <div
+                                    className={`ac-progress-fill ${scanFailed ? 'failed' : ''} ${!isScanning && !scanFailed ? 'done' : ''}`}
+                                    style={{ width: `${scanProgress}%` }}
+                                />
+                            </div>
+                        </div>
+                    )}
 
                     {error && (
                         <div className="error-banner">
@@ -201,8 +363,8 @@ const AccessibilityScanner = () => {
                             <div className="report-header-card" style={{ color: '#000000' }}>
                                 <div className="report-title-row">
                                     <h2 style={{ color: '#1e293b' }}>WCAG 2.2 AA Compliance Report</h2>
-                                    <div className={`release-badge ${results.aiAudit?.releasability === 'Ready' ? 'badge-success' : 'badge-error'}`}>
-                                        {results.aiAudit?.releasability === 'Ready' ? '✅ READY FOR RELEASE' : '❌ NOT READY FOR RELEASE'}
+                                    <div className={`release-badge ${releaseReady ? 'badge-success' : 'badge-error'}`}>
+                                        {releaseReady ? '✅ READY FOR RELEASE' : '❌ NOT READY FOR RELEASE'}
                                     </div>
                                 </div>
                                 <div className="report-meta" style={{ color: '#475569' }}>
@@ -321,27 +483,36 @@ const AccessibilityScanner = () => {
                             )}
 
                             {/* Axe Violations */}
-                            {results.violations.map((violation, idx) => (
-                                <div key={`axe-${idx}`} className={`violation-card ${getImpactColor(violation.impact)}`}>
-                                    <div className="violation-header">
-                                        <span className="violation-impact">{violation.impact ? violation.impact.toUpperCase() : 'UNKNOWN'}</span>
-                                        <span className="violation-id">{violation.id}</span>
-                                        {violation.helpUrl && (
-                                            <a href={violation.helpUrl} target="_blank" rel="noopener noreferrer" className="help-link">
-                                                <ExternalLink size={14} /> WCAG Help
-                                            </a>
-                                        )}
-                                    </div>
-                                    <p className="violation-desc">{violation.description}</p>
-                                    <p className="violation-help">{violation.help}</p>
+                            {results.violations.map((violation, idx) => {
+                                const issueKey = `axe-${violation.id || idx}`;
+                                return (
+                                    <div key={issueKey} className={`violation-card ${getImpactColor(violation.impact)}`}>
+                                        <div className="violation-header">
+                                            <span className="violation-impact">{violation.impact ? violation.impact.toUpperCase() : 'UNKNOWN'}</span>
+                                            <span className="violation-id">{violation.id}</span>
+                                            {violation.helpUrl && (
+                                                <a href={violation.helpUrl} target="_blank" rel="noopener noreferrer" className="help-link">
+                                                    <ExternalLink size={14} /> WCAG Help
+                                                </a>
+                                            )}
+                                            <div style={{ marginLeft: 'auto' }}>
+                                                <JiraDefectButton
+                                                    state={jiraState[issueKey]}
+                                                    onClick={() => logJiraDefect(violation, 'axe', issueKey)}
+                                                />
+                                            </div>
+                                        </div>
+                                        <p className="violation-desc">{violation.description}</p>
+                                        <p className="violation-help">{violation.help}</p>
 
-                                    <div className="violation-nodes">
-                                        {violation.nodes && violation.nodes.map((node, nIdx) => (
-                                            <code key={nIdx} className="node-selector">{node.target && node.target.join(' ')}</code>
-                                        ))}
+                                        <div className="violation-nodes">
+                                            {violation.nodes && violation.nodes.map((node, nIdx) => (
+                                                <code key={nIdx} className="node-selector">{node.target && node.target.join(' ')}</code>
+                                            ))}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
 
                             {/* AI Violations Merged Here */}
                             {results.aiAudit && results.aiAudit.issues && results.aiAudit.issues.length > 0 && (
@@ -350,28 +521,37 @@ const AccessibilityScanner = () => {
                                     <p>Issues detected by AI, passed automated checks but require attention.</p>
 
                                     <div className="ai-issues-list">
-                                        {results.aiAudit.issues.map((issue, idx) => (
-                                            <div key={`ai-${idx}`} className={`ai-issue-card ${issue.severity.toLowerCase()}`}>
-                                                <div className="issue-header">
-                                                    <span className={`severity-badge ${issue.severity.toLowerCase()}`}>{issue.severity}</span>
-                                                    <span className="wcag-ref">{issue.wcag}</span>
-                                                    <div className="affected-users">
-                                                        {issue.affectedUsers.map((u, i) => <span key={i} className="user-tag">{u}</span>)}
+                                        {results.aiAudit.issues.map((issue, idx) => {
+                                            const issueKey = `ai-${idx}`;
+                                            return (
+                                                <div key={issueKey} className={`ai-issue-card ${issue.severity.toLowerCase()}`}>
+                                                    <div className="issue-header">
+                                                        <span className={`severity-badge ${issue.severity.toLowerCase()}`}>{issue.severity}</span>
+                                                        <span className="wcag-ref">{issue.wcag}</span>
+                                                        <div className="affected-users">
+                                                            {issue.affectedUsers.map((u, i) => <span key={i} className="user-tag">{u}</span>)}
+                                                        </div>
+                                                        <div style={{ marginLeft: 'auto' }}>
+                                                            <JiraDefectButton
+                                                                state={jiraState[issueKey]}
+                                                                onClick={() => logJiraDefect(issue, 'ai', issueKey)}
+                                                            />
+                                                        </div>
                                                     </div>
-                                                </div>
-                                                <h4 className="issue-title">{issue.issue}</h4>
+                                                    <h4 className="issue-title">{issue.issue}</h4>
 
-                                                <div className="issue-details">
-                                                    <p className="detail-row">
-                                                        <strong>Why it matters:</strong> {issue.whyItMatters}
-                                                    </p>
-                                                    <div className="fix-box">
-                                                        <strong>💡 Recommended Fix:</strong>
-                                                        <code>{issue.recommendedFix}</code>
+                                                    <div className="issue-details">
+                                                        <p className="detail-row">
+                                                            <strong>Why it matters:</strong> {issue.whyItMatters}
+                                                        </p>
+                                                        <div className="fix-box">
+                                                            <strong>💡 Recommended Fix:</strong>
+                                                            <code>{issue.recommendedFix}</code>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}
@@ -412,28 +592,37 @@ const AccessibilityScanner = () => {
                                     </div>
 
                                     <div className="ai-issues-list">
-                                        {results.aiAudit.issues.map((issue, idx) => (
-                                            <div key={idx} className={`ai-issue-card ${issue.severity.toLowerCase()}`}>
-                                                <div className="issue-header">
-                                                    <span className={`severity-badge ${issue.severity.toLowerCase()}`}>{issue.severity}</span>
-                                                    <span className="wcag-ref">{issue.wcag}</span>
-                                                    <div className="affected-users">
-                                                        {issue.affectedUsers.map((u, i) => <span key={i} className="user-tag">{u}</span>)}
+                                        {results.aiAudit.issues.map((issue, idx) => {
+                                            const issueKey = `ai-${idx}`;
+                                            return (
+                                                <div key={issueKey} className={`ai-issue-card ${issue.severity.toLowerCase()}`}>
+                                                    <div className="issue-header">
+                                                        <span className={`severity-badge ${issue.severity.toLowerCase()}`}>{issue.severity}</span>
+                                                        <span className="wcag-ref">{issue.wcag}</span>
+                                                        <div className="affected-users">
+                                                            {issue.affectedUsers.map((u, i) => <span key={i} className="user-tag">{u}</span>)}
+                                                        </div>
+                                                        <div style={{ marginLeft: 'auto' }}>
+                                                            <JiraDefectButton
+                                                                state={jiraState[issueKey]}
+                                                                onClick={() => logJiraDefect(issue, 'ai', issueKey)}
+                                                            />
+                                                        </div>
                                                     </div>
-                                                </div>
-                                                <h4 className="issue-title">{issue.issue}</h4>
+                                                    <h4 className="issue-title">{issue.issue}</h4>
 
-                                                <div className="issue-details">
-                                                    <p className="detail-row">
-                                                        <strong>Why it matters:</strong> {issue.whyItMatters}
-                                                    </p>
-                                                    <div className="fix-box">
-                                                        <strong>💡 Recommended Fix:</strong>
-                                                        <code>{issue.recommendedFix}</code>
+                                                    <div className="issue-details">
+                                                        <p className="detail-row">
+                                                            <strong>Why it matters:</strong> {issue.whyItMatters}
+                                                        </p>
+                                                        <div className="fix-box">
+                                                            <strong>💡 Recommended Fix:</strong>
+                                                            <code>{issue.recommendedFix}</code>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
 
                                     {results.aiAudit.areasReviewed && (
@@ -502,6 +691,91 @@ const AccessibilityScanner = () => {
                 .input-with-button { display: flex; gap: 0.5rem; }
                 .action-area { margin-top: 2rem; }
                 .full-width { width: 100%; display: flex; justify-content: center; gap: 0.5rem; }
+
+                /* Scan progress bar — heuristic, eases to 90% then snaps to 100% on response */
+                .ac-progress {
+                    margin-top: 1rem;
+                    padding: 12px 14px;
+                    background: var(--bg-tertiary);
+                    border: 1px solid var(--border-color);
+                    border-radius: 8px;
+                }
+                .ac-progress-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 8px;
+                    font-size: 0.8rem;
+                    color: var(--text-secondary);
+                }
+                .ac-progress-label { font-weight: 600; }
+                .ac-progress-pct {
+                    font-variant-numeric: tabular-nums;
+                    font-weight: 700;
+                    color: var(--text-primary);
+                }
+                .ac-progress-track {
+                    width: 100%;
+                    height: 8px;
+                    background: var(--bg-primary);
+                    border-radius: 99px;
+                    overflow: hidden;
+                }
+                .ac-progress-fill {
+                    height: 100%;
+                    background: linear-gradient(90deg, #2563eb, #3b82f6);
+                    border-radius: 99px;
+                    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+                .ac-progress-fill.done {
+                    background: linear-gradient(90deg, #16a34a, #22c55e);
+                }
+                .ac-progress-fill.failed {
+                    background: linear-gradient(90deg, #b91c1c, #ef4444);
+                }
+
+                /* JIRA defect button — appears on every issue card (Axe + AI) */
+                .jira-defect-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 4px 10px;
+                    font-size: 0.75rem;
+                    font-weight: 600;
+                    border-radius: 6px;
+                    background: rgba(37, 99, 235, 0.08);
+                    border: 1px solid rgba(37, 99, 235, 0.3);
+                    color: #2563eb;
+                    cursor: pointer;
+                    text-decoration: none;
+                    transition: all 0.2s ease;
+                    white-space: nowrap;
+                }
+                .jira-defect-btn:hover:not(:disabled) {
+                    background: rgba(37, 99, 235, 0.15);
+                    border-color: #2563eb;
+                }
+                .jira-defect-btn:disabled {
+                    cursor: not-allowed;
+                    opacity: 0.7;
+                }
+                .jira-defect-btn--logged {
+                    background: rgba(34, 197, 94, 0.1);
+                    border-color: rgba(34, 197, 94, 0.4);
+                    color: #16a34a;
+                }
+                .jira-defect-btn--logged:hover {
+                    background: rgba(34, 197, 94, 0.18);
+                    border-color: #16a34a;
+                }
+                .jira-defect-btn--error {
+                    background: rgba(239, 68, 68, 0.08);
+                    border-color: rgba(239, 68, 68, 0.4);
+                    color: #dc2626;
+                    max-width: 280px;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
 
                 .badge { padding: 0.25rem 0.75rem; border-radius: 99px; font-size: 0.85rem; font-weight: 600; margin-left: 0.5rem; }
                 .badge-error { background: #fee2e2; color: #dc2626; }

@@ -3,11 +3,11 @@
 // A hardcoded http://localhost:3001 would 404 in the browser when deployed.
 const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
-export const runTestsLocal = async (projectPath, isHeadless = true) => {
+export const runTestsLocal = async (projectPath, isHeadless = true, projectId = null) => {
     const response = await fetch(`${API_URL}/run-tests-local`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath, isHeadless }),
+        body: JSON.stringify({ projectPath, isHeadless, projectId }),
     });
     if (!response.ok) {
         const err = await response.json().catch(() => ({ error: 'Unknown error' }));

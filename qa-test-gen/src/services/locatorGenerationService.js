@@ -86,7 +86,7 @@ const improveLocatorsWithAI = async (htmlContent, weakLocators) => {
           "source": "AI"
         }
 
-        OUTPUT ONLY VALID JSON. NO MARKDOWN.
+        OUTPUT THE JSON ARRAY WRAPPED IN A MARKDOWN \`\`\`json CODE BLOCK. DO NOT INCLUDE ANY ADDITIONAL CONVERSATIONAL TEXT.
     `;
 
     const result = await model.generateContent(prompt);

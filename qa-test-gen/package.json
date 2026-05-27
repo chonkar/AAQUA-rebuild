@@ -15,9 +15,11 @@
     "migrate:cutover": "docker exec -i aaqua-postgres psql -U aaqua -d aaqua_security -v ON_ERROR_STOP=1 < scripts/migrate-drop-users-table.sql"
   },
   "dependencies": {
+    "@apidevtools/swagger-parser": "^12.1.0",
     "@faker-js/faker": "^10.2.0",
     "adm-zip": "^0.5.16",
     "axe-core": "^4.11.1",
+    "chrome-launcher": "^1.2.1",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
@@ -28,6 +30,7 @@
     "html-docx-js": "^0.3.1",
     "html-docx-js-typescript": "^0.1.5",
     "jose": "^5.9.6",
+    "lighthouse": "^13.3.0",
     "lucide-react": "^0.563.0",
     "multer": "^2.0.2",
     "oidc-client-ts": "^3.1.0",

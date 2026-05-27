@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, Play, Loader2, AlertTriangle, CheckCircle, XCircle, Lock, LogIn, Plus, ArrowLeft, BarChart3, Shield, Bug, Code, RefreshCw, Download, Clock, TrendingUp, Eye, BrainCircuit, Sparkles, ChevronDown, ChevronUp, StopCircle } from 'lucide-react';
+import { ShieldCheck, Play, Loader2, AlertTriangle, CheckCircle, XCircle, BarChart3, Shield, RefreshCw, Download, Clock, TrendingUp, Eye, BrainCircuit, Sparkles, ChevronDown, ChevronUp, StopCircle, Info } from 'lucide-react';
 import { useAuth } from 'react-oidc-context';
 import { createApiClient } from '../utils/apiClient';
+import { useProject } from '../context/ProjectContext';
+import JiraDefectButton from '../components/features/JiraDefectButton';
 
 const API = 'http://localhost:3001/api/security';
+const PROJECTS_API = 'http://localhost:3001/api/projects';
 
 const SecurityScanner = () => {
     // ─── Auth state (Keycloak OIDC) ──────────────────────
@@ -11,10 +14,8 @@ const SecurityScanner = () => {
     const token = auth.user?.access_token || '';
     const api = createApiClient(() => token);
 
-    // ─── App state ───────────────────────────────────────
-    const [view, setView] = useState('projects'); // projects | project-detail | scan-results | new-project
-    const [projects, setProjects] = useState([]);
-    const [selectedProject, setSelectedProject] = useState(null);
+    // ─── Active project (driven by the global header selector) ─────────
+    const { selectedProject } = useProject();
     const [dashboardData, setDashboardData] = useState(null);
     const [scanHistory, setScanHistory] = useState([]);
 
@@ -34,75 +35,58 @@ const SecurityScanner = () => {
     const [zapHealth, setZapHealth] = useState(null);
     const pollRef = useRef(null);
 
-    // ─── New Project form ────────────────────────────────
-    const [projectForm, setProjectForm] = useState({
-        name: '',
-        target_url: '',
-        description: '',
-        auth_username: '',
-        auth_password: '',
-        login_url: ''
-    });
-    const [showAuthFields, setShowAuthFields] = useState(false);
+    // Per-vulnerability JIRA logging state, keyed by vuln.id.
+    // { status: 'idle'|'logging'|'logged'|'error', key?, url?, error? }
+    const [jiraState, setJiraState] = useState({});
 
     const headers = () => ({
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
     });
 
-    // ─── Effects ─────────────────────────────────────────
+    // ─── Project context handlers ────────────────────────
+    // The project itself is owned by the global header selector; this page
+    // only consumes selectedProject and (re)loads scan history + dashboard
+    // whenever the user switches projects.
 
-    useEffect(() => {
-        if (auth.isAuthenticated) {
-            fetchProjects();
-            checkZapHealth();
-        }
-        return () => { if (pollRef.current) clearInterval(pollRef.current); };
-    }, [auth.isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // ─── Project handlers ────────────────────────────────
-
-    const fetchProjects = async () => {
+    // Raise a JIRA ticket for a single vulnerability. Persists the resulting
+    // key on the backend (Vulnerability.jira_ticket_key) AND updates the
+    // local scanResults so the badge sticks after the round-trip.
+    const logJiraDefect = async (vuln) => {
+        const issueKey = vuln.id;
+        setJiraState(prev => ({ ...prev, [issueKey]: { status: 'logging' } }));
         try {
-            const data = await api.get(`${API}/projects`);
-            setProjects(data.projects || []);
+            const data = await api.post('/api/jira/vulnerability-defect', { vulnerabilityId: vuln.id });
+            setJiraState(prev => ({
+                ...prev,
+                [issueKey]: { status: 'logged', key: data.key, url: data.url },
+            }));
+            // Mirror the key onto the local results so a re-render shows it
+            // even before the next scan fetch.
+            setScanResults(prev => prev ? ({
+                ...prev,
+                vulnerabilities: prev.vulnerabilities.map(v =>
+                    v.id === vuln.id ? { ...v, jira_ticket_key: data.key } : v
+                ),
+            }) : prev);
         } catch (err) {
-            if (err.status === 401) auth.signinRedirect();
-            else setError('Failed to fetch projects');
+            setJiraState(prev => ({
+                ...prev,
+                [issueKey]: { status: 'error', error: err.message || 'Failed to raise JIRA ticket' },
+            }));
         }
     };
 
-    const createProject = async (e) => {
-        e.preventDefault();
-        setError('');
-        try {
-            await api.post(`${API}/projects`, projectForm);
-            setProjectForm({
-                name: '',
-                target_url: '',
-                description: '',
-                auth_username: '',
-                auth_password: '',
-                login_url: ''
-            });
-            setShowAuthFields(false);
-            setView('projects');
-            fetchProjects();
-        } catch (err) {
-            setError(err.message);
-        }
-    };
-
-    const openProject = async (project) => {
-        setSelectedProject(project);
-        setView('project-detail');
+    const loadProjectContext = async (project) => {
         setScanResults(null);
         setGovernance(null);
         setActiveScan(null);
         setScanHistory([]);
+        setDashboardData(null);
+        setJiraState({});
+        if (!project) return;
         try {
-            // Fetch project detail with scan history
-            const projRes = await fetch(`${API}/projects/${project.id}`, { headers: headers() });
+            const projRes = await fetch(`${PROJECTS_API}/${project.id}`, { headers: headers() });
             const projData = await projRes.json();
             if (projRes.ok) setScanHistory(projData.project.scans || []);
 
@@ -193,6 +177,7 @@ const SecurityScanner = () => {
         setScanResults(null);
         setGovernance(null);
         setScanLogs([]);
+        setJiraState({});
         scanLogCursorRef.current = 0;
         try {
             const data = await api.post(`${API}/scan/start`, {
@@ -227,7 +212,7 @@ const SecurityScanner = () => {
             setScanResults(null);
             setGovernance(null);
 
-            await openProject(selectedProject);
+            await loadProjectContext(selectedProject);
         } catch (err) {
             setError(err.message);
         }
@@ -261,7 +246,7 @@ const SecurityScanner = () => {
                         if (dashRes.ok) setDashboardData(dashData);
 
                         // Refresh scan history
-                        const projRes = await fetch(`${API}/projects/${selectedProject.id}`, { headers: headers() });
+                        const projRes = await fetch(`${PROJECTS_API}/${selectedProject.id}`, { headers: headers() });
                         const projData = await projRes.json();
                         if (projRes.ok) setScanHistory(projData.project.scans || []);
                     } else if (data.status === 'failed') {
@@ -273,7 +258,7 @@ const SecurityScanner = () => {
                         }
 
                         // Refresh scan history
-                        const projRes = await fetch(`${API}/projects/${selectedProject.id}`, { headers: headers() });
+                        const projRes = await fetch(`${PROJECTS_API}/${selectedProject.id}`, { headers: headers() });
                         const projData = await projRes.json();
                         if (projRes.ok) setScanHistory(projData.project.scans || []);
                     }
@@ -322,13 +307,18 @@ const SecurityScanner = () => {
     // ─── Effects ─────────────────────────────────────────
 
     useEffect(() => {
-        fetchProjects();
         checkZapHealth();
         return () => { if (pollRef.current) clearInterval(pollRef.current); };
-        // Mount-only — depending on `fetchProjects` here would re-fire every
-        // render since it isn't memoized; the effect only needs to run once.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Reload scan history + dashboard whenever the user picks a different
+    // project in the global header. Re-keying on selectedProject?.id (not
+    // the object reference) avoids spurious reloads on unrelated rerenders.
+    useEffect(() => {
+        loadProjectContext(selectedProject);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedProject?.id]);
 
     // ─── Helpers ────────────────────────────────────────
 
@@ -373,167 +363,30 @@ const SecurityScanner = () => {
                 </div>
             )}
 
-            {/* ─── Projects List ─── */}
-            {view === 'projects' && (
-                <div className="section">
-                    <div className="section-header">
-                        <h3>Your Projects</h3>
-                        <button className="btn btn-primary" onClick={() => setView('new-project')}>
-                            <Plus size={16} /> New Security Project
-                        </button>
-                    </div>
-                    {projects.length === 0 ? (
-                        <div className="empty-state">
-                            <Shield size={64} style={{ color: 'var(--text-muted)', marginBottom: '1rem' }} />
-                            <p>No projects found. Create a project to start your first secure scan.</p>
-                        </div>
-                    ) : (
-                        <div className="projects-grid-premium">
-                            {projects.map(p => (
-                                <div key={p.id} className="project-card-premium" onClick={() => openProject(p)}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-                                        <div style={{ background: 'var(--accent-glow)', padding: '8px', borderRadius: '12px' }}>
-                                            <Shield size={24} style={{ color: 'var(--accent-primary)' }} />
-                                        </div>
-                                        <h4>{p.name}</h4>
-                                    </div>
-                                    <div className="url-display">{p.target_url}</div>
-                                    <div className="project-meta">
-                                        {p.scans && p.scans[0] ? (
-                                            <span className="meta-tag">
-                                                {getStatusIcon(p.scans[0].status)}
-                                                <span>Last: {p.scans[0].scan_type} ({new Date(p.scans[0].created_at).toLocaleDateString()})</span>
-                                            </span>
-                                        ) : (
-                                            <span className="meta-tag">No scans yet</span>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+            {/* ─── No project selected ─── */}
+            {!selectedProject && (
+                <div className="no-project-selected">
+                    <Info size={48} />
+                    <h3>No Project Context Active</h3>
+                    <p>Pick a project from the header dropdown (or create one with the <strong>+</strong> button) to view its scan history and trigger new security scans.</p>
                 </div>
             )}
 
-            {/* ─── New Project Form ─── */}
-            {view === 'new-project' && (
+            {/* ─── Project Scan Hub ─── */}
+            {selectedProject && (
                 <div className="section">
-                    <button className="btn btn-ghost" onClick={() => setView('projects')} style={{ marginBottom: '1.5rem' }}>
-                        <ArrowLeft size={16} /> Back to Projects
-                    </button>
-                    <div className="auth-card-premium" style={{ maxWidth: '600px', margin: '0 auto' }}>
-                        <h3 style={{ marginBottom: '1.5rem', fontSize: '1.5rem' }}>Create New Security Project</h3>
-                        <form onSubmit={createProject}>
-                            <div className="form-group-premium">
-                                <label>Project Name</label>
-                                <input
-                                    className="form-input-premium"
-                                    value={projectForm.name}
-                                    onChange={e => setProjectForm(p => ({ ...p, name: e.target.value }))}
-                                    placeholder="Enter a descriptive project name"
-                                    required
-                                />
-                            </div>
-                            <div className="form-group-premium">
-                                <label>Target URL</label>
-                                <input
-                                    className="form-input-premium"
-                                    value={projectForm.target_url}
-                                    onChange={e => setProjectForm(p => ({ ...p, target_url: e.target.value }))}
-                                    placeholder="https://app.example.com"
-                                    required
-                                />
-                            </div>
-                            <div className="form-group-premium">
-                                <label>Description (Optional)</label>
-                                <textarea
-                                    className="form-input-premium"
-                                    rows={3}
-                                    value={projectForm.description}
-                                    onChange={e => setProjectForm(p => ({ ...p, description: e.target.value }))}
-                                    placeholder="What are we protecting today?"
-                                />
-                            </div>
-
-                            <div className="form-group-premium" style={{ marginBottom: '1.5rem' }}>
-                                <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', userSelect: 'none' }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={showAuthFields}
-                                        onChange={() => setShowAuthFields(!showAuthFields)}
-                                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                                    />
-                                    <strong>Authentication Required (Optional)</strong>
-                                </label>
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginLeft: '26px', marginTop: '4px' }}>
-                                    Enable this if the target site requires a login to access certain pages.
-                                </p>
-                            </div>
-
-                            {showAuthFields && (
-                                <div className="auth-settings-container animate-fade-in" style={{ padding: '1.25rem', background: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '1.5rem' }}>
-                                    <h5 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <Lock size={16} /> Target Site Credentials
-                                    </h5>
-                                    <div className="form-group-premium">
-                                        <label>Login URL</label>
-                                        <input
-                                            className="form-input-premium"
-                                            value={projectForm.login_url}
-                                            onChange={e => setProjectForm(p => ({ ...p, login_url: e.target.value }))}
-                                            placeholder="https://app.example.com/login"
-                                            required={showAuthFields}
-                                        />
-                                    </div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                        <div className="form-group-premium">
-                                            <label>Username</label>
-                                            <input
-                                                className="form-input-premium"
-                                                value={projectForm.auth_username}
-                                                onChange={e => setProjectForm(p => ({ ...p, auth_username: e.target.value }))}
-                                                placeholder="admin"
-                                                required={showAuthFields}
-                                            />
-                                        </div>
-                                        <div className="form-group-premium">
-                                            <label>Password</label>
-                                            <input
-                                                type="password"
-                                                className="form-input-premium"
-                                                value={projectForm.auth_password}
-                                                onChange={e => setProjectForm(p => ({ ...p, auth_password: e.target.value }))}
-                                                placeholder="••••••••"
-                                                required={showAuthFields}
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            <button type="submit" className="btn btn-primary full-width">
-                                <Plus size={18} /> Initialize Security Project
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* ─── Project Detail / Dashboard ─── */}
-            {view === 'project-detail' && selectedProject && (
-                <div className="section">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                        <button className="btn btn-ghost" onClick={() => { setView('projects'); setSelectedProject(null); setDashboardData(null); setScanResults(null); }}>
-                            <ArrowLeft size={16} /> Dashboard
-                        </button>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                            <div className="url-display" style={{ margin: 0 }}>{selectedProject.target_url}</div>
+                    <div className="project-scan-header">
+                        <div>
+                            <h3 style={{ fontSize: '1.8rem', margin: 0, display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <Shield size={26} style={{ color: 'var(--accent-primary)' }} />
+                                {selectedProject.name}
+                                <span className="scan-count-chip" title={`${scanHistory.length} scan(s) recorded for this project`}>
+                                    {scanHistory.length} {scanHistory.length === 1 ? 'scan' : 'scans'}
+                                </span>
+                            </h3>
+                            <p style={{ color: 'var(--text-muted)', marginTop: '4px' }}>Project Security Intelligence Hub</p>
                         </div>
-                    </div>
-
-                    <div style={{ marginBottom: '2rem' }}>
-                        <h3 style={{ fontSize: '1.8rem', margin: 0 }}>{selectedProject.name}</h3>
-                        <p style={{ color: 'var(--text-muted)' }}>Project Security Intelligence Hub</p>
+                        <div className="url-display" style={{ margin: 0 }}>{selectedProject.target_url}</div>
                     </div>
 
                     {/* Scan Controls */}
@@ -715,12 +568,33 @@ const SecurityScanner = () => {
                                 </div>
                             )}
 
-                            <h4 style={{ marginTop: '2rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <Shield size={20} /> Vulnerability Intelligence ({scanResults.vulnerabilities.length})
-                            </h4>
+                            <div style={{ marginTop: '2rem', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                                <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <Shield size={20} /> Vulnerability Intelligence ({scanResults.vulnerabilities.length})
+                                </h4>
+                                <div className="severity-legend" aria-label="Severity color key">
+                                    {[
+                                        { risk: 'Critical', desc: 'Immediate exploit; release-blocking' },
+                                        { risk: 'High', desc: 'Serious exposure; fix this sprint' },
+                                        { risk: 'Medium', desc: 'Notable risk; plan a fix' },
+                                        { risk: 'Low', desc: 'Minor; address opportunistically' },
+                                        { risk: 'Informational', desc: 'Hardening hint; no exploit' },
+                                    ].map(item => (
+                                        <span key={item.risk} className="severity-legend-item" title={item.desc}>
+                                            <span className="severity-legend-swatch" style={{ background: getRiskColor(item.risk) }} />
+                                            {item.risk}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
                             <div className="vuln-list">
                                 {scanResults.vulnerabilities.map((v, i) => (
-                                    <VulnCard key={v.id || i} vuln={v} />
+                                    <VulnCard
+                                        key={v.id || i}
+                                        vuln={v}
+                                        jiraSlice={jiraState[v.id]}
+                                        onLogJira={() => logJiraDefect(v)}
+                                    />
                                 ))}
                             </div>
                         </div>
@@ -852,6 +726,21 @@ const SecurityScanner = () => {
                                                                         </button>
                                                                     </>
                                                                 )}
+                                                                {!['completed', 'failed'].includes(scan.status) && (
+                                                                    <button 
+                                                                        className="btn-ghost" 
+                                                                        style={{ 
+                                                                            padding: '4px 8px', 
+                                                                            fontSize: '0.75rem', 
+                                                                            color: 'var(--error)', 
+                                                                            borderColor: 'rgba(239, 68, 68, 0.2)' 
+                                                                        }} 
+                                                                        title="Stop Scan"
+                                                                        onClick={() => handleStopScan(scan.id)}
+                                                                    >
+                                                                        <StopCircle size={12} /> Stop
+                                                                    </button>
+                                                                )}
                                                             </td>
                                                         </tr>
                                                     );
@@ -875,13 +764,31 @@ const SecurityScanner = () => {
 
 // ─── Vulnerability Card Component ─────────────────────────
 
-const VulnCard = ({ vuln }) => {
+const VulnCard = ({ vuln, jiraSlice, onLogJira }) => {
     const [expanded, setExpanded] = useState(false);
 
     const getRiskColor = (risk) => {
         const map = { Critical: '#ef4444', High: '#f97316', Medium: '#eab308', Low: '#22c55e', Informational: '#6b7280' };
         return map[risk] || '#6b7280';
     };
+
+    // If the backend already auto-created a ticket for this vuln (Critical/High
+    // path during scan completion), surface it as the "logged" state so the
+    // button is clickable through to JIRA. We construct the deep-link from the
+    // user's locally-stored JIRA config since the auto-creation path doesn't
+    // persist the URL itself.
+    const effectiveJiraSlice = jiraSlice || (vuln.jira_ticket_key ? (() => {
+        let jiraBase = '';
+        try {
+            const cfg = JSON.parse(window.localStorage.getItem('aaqua_jira_config') || '{}');
+            if (cfg.url) jiraBase = cfg.url.trim().replace(/\/$/, '');
+        } catch { /* localStorage parse error — fall back to key without link */ }
+        return {
+            status: 'logged',
+            key: vuln.jira_ticket_key,
+            url: jiraBase ? `${jiraBase}/browse/${vuln.jira_ticket_key}` : '#',
+        };
+    })() : null);
 
     return (
         <div className={`vuln-item-premium ${expanded ? 'active' : ''}`}>
@@ -891,9 +798,14 @@ const VulnCard = ({ vuln }) => {
                     <h5>{vuln.alert_name}</h5>
                     <span>{vuln.owasp_category || 'General Security'} — Risk Score: {(typeof vuln.risk_score === 'number') ? vuln.risk_score.toFixed(1) : 'N/A'}/10</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={(e) => e.stopPropagation()}>
                     {vuln.is_regression && <span className="regression-tag">REGRESSION</span>}
-                    {expanded ? <ChevronUp size={20} style={{ opacity: 0.6 }} /> : <ChevronDown size={20} style={{ opacity: 0.6 }} />}
+                    {onLogJira && (
+                        <JiraDefectButton state={effectiveJiraSlice} onClick={onLogJira} />
+                    )}
+                    <div onClick={() => setExpanded(!expanded)} style={{ cursor: 'pointer', display: 'flex' }}>
+                        {expanded ? <ChevronUp size={20} style={{ opacity: 0.6 }} /> : <ChevronDown size={20} style={{ opacity: 0.6 }} />}
+                    </div>
                 </div>
             </div>
 
@@ -912,9 +824,6 @@ const VulnCard = ({ vuln }) => {
                         <div className="detail-row"><strong>Target URL:</strong> <code>{vuln.url}</code></div>
                         <div className="detail-row"><strong>CWE ID:</strong> <span className="exploit-badge">CWE-{vuln.cwe_id}</span></div>
                         <div className="detail-row"><strong>Exploitability:</strong> <span className="exploit-badge" style={{ color: 'var(--warning)' }}>{vuln.exploitability}</span></div>
-                        {vuln.jira_ticket_key && (
-                            <div className="detail-row"><strong>Jira Ticket:</strong> <span className="jira-badge">{vuln.jira_ticket_key}</span></div>
-                        )}
                     </div>
 
                     {vuln.remediation && (
@@ -941,10 +850,96 @@ const VulnCard = ({ vuln }) => {
 function renderStyles() {
     return (
         <style>{`
-        .security-scanner { 
-            max-width: 1200px; 
-            margin: 0 auto; 
+        .security-scanner {
+            max-width: 1200px;
+            margin: 0 auto;
             padding-bottom: 3rem;
+        }
+
+        /* Empty state when no project picked in the header dropdown */
+        .no-project-selected {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            padding: 3rem 1.5rem;
+            background: var(--bg-secondary);
+            border: 1px dashed var(--border-color);
+            border-radius: var(--radius-lg);
+            color: var(--text-muted);
+            gap: 0.5rem;
+        }
+        .no-project-selected h3 {
+            color: var(--text-primary);
+            margin: 0.5rem 0 0.25rem;
+        }
+        .no-project-selected p {
+            max-width: 520px;
+            line-height: 1.6;
+            margin: 0;
+        }
+
+        /* Project-scoped header with scan count chip */
+        .project-scan-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+        .scan-count-chip {
+            display: inline-flex;
+            align-items: center;
+            background: var(--accent-glow);
+            color: var(--accent-primary);
+            border: 1px solid var(--accent-primary);
+            padding: 2px 12px;
+            border-radius: 99px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* JIRA defect button — shared visual language with other scanner pages */
+        .jira-defect-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            border-radius: 6px;
+            background: rgba(37, 99, 235, 0.08);
+            border: 1px solid rgba(37, 99, 235, 0.3);
+            color: #2563eb;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        .jira-defect-btn:hover:not(:disabled) {
+            background: rgba(37, 99, 235, 0.15);
+            border-color: #2563eb;
+        }
+        .jira-defect-btn:disabled { cursor: not-allowed; opacity: 0.7; }
+        .jira-defect-btn--logged {
+            background: rgba(34, 197, 94, 0.1);
+            border-color: rgba(34, 197, 94, 0.4);
+            color: #16a34a;
+        }
+        .jira-defect-btn--logged:hover {
+            background: rgba(34, 197, 94, 0.18);
+            border-color: #16a34a;
+        }
+        .jira-defect-btn--error {
+            background: rgba(239, 68, 68, 0.08);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: #dc2626;
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         /* Premium Header */
@@ -1068,6 +1063,23 @@ function renderStyles() {
             transform: translateY(-4px);
             border-color: var(--accent-primary);
             box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5), 0 0 15px var(--accent-glow);
+        }
+        .project-delete-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-muted);
+            border-radius: 6px;
+            padding: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+        .project-delete-btn:hover {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: rgba(239, 68, 68, 0.3);
+            color: var(--error);
         }
         .project-card-premium h4 {
             margin: 0 0 0.5rem 0;
@@ -1346,6 +1358,36 @@ function renderStyles() {
         .vuln-card.expanded { border-color: var(--accent-primary); }
         .vuln-header { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
         .risk-badge { padding: 2px 8px; border-radius: 4px; color: white; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+
+        /* Severity legend — explains the color swatch used on each VulnCard */
+        .severity-legend {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.5rem 0.75rem;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 99px;
+        }
+        .severity-legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            cursor: help;
+        }
+        .severity-legend-swatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            display: inline-block;
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.05);
+        }
         .vuln-name { font-weight: 600; color: var(--text-primary); font-size: 0.9rem; }
         .vuln-score { font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); }
         .regression-tag { padding: 1px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; background: #a855f7; color: white; }

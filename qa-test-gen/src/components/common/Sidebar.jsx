@@ -1,8 +1,36 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Settings, HelpCircle, Database, Target, ShieldCheck, Layers, Globe, PersonStanding, RefreshCw, LayoutDashboard, FileCode, FileText } from 'lucide-react';
+import { Settings, HelpCircle, Database, Target, ShieldCheck, Layers, Globe, PersonStanding, RefreshCw, LayoutDashboard, FileCode, FileText, Webhook, Gauge } from 'lucide-react';
+import { useProject } from '../../context/ProjectContext';
+
+// A service link that renders as a disabled, non-navigating item when no
+// project is active (Phase 1 project gate), mirroring the route-level guard.
+const ServiceLink = ({ to, icon, label, locked, inactiveColor }) => {
+  const Icon = icon;
+  if (locked) {
+    return (
+      <div className="nav-link disabled" title="Select or create a project to use this service">
+        <Icon size={20} />
+        <span>{label}</span>
+      </div>
+    );
+  }
+  return (
+    <NavLink to={to} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+      {({ isActive }) => (
+        <>
+          <Icon size={20} style={!isActive && inactiveColor ? { color: inactiveColor } : undefined} />
+          <span>{label}</span>
+        </>
+      )}
+    </NavLink>
+  );
+};
 
 const Sidebar = () => {
+  const { selectedProject } = useProject();
+  const locked = !selectedProject;
+
   return (
     <aside className="sidebar">
       <div className="sidebar-content">
@@ -10,62 +38,26 @@ const Sidebar = () => {
 
           <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <LayoutDashboard size={20} />
-            <span>Dashboard</span>
+            <span>Release Intelligence</span>
           </NavLink>
 
-          <NavLink to="/test-plan-generator" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <FileText size={20} />
-            <span>Test Plan Generator</span>
-          </NavLink>
-
-          <NavLink to="/test-generator" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <FileCode size={20} />
-            <span>Functional Test Generator</span>
-          </NavLink>
-
-          <NavLink to="/test-data-generator" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <Database size={20} />
-            <span>Test Data Generator</span>
-          </NavLink>
-
-          <NavLink to="/locator-generator" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <Target size={20} />
-            <span>Smart Locators</span>
-          </NavLink>
-
-          <NavLink to="/test-converter" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            {({ isActive }) => (
-              <>
-                <RefreshCw size={20} style={!isActive ? { color: 'var(--accent-secondary)' } : {}} />
-                <span>Migration Service</span>
-              </>
-            )}
-          </NavLink>
-
-          <NavLink to="/framework-generator" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          <NavLink to="/services" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <Layers size={20} />
-            <span>Framework Generator</span>
+            <span>All Services</span>
           </NavLink>
 
-          <NavLink to="/test-runner" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <RefreshCw size={20} />
-            <span>Test Runner</span>
-          </NavLink>
-
-          <NavLink to="/localization" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <Globe size={20} />
-            <span>Localization Tester</span>
-          </NavLink>
-
-          <NavLink to="/accessibility-scanner" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <PersonStanding size={20} />
-            <span>Accessibility Scanner</span>
-          </NavLink>
-
-          <NavLink to="/security-scanner" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <ShieldCheck size={20} />
-            <span>Security Scanner</span>
-          </NavLink>
+          <ServiceLink to="/test-plan-generator" icon={FileText} label="Test Plan Generator" locked={locked} />
+          <ServiceLink to="/test-generator" icon={FileCode} label="Functional Test Generator" locked={locked} />
+          <ServiceLink to="/test-data-generator" icon={Database} label="Test Data Generator" locked={locked} />
+          <ServiceLink to="/locator-generator" icon={Target} label="Smart Locators" locked={locked} />
+          <ServiceLink to="/test-converter" icon={RefreshCw} label="Migration Service" locked={locked} inactiveColor="var(--accent-secondary)" />
+          <ServiceLink to="/framework-generator" icon={Layers} label="Framework Generator" locked={locked} />
+          <ServiceLink to="/api-test-generator" icon={Webhook} label="API Test Generator" locked={locked} />
+          <ServiceLink to="/test-runner" icon={RefreshCw} label="Test Runner" locked={locked} />
+          <ServiceLink to="/localization" icon={Globe} label="Localization Tester" locked={locked} />
+          <ServiceLink to="/accessibility-scanner" icon={PersonStanding} label="Accessibility Scanner" locked={locked} />
+          <ServiceLink to="/performance-scanner" icon={Gauge} label="Performance Scanner" locked={locked} />
+          <ServiceLink to="/security-scanner" icon={ShieldCheck} label="Security Scanner" locked={locked} />
         </div>
 
         <div className="nav-section mt-auto">

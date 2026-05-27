@@ -1,21 +1,28 @@
-import * as XLSX from 'xlsx';
+import * as XLSXModule from 'xlsx';
+
+const XLSX = XLSXModule.default || XLSXModule;
 
 const TEXT_FORCE_KEYS = /phone|mobile|tel|zip|pin|postal|code|id|number/i;
 
 function triggerDownload(blob, filename) {
-    console.log(`[Export] Triggering download for: ${filename}`);
+    console.log(`[Export] Triggering robust native download for: ${filename}`);
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.style.display = 'none';
     a.href = url;
     a.download = filename;
+    
+    // Crucial for sandbox environments:
+    a.setAttribute('download', filename);
+    
     document.body.appendChild(a);
     a.click();
-    // Delay revocation to ensure browser captures the filename
+    
+    // Revoke and clean up
     setTimeout(() => {
-        window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
-    }, 5000);
+        window.URL.revokeObjectURL(url);
+    }, 100);
 }
 
 export const exportToExcel = (data, fileName = 'Functional_Test_Cases', sheetName = 'Sheet1') => {
@@ -51,9 +58,8 @@ export const exportToExcel = (data, fileName = 'Functional_Test_Cases', sheetNam
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
 
-    const wbout = XLSX.write(workbook, { bookType: 'xlsx', type: 'array', cellStyles: true });
-    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    triggerDownload(blob, `${fileName}.xlsx`);
+    console.log(`[Export] Writing Excel workbook via SheetJS native writeFile: ${fileName}.xlsx`);
+    XLSX.writeFile(workbook, `${fileName}.xlsx`);
 };
 
 export const exportToJSON = (data, fileName = 'Functional_Test_Cases') => {

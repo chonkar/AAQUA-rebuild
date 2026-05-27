@@ -43,6 +43,36 @@ async function isPrivateHost(hostname) {
 }
 
 /**
+ * Standalone HTTP(S) + SSRF validator usable outside Express middleware.
+ * Returns { valid: true, href } or { valid: false, error }.
+ * Honours ALLOW_PRIVATE_SCAN=true to permit internal hosts (dev/QA).
+ */
+export async function validateHttpUrl(rawUrl) {
+    if (!rawUrl) return { valid: false, error: 'URL is required.' };
+
+    let parsed;
+    try {
+        parsed = new URL(rawUrl);
+    } catch {
+        return { valid: false, error: 'Invalid URL format.' };
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return { valid: false, error: 'Only HTTP/HTTPS URLs are allowed.' };
+    }
+
+    const isPrivate = await isPrivateHost(parsed.hostname);
+    if (isPrivate && process.env.ALLOW_PRIVATE_SCAN !== 'true') {
+        return {
+            valid: false,
+            error: 'Internal/private network addresses are not allowed (SSRF protection). Set ALLOW_PRIVATE_SCAN=true to bypass.',
+        };
+    }
+
+    return { valid: true, href: parsed.href };
+}
+
+/**
  * Express middleware: validate scan target URL
  * Blocks: private IPs, file:// URIs, non-HTTP schemes, SSRF attempts
  */

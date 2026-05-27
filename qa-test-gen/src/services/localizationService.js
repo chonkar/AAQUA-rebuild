@@ -23,19 +23,32 @@ export const capturePage = async () => {
     return response.json();
 };
 
-export const analyzeLocalization = async (html, targetLanguage, apiKey) => {
+// Start an async localization analysis. Returns { jobId, totalChunks } immediately;
+// the actual analysis runs in the background and is polled via getLocalizationStatus.
+export const startLocalizationAnalysis = async (html, targetLanguage, apiKey, projectId) => {
     const response = await fetch(`${API_URL}/analyze-localization`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             "x-api-key": apiKey
         },
-        body: JSON.stringify({ html, targetLanguage }),
+        body: JSON.stringify({ html, targetLanguage, projectId }),
     });
 
     if (!response.ok) {
         const text = await response.text();
         throw new Error(`Analysis failed: ${text}`);
+    }
+    return response.json(); // { jobId, totalChunks }
+};
+
+// Poll a running job. Returns { status: 'running'|'completed'|'failed',
+// done, total, issues (cumulative), error }.
+export const getLocalizationStatus = async (jobId) => {
+    const response = await fetch(`${API_URL}/analyze-localization/status/${jobId}`);
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Status check failed (HTTP ${response.status})`);
     }
     return response.json();
 };

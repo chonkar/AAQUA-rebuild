@@ -1,8 +1,36 @@
 import React, { useState } from 'react';
-import { Sparkles, Loader2, RotateCcw } from 'lucide-react';
+import { useAuth } from 'react-oidc-context';
+import { createApiClient } from '../../utils/apiClient';
+import { Sparkles, Loader2, RotateCcw, Database, AlertCircle } from 'lucide-react';
 
 const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0, onClearContext }) => {
+    const auth = useAuth();
+    const api = createApiClient(() => auth.user?.access_token);
+
+    const [sourceType, setSourceType] = useState('manual'); // 'manual' | 'jira'
+    const [jiraKey, setJiraKey] = useState('');
     const [requirement, setRequirement] = useState('');
+    const [isFetchingJira, setIsFetchingJira] = useState(false);
+    const [jiraError, setJiraError] = useState(null);
+
+    const handleFetchJiraStory = async () => {
+        if (!jiraKey.trim()) return;
+        setIsFetchingJira(true);
+        setJiraError(null);
+        try {
+            const data = await api.get(`/api/jira/story/${encodeURIComponent(jiraKey.trim())}`);
+            if (data?.story?.description) {
+                setRequirement(data.story.description);
+            } else {
+                throw new Error('Jira story fetched, but no description or requirements found in it.');
+            }
+        } catch (err) {
+            console.error('[Jira Fetch Error]', err);
+            setJiraError(err.message);
+        } finally {
+            setIsFetchingJira(false);
+        }
+    };
 
     const handleSubmit = () => {
         if (!requirement.trim()) return;
@@ -12,6 +40,82 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
     return (
         <div className="input-section animate-fade-in">
             <div className="card">
+                {/* Source Selector Toggles */}
+                <div className="source-selector-tabs" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
+                    <button
+                        className={`tab-btn ${sourceType === 'manual' ? 'active' : ''}`}
+                        onClick={() => setSourceType('manual')}
+                        style={{
+                            background: sourceType === 'manual' ? 'rgba(109, 40, 217, 0.15)' : 'transparent',
+                            color: sourceType === 'manual' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                            border: '1px solid ' + (sourceType === 'manual' ? 'var(--accent-primary)' : 'transparent'),
+                            padding: '0.4rem 1rem',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        📝 Manual Input
+                    </button>
+                    <button
+                        className={`tab-btn ${sourceType === 'jira' ? 'active' : ''}`}
+                        onClick={() => setSourceType('jira')}
+                        style={{
+                            background: sourceType === 'jira' ? 'rgba(109, 40, 217, 0.15)' : 'transparent',
+                            color: sourceType === 'jira' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                            border: '1px solid ' + (sourceType === 'jira' ? 'var(--accent-primary)' : 'transparent'),
+                            padding: '0.4rem 1rem',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        🔌 JIRA Story Integration
+                    </button>
+                </div>
+
+                {/* JIRA Import Workbench */}
+                {sourceType === 'jira' && (
+                    <div className="jira-workbench animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border-color)' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <input
+                                type="text"
+                                className="input-field"
+                                placeholder="JIRA Issue Key (e.g. QA-123)"
+                                value={jiraKey}
+                                onChange={(e) => setJiraKey(e.target.value)}
+                                disabled={isFetchingJira}
+                                style={{ margin: 0, flex: 1 }}
+                            />
+                            <button
+                                className="btn btn-secondary"
+                                onClick={handleFetchJiraStory}
+                                disabled={isFetchingJira || !jiraKey.trim()}
+                                style={{ padding: '0.75rem 1.25rem', whiteSpace: 'nowrap' }}
+                            >
+                                {isFetchingJira ? (
+                                    <>
+                                        <Loader2 className="spin" size={16} />
+                                        <span>Fetching...</span>
+                                    </>
+                                ) : (
+                                    <span>Fetch Story Description</span>
+                                )}
+                            </button>
+                        </div>
+                        {jiraError && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#f87171', fontSize: '0.85rem' }}>
+                                <AlertCircle size={14} />
+                                <span>{jiraError}</span>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
                     <label className="input-label" style={{ marginBottom: 0 }}>Describe your feature or requirement</label>
                     {contextCount > 0 && (
@@ -74,7 +178,6 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                     )}
                 </div>
             </div>
-
 
             <style>{`
         .input-label {

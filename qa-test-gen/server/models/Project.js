@@ -36,6 +36,10 @@ const Project = sequelize.define('projects', {
         type: DataTypes.UUID,
         allowNull: false,
     },
+    git_url: {
+        type: DataTypes.STRING(2048),
+        allowNull: true,
+    },
 });
 
 export default Project;

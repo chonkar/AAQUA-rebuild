@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { fn, col, where as sqWhere, Op } from 'sequelize';
 import { Project, Scan, GovernanceMetric } from '../models/index.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { validateTargetUrl } from '../middleware/urlValidator.js';
@@ -6,8 +7,8 @@ import { validateTargetUrl } from '../middleware/urlValidator.js';
 const router = Router();
 
 /**
- * POST /api/security/projects
- * Create a new security project
+ * POST /api/projects
+ * Create a new project
  */
 router.post('/', authenticateToken, validateTargetUrl, async (req, res) => {
     try {
@@ -17,8 +18,27 @@ router.post('/', authenticateToken, validateTargetUrl, async (req, res) => {
             return res.status(400).json({ error: 'name and target_url are required.' });
         }
 
+        const trimmedName = String(name).trim();
+        if (!trimmedName) {
+            return res.status(400).json({ error: 'Project name cannot be empty.' });
+        }
+
+        // Case-insensitive uniqueness check, scoped to this user's projects.
+        const duplicate = await Project.findOne({
+            where: {
+                owner_id: req.user.id,
+                // where() returns a Where instance — must be combined via Op.and,
+                // not spread into the object (spreading leaks its internal
+                // attribute/comparator/logic keys as bogus columns).
+                [Op.and]: [sqWhere(fn('LOWER', col('name')), trimmedName.toLowerCase())],
+            },
+        });
+        if (duplicate) {
+            return res.status(409).json({ error: `A project named "${trimmedName}" already exists.` });
+        }
+
         const project = await Project.create({
-            name,
+            name: trimmedName,
             target_url,
             description: description || null,
             auth_username: auth_username || null,
@@ -38,7 +58,7 @@ router.post('/', authenticateToken, validateTargetUrl, async (req, res) => {
 });
 
 /**
- * GET /api/security/projects
+ * GET /api/projects
  * List user's projects with latest scan info
  */
 router.get('/', authenticateToken, async (req, res) => {
@@ -64,7 +84,7 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 /**
- * GET /api/security/projects/:id
+ * GET /api/projects/:id
  * Get project details with scan history
  */
 router.get('/:id', authenticateToken, async (req, res) => {
@@ -98,7 +118,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 /**
- * DELETE /api/security/projects/:id
+ * DELETE /api/projects/:id
  * Delete a project and all associated data
  */
 router.delete('/:id', authenticateToken, async (req, res) => {

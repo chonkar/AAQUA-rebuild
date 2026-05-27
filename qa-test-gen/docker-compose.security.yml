@@ -90,7 +90,8 @@ services:
     container_name: aaqua-zap
     command: >
       zap.sh -daemon -port 8080 -host 0.0.0.0 -config api.disablekey=true -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true -config connection.timeoutInSecs=120
-    network_mode: host
+    ports:
+      - "8080:8080"
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -105,8 +106,6 @@ services:
       resources:
         limits:
           memory: 2G
-    networks:
-      - aaqua-net
 
 volumes:
   postgres_data:

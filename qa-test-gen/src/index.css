@@ -33,6 +33,12 @@
   --shadow-glow: 0 0 20px var(--accent-glow);
 
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Concept 1 Premium Logo Gradients (Dark format) */
+  --logo-gradient-1-start: #3b82f6;
+  --logo-gradient-1-end: #8b5cf6;
+  --logo-gradient-2-start: #ec4899;
+  --logo-gradient-2-end: #3b82f6;
 }
 
 [data-theme='light'] {
@@ -61,6 +67,12 @@
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   --shadow-glow: 0 0 15px rgba(124, 58, 237, 0.15);
+
+  /* Concept 1 Premium Logo Gradients (Light format) */
+  --logo-gradient-1-start: #2563eb;
+  --logo-gradient-1-end: #6d28d9;
+  --logo-gradient-2-start: #db2777;
+  --logo-gradient-2-end: #2563eb;
 }
 
 * {
@@ -72,10 +84,24 @@
 body {
   font-family: var(--font-sans);
   background-color: var(--bg-primary);
+  background-image: 
+    radial-gradient(circle at 90% 20%, rgba(139, 92, 246, 0.15) 0%, transparent 50%),
+    radial-gradient(circle at 10% 80%, rgba(59, 130, 246, 0.08) 0%, transparent 40%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 1440 900' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='glow' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%233b82f6' stop-opacity='0.25'/%3E%3Cstop offset='30%25' stop-color='%238b5cf6' stop-opacity='0.55'/%3E%3Cstop offset='60%25' stop-color='%23d946ef' stop-opacity='0.45'/%3E%3Cstop offset='85%25' stop-color='%233b82f6' stop-opacity='0.2'/%3E%3Cstop offset='100%25' stop-color='%233b82f6' stop-opacity='0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg stroke='url(%23glow)' stroke-width='1.2'%3E%3Cpath d='M-50 480 C 350 620, 850 150, 1500 350' stroke-opacity='0.15'/%3E%3Cpath d='M-50 482 C 352 623, 852 145, 1500 380' stroke-opacity='0.18'/%3E%3Cpath d='M-50 484 C 354 626, 854 140, 1500 410' stroke-opacity='0.22'/%3E%3Cpath d='M-50 486 C 356 629, 856 135, 1500 440' stroke-opacity='0.25'/%3E%3Cpath d='M-50 488 C 358 632, 858 130, 1500 470' stroke-opacity='0.28'/%3E%3Cpath d='M-50 490 C 360 635, 860 125, 1500 500' stroke-opacity='0.30'/%3E%3Cpath d='M-50 492 C 362 638, 862 120, 1500 530' stroke-opacity='0.28'/%3E%3Cpath d='M-50 494 C 364 641, 864 115, 1500 560' stroke-opacity='0.25'/%3E%3Cpath d='M-50 496 C 366 644, 866 110, 1500 590' stroke-opacity='0.22'/%3E%3Cpath d='M-50 498 C 368 647, 868 105, 1500 620' stroke-opacity='0.18'/%3E%3Cpath d='M-50 500 C 370 650, 870 100, 1500 650' stroke-opacity='0.15'/%3E%3C/g%3E%3C/svg%3E");
+  background-attachment: fixed;
+  background-size: cover;
+  background-position: center;
   color: var(--text-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
+}
+
+[data-theme='light'] body {
+  background-image: 
+    radial-gradient(circle at 90% 20%, rgba(124, 58, 237, 0.05) 0%, transparent 40%),
+    radial-gradient(circle at 10% 80%, rgba(37, 99, 235, 0.03) 0%, transparent 35%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 1440 900' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='glow' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%232563eb' stop-opacity='0.1'/%3E%3Cstop offset='30%25' stop-color='%237c3aed' stop-opacity='0.2'/%3E%3Cstop offset='60%25' stop-color='%23db2777' stop-opacity='0.15'/%3E%3Cstop offset='85%25' stop-color='%232563eb' stop-opacity='0.05'/%3E%3Cstop offset='100%25' stop-color='%232563eb' stop-opacity='0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg stroke='url(%23glow)' stroke-width='1.2'%3E%3Cpath d='M-50 480 C 350 620, 850 150, 1500 350' stroke-opacity='0.10'/%3E%3Cpath d='M-50 482 C 352 623, 852 145, 1500 380' stroke-opacity='0.12'/%3E%3Cpath d='M-50 484 C 354 626, 854 140, 1500 410' stroke-opacity='0.14'/%3E%3Cpath d='M-50 486 C 356 629, 856 135, 1500 440' stroke-opacity='0.16'/%3E%3Cpath d='M-50 488 C 358 632, 858 130, 1500 470' stroke-opacity='0.18'/%3E%3Cpath d='M-50 490 C 360 635, 860 125, 1500 500' stroke-opacity='0.20'/%3E%3Cpath d='M-50 492 C 362 638, 862 120, 1500 530' stroke-opacity='0.18'/%3E%3Cpath d='M-50 494 C 364 641, 864 115, 1500 560' stroke-opacity='0.16'/%3E%3Cpath d='M-50 496 C 366 644, 866 110, 1500 590' stroke-opacity='0.14'/%3E%3Cpath d='M-50 498 C 368 647, 868 105, 1500 620' stroke-opacity='0.12'/%3E%3Cpath d='M-50 500 C 370 650, 870 100, 1500 650' stroke-opacity='0.10'/%3E%3C/g%3E%3C/svg%3E");
 }
 
 /* Utilities */

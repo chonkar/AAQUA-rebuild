@@ -14,10 +14,11 @@ export const launchBrowser = async (url) => {
     return response.json();
 };
 
-export const runAccessibilityScan = async () => {
+export const runAccessibilityScan = async (projectId) => {
     const response = await fetch(`${API_URL}/analyze-accessibility`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId })
     });
     if (!response.ok) {
         const err = await response.json();

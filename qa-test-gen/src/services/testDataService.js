@@ -86,8 +86,13 @@ export const generateTestData = async (input, mode = 'prompt', count = 5) => {
                 Generate EXACTLY ${count} records that verify this schema.
             `;
         } else {
+            const sanitizedInput = (input || "")
+                .replace(/[\u2026\u22EF]/g, ' ') // Replace unicode ellipses
+                .replace(/\.{2,}/g, ' ')         // Replace repeating periods with space
+                .replace(/\s+/g, ' ')            // Normalize whitespace
+                .trim();
             promptContext = `
-                Generate EXACTLY ${count} records based on: "${input}"
+                Generate EXACTLY ${count} records based on: "${sanitizedInput}"
             `;
         }
 
@@ -96,7 +101,7 @@ export const generateTestData = async (input, mode = 'prompt', count = 5) => {
 
             CRITICAL INSTRUCTIONS:
             - DO NOT output any reasoning, explanations, or thought process.
-            - Output ONLY the raw JSON array. NO MARKDOWN.
+            - Wrap the JSON array output in a markdown \`\`\`json code block. Do not include any explanations or conversational text.
             
             IMPORTANT OPTIMIZATION INSTRUCTIONS:
             To save generation time, use the following PLACEHOLDERS for standard data types exactly as written below. Do NOT generate real names/emails yourself, just use the string placeholder:

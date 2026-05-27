@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Clock, FolderOpen, ChevronDown, ChevronRight, Terminal, BarChart3, Download, CalendarClock, Wrench } from 'lucide-react';
 import { runTestsLocal, getRunStatus, retryFailedTests, getRuntimeInfo } from '../services/testRunnerService';
 import { startBatchHeal, getBatchHealStatus, applyHeal } from '../services/autoHealService';
+import { useProject } from '../context/ProjectContext';
 
 const HEADED_PREF_KEY = 'aaqua.testrunner.headed';
 
@@ -139,6 +140,7 @@ const LiveConsole = ({ logs, isRunning }) => {
 // ─── MAIN PAGE ───
 // ═══════════════════════════════════════════
 const TestRunner = () => {
+    const { selectedProjectId } = useProject();
     const [projectPath, setProjectPath] = useState('');
     const [runId, setRunId] = useState(null);
     const [retrySourceRunId, setRetrySourceRunId] = useState(null);
@@ -255,7 +257,7 @@ const TestRunner = () => {
         setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
         logCursorRef.current = 0;
         try {
-            const data = await runTestsLocal(projectPath.trim(), !headed);
+            const data = await runTestsLocal(projectPath.trim(), !headed, selectedProjectId || null);
             if (data.error) { setStatus('error'); setError(data.error); setHasRun(true); return; }
             setRunId(data.runId);
             setRetrySourceRunId(data.runId);

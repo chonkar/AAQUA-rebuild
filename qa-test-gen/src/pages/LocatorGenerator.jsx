@@ -2,12 +2,15 @@ import React, { useState } from 'react';
 import { generateLocators } from '../services/locatorGenerationService';
 import { exportToJSON, exportToExcel } from '../utils/exportUtils';
 import { Target, Search, Copy, Download, Code, Globe, AlertCircle, Loader2 } from 'lucide-react';
+import { useProject } from '../context/ProjectContext';
+import UrlScopeWarning from '../components/common/UrlScopeWarning';
 
 // BASE_URL-prefixed relative path. See src/services/testRunnerService.js for why.
 // Hardcoded http://localhost:3001 worked in dev but 404'd in QA (browser bypasses the Vite proxy in prod).
 const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
 const LocatorGenerator = () => {
+    const { selectedProjectId } = useProject();
     const [mode, setMode] = useState('html'); // 'html' or 'url'
     const [htmlInput, setHtmlInput] = useState('');
     const [urlInput, setUrlInput] = useState('');
@@ -33,7 +36,7 @@ const LocatorGenerator = () => {
             const response = await fetch(`${API_URL}/browser/launch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: urlInput })
+                body: JSON.stringify({ url: urlInput, projectId: selectedProjectId || null })
             });
 
             if (!response.ok) {
@@ -115,7 +118,7 @@ const LocatorGenerator = () => {
                     const response = await fetch(`${API_URL}/scrape`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: urlInput, cookies: useCookies ? cookies : [] })
+                        body: JSON.stringify({ url: urlInput, cookies: useCookies ? cookies : [], projectId: selectedProjectId || null })
                     });
 
                     if (!response.ok) {
@@ -207,6 +210,7 @@ const LocatorGenerator = () => {
                                 onChange={(e) => setUrlInput(e.target.value)}
                                 disabled={isGenerating}
                             />
+                            <UrlScopeWarning url={urlInput} />
 
                             <div className="cookie-section">
                                 <label className="cookie-toggle">

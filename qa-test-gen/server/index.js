@@ -11,11 +11,22 @@ import crypto from 'crypto';
 const require = createRequire(import.meta.url);
 
 // ─── AI Secure Engine imports ────────────────────────────
-import { initDatabase } from './models/index.js';
+import { initDatabase, AccessibilityResult, LocalizationResult, AutomationResult, PerformanceResult } from './models/index.js';
 import projectRoutes from './routes/projectRoutes.js';
 import scanRoutes from './routes/scanRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import governanceRoutes from './routes/governanceRoutes.js';
+import jiraRoutes from './routes/jiraRoutes.js';
+import readinessRoutes from './routes/readinessRoutes.js';
+import { calculateAndSaveReadiness } from './services/readinessService.js';
+import { parseSpec } from './services/apiSpecService.js';
+import { generateApiTestCases } from './services/apiTestGenService.js';
+import { generateFlows } from './services/apiFlowGenService.js';
+import { emitRestAssured } from './services/emitters/restAssuredEmitter.js';
+import { emitPlaywright } from './services/emitters/playwrightApiEmitter.js';
+import { emitPlaywrightFlows } from './services/emitters/playwrightFlowEmitter.js';
+import { emitK6 } from './services/emitters/k6Emitter.js';
+import { validateHttpUrl } from './middleware/urlValidator.js';
 import { securityRateLimiter } from './middleware/rateLimiter.js';
 import { generateWithRetry } from './utils/aiUtils.js';
 
@@ -25,6 +36,17 @@ import cors from 'cors';
 
 const app = express();
 const PORT = 3001;
+
+// Keep the server alive on stray async errors. A single hung/failed LLM call or
+// a late promise rejection must never take the whole backend down mid-session —
+// otherwise the next request hits a dead process and the dev proxy returns a
+// bare 500. Log loudly instead of crashing.
+process.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection]', reason && reason.message ? reason.message : reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('[uncaughtException]', err && err.message ? err.message : err);
+});
 // Increase payload size limit for zip uploads
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -237,6 +259,16 @@ app.post('/api/generate-framework', async (req, res) => {
 });
 
 // Framework generation helpers
+
+// Write a generated file, creating any missing parent directories first. The
+// per-framework generators assume their target subfolders already exist; this
+// makes every write self-sufficient so a path the route didn't pre-create
+// (e.g. root-level tests/, pages/, utils/) can't throw ENOENT.
+function writeProjectFile(filePath, content) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content);
+}
+
 async function generatePlaywrightTypeScript(outputPath, projectName, features) {
     // package.json
     const packageJson = {
@@ -246,6 +278,10 @@ async function generatePlaywrightTypeScript(outputPath, projectName, features) {
             test: 'playwright test',
             'test:headed': 'playwright test --headed',
             'test:debug': 'playwright test --debug',
+            // Auto-download the browser binaries on `npm install` so the project
+            // is runnable out of the box (otherwise tests fail with "Executable
+            // doesn't exist" until `npx playwright install` is run manually).
+            postinstall: 'playwright install',
             report: features.reporting === 'Allure' ? 'allure generate ./allure-results --clean && allure open' : 'playwright show-report'
         },
         devDependencies: {
@@ -255,7 +291,7 @@ async function generatePlaywrightTypeScript(outputPath, projectName, features) {
             ...(features.logging && { 'winston': '^3.11.0' })
         }
     };
-    fs.writeFileSync(path.join(outputPath, 'package.json'), JSON.stringify(packageJson, null, 2));
+    writeProjectFile(path.join(outputPath, 'package.json'), JSON.stringify(packageJson, null, 2));
 
     // playwright.config.ts
     const playwrightConfig = `import { defineConfig, devices } from '@playwright/test';
@@ -279,7 +315,7 @@ export default defineConfig({
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
 });`;
-    fs.writeFileSync(path.join(outputPath, 'playwright.config.ts'), playwrightConfig);
+    writeProjectFile(path.join(outputPath, 'playwright.config.ts'), playwrightConfig);
 
     // tsconfig.json
     const tsConfig = {
@@ -292,7 +328,7 @@ export default defineConfig({
             forceConsistentCasingInFileNames: true
         }
     };
-    fs.writeFileSync(path.join(outputPath, 'tsconfig.json'), JSON.stringify(tsConfig, null, 2));
+    writeProjectFile(path.join(outputPath, 'tsconfig.json'), JSON.stringify(tsConfig, null, 2));
 
     // Base Page (if POM enabled)
     if (features.pageObjectModel) {
@@ -311,7 +347,7 @@ export class BasePage {
     await this.page.waitForLoadState('networkidle');
   }
 }`;
-        fs.writeFileSync(path.join(outputPath, 'pages', 'BasePage.ts'), basePage);
+        writeProjectFile(path.join(outputPath, 'pages', 'BasePage.ts'), basePage);
 
         const loginPage = `import { Page, Locator } from '@playwright/test';
 import { BasePage } from './BasePage';
@@ -334,7 +370,7 @@ export class LoginPage extends BasePage {
     await this.loginButton.click();
   }
 }`;
-        fs.writeFileSync(path.join(outputPath, 'pages', 'LoginPage.ts'), loginPage);
+        writeProjectFile(path.join(outputPath, 'pages', 'LoginPage.ts'), loginPage);
     }
 
     // Logger utility
@@ -354,7 +390,7 @@ export const logger = winston.createLogger({
     new winston.transports.File({ filename: 'logs/test.log' })
   ]
 });`;
-        fs.writeFileSync(path.join(outputPath, 'utils', 'logger.ts'), logger);
+        writeProjectFile(path.join(outputPath, 'utils', 'logger.ts'), logger);
         fs.mkdirSync(path.join(outputPath, 'logs'), { recursive: true });
     }
 
@@ -379,7 +415,7 @@ test.describe('Login Tests', () => {
     ${features.logging ? "logger.info('Login test completed');" : ''}
   });
 });`;
-    fs.writeFileSync(path.join(outputPath, 'tests', 'login.spec.ts'), sampleTest);
+    writeProjectFile(path.join(outputPath, 'tests', 'login.spec.ts'), sampleTest);
 
     // API Test
     if (features.apiTesting) {
@@ -408,7 +444,7 @@ test.describe('User API Tests', () => {
     expect(responseBody.name).toBe('morpheus');
   });
 });`;
-        fs.writeFileSync(path.join(outputPath, 'tests', 'api', 'users.spec.ts'), apiTestTs);
+        writeProjectFile(path.join(outputPath, 'tests', 'api', 'users.spec.ts'), apiTestTs);
     }
 
     // CI/CD
@@ -440,7 +476,7 @@ jobs:
           name: playwright-report
         path: playwright-report/
         retention-days: 30`;
-        fs.writeFileSync(path.join(outputPath, '.github', 'workflows', 'test.yml'), githubActions);
+        writeProjectFile(path.join(outputPath, '.github', 'workflows', 'test.yml'), githubActions);
     }
 
     // Dockerfile
@@ -451,7 +487,7 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 CMD ["npm", "test"]`;
-        fs.writeFileSync(path.join(outputPath, 'Dockerfile'), dockerfile);
+        writeProjectFile(path.join(outputPath, 'Dockerfile'), dockerfile);
     }
 
     // README
@@ -483,7 +519,7 @@ ${features.reporting === 'Allure' ? `## View Reports
 npm run report
 \`\`\`` : ''}
 `;
-    fs.writeFileSync(path.join(outputPath, 'README.md'), readme);
+    writeProjectFile(path.join(outputPath, 'README.md'), readme);
 }
 
 async function generatePlaywrightJavaScript(outputPath, projectName, features) {
@@ -494,6 +530,10 @@ async function generatePlaywrightJavaScript(outputPath, projectName, features) {
             test: 'playwright test',
             'test:headed': 'playwright test --headed',
             'test:debug': 'playwright test --debug',
+            // Auto-download the browser binaries on `npm install` so the project
+            // is runnable out of the box (otherwise tests fail with "Executable
+            // doesn't exist" until `npx playwright install` is run manually).
+            postinstall: 'playwright install',
             report: features.reporting === 'Allure' ? 'allure generate ./allure-results --clean && allure open' : 'playwright show-report'
         },
         devDependencies: {
@@ -502,7 +542,7 @@ async function generatePlaywrightJavaScript(outputPath, projectName, features) {
             ...(features.logging && { 'winston': '^3.11.0' })
         }
     };
-    fs.writeFileSync(path.join(outputPath, 'package.json'), JSON.stringify(packageJson, null, 2));
+    writeProjectFile(path.join(outputPath, 'package.json'), JSON.stringify(packageJson, null, 2));
 
     const playwrightConfig = `const { defineConfig, devices } = require('@playwright/test');
 
@@ -525,7 +565,7 @@ module.exports = defineConfig({
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
 });`;
-    fs.writeFileSync(path.join(outputPath, 'playwright.config.js'), playwrightConfig);
+    writeProjectFile(path.join(outputPath, 'playwright.config.js'), playwrightConfig);
 
     if (features.pageObjectModel) {
         const basePage = `class BasePage {
@@ -540,7 +580,7 @@ module.exports = defineConfig({
   }
 }
 module.exports = { BasePage };`;
-        fs.writeFileSync(path.join(outputPath, 'pages', 'BasePage.js'), basePage);
+        writeProjectFile(path.join(outputPath, 'pages', 'BasePage.js'), basePage);
 
         const loginPage = `const { BasePage } = require('./BasePage');
 class LoginPage extends BasePage {
@@ -557,7 +597,7 @@ class LoginPage extends BasePage {
   }
 }
 module.exports = { LoginPage };`;
-        fs.writeFileSync(path.join(outputPath, 'pages', 'LoginPage.js'), loginPage);
+        writeProjectFile(path.join(outputPath, 'pages', 'LoginPage.js'), loginPage);
     }
 
     const sampleTest = `const { test, expect } = require('@playwright/test');
@@ -574,7 +614,7 @@ test.describe('Login Tests', () => {
     await expect(page).toHaveURL(/.*inventory.html/);
   });
 });`;
-    fs.writeFileSync(path.join(outputPath, 'tests', 'login.spec.js'), sampleTest);
+    writeProjectFile(path.join(outputPath, 'tests', 'login.spec.js'), sampleTest);
 
     // API Test
     if (features.apiTesting) {
@@ -603,11 +643,11 @@ test.describe('User API Tests', () => {
     expect(responseBody.name).toBe('morpheus');
   });
 });`;
-        fs.writeFileSync(path.join(outputPath, 'tests', 'api', 'users.spec.js'), apiTestJs);
+        writeProjectFile(path.join(outputPath, 'tests', 'api', 'users.spec.js'), apiTestJs);
     }
 
     const readme = `# ${projectName}\n\nPlaywright JavaScript Framework\n\n## Setup\n\`\`\`bash\nnpm install\nnpx playwright install\n\`\`\`\n\n## Run Tests\n\`\`\`bash\nnpm test\n\`\`\``;
-    fs.writeFileSync(path.join(outputPath, 'README.md'), readme);
+    writeProjectFile(path.join(outputPath, 'README.md'), readme);
 }
 
 async function generateCypress(outputPath, projectName, features, language) {
@@ -623,7 +663,7 @@ async function generateCypress(outputPath, projectName, features, language) {
             ...(language === 'TypeScript' && { 'typescript': '^5.0.0' })
         }
     };
-    fs.writeFileSync(path.join(outputPath, 'package.json'), JSON.stringify(packageJson, null, 2));
+    writeProjectFile(path.join(outputPath, 'package.json'), JSON.stringify(packageJson, null, 2));
 
     const cypressConfig = `const { defineConfig } = require("cypress");
 
@@ -635,7 +675,7 @@ module.exports = defineConfig({
     },
   },
 });`;
-    fs.writeFileSync(path.join(outputPath, 'cypress.config.js'), cypressConfig);
+    writeProjectFile(path.join(outputPath, 'cypress.config.js'), cypressConfig);
 
     fs.mkdirSync(path.join(outputPath, 'cypress', 'e2e'), { recursive: true });
 
@@ -649,7 +689,7 @@ module.exports = defineConfig({
     cy.url().should('include', 'inventory.html');
   });
 });`;
-    fs.writeFileSync(path.join(outputPath, 'cypress', 'e2e', `login.cy.${ext}`), sampleTest);
+    writeProjectFile(path.join(outputPath, 'cypress', 'e2e', `login.cy.${ext}`), sampleTest);
 
     if (features.apiTesting) {
         fs.mkdirSync(path.join(outputPath, 'cypress', 'e2e', 'api'), { recursive: true });
@@ -674,11 +714,11 @@ module.exports = defineConfig({
     });
   });
 });`;
-        fs.writeFileSync(path.join(outputPath, 'cypress', 'e2e', 'api', `users.cy.${ext}`), apiTestCypress);
+        writeProjectFile(path.join(outputPath, 'cypress', 'e2e', 'api', `users.cy.${ext}`), apiTestCypress);
     }
 
     const readme = `# ${projectName}\n\nCypress ${language} Framework\n\n## Setup\n\`\`\`bash\nnpm install\n\`\`\`\n\n## Run Tests\n\`\`\`bash\nnpm run cy:run\n\`\`\``;
-    fs.writeFileSync(path.join(outputPath, 'README.md'), readme);
+    writeProjectFile(path.join(outputPath, 'README.md'), readme);
 }
 
 async function generateSelenium(outputPath, projectName, features, language) {
@@ -723,7 +763,7 @@ browser=chrome
 headless=false
 implicit.wait=10
 explicit.wait=10`;
-    fs.writeFileSync(path.join(mainResourcesPath, 'config.properties'), configProperties);
+    writeProjectFile(path.join(mainResourcesPath, 'config.properties'), configProperties);
 
     // 3. testdata.json
     const testData = `[
@@ -733,7 +773,7 @@ explicit.wait=10`;
     "expectedTitle": "Dashboard"
   }
 ]`;
-    fs.writeFileSync(path.join(mainResourcesPath, 'testdata.json'), testData);
+    writeProjectFile(path.join(mainResourcesPath, 'testdata.json'), testData);
 
     // 4. log4j2.xml
     const log4j2Xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -749,7 +789,7 @@ explicit.wait=10`;
         </Root>
     </Loggers>
 </Configuration>`;
-    fs.writeFileSync(path.join(mainResourcesPath, 'log4j2.xml'), log4j2Xml);
+    writeProjectFile(path.join(mainResourcesPath, 'log4j2.xml'), log4j2Xml);
 
     // 5. testng.xml
     const testngXml = isCucumber ?
@@ -776,7 +816,7 @@ explicit.wait=10`;
         </classes>
     </test>` : ''}
 </suite>`;
-    fs.writeFileSync(path.join(testResourcesPath, 'testng.xml'), testngXml);
+    writeProjectFile(path.join(testResourcesPath, 'testng.xml'), testngXml);
 
     // 6. GitHub Actions (test.yml)
     const githubActions = `name: Java CI with Maven
@@ -798,7 +838,7 @@ jobs:
         cache: 'maven'
     - name: Run Tests
       run: mvn test`;
-    fs.writeFileSync(path.join(outputPath, '.github', 'workflows', 'test.yml'), githubActions);
+    writeProjectFile(path.join(outputPath, '.github', 'workflows', 'test.yml'), githubActions);
 
     // 7. Dockerfile
     const dockerfile = `FROM maven:3.9.6-eclipse-temurin-17
@@ -806,7 +846,7 @@ WORKDIR /app
 COPY . .
 RUN mvn dependency:go-offline
 CMD ["mvn", "test"]`;
-    fs.writeFileSync(path.join(outputPath, 'Dockerfile'), dockerfile);
+    writeProjectFile(path.join(outputPath, 'Dockerfile'), dockerfile);
 
     // 8. pom.xml (User Requested Template)
     const pomXml = `<project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -957,7 +997,7 @@ CMD ["mvn", "test"]`;
     </build>
 
 </project>`;
-    fs.writeFileSync(path.join(outputPath, 'pom.xml'), pomXml);
+    writeProjectFile(path.join(outputPath, 'pom.xml'), pomXml);
 
     // 9. ConfigReader.java
     const configReader = `package ${groupId}.${packageName}.utils;
@@ -987,7 +1027,7 @@ public class ConfigReader {
         return Boolean.parseBoolean(properties.getProperty(key));
     }
 }`;
-    fs.writeFileSync(path.join(mainJavaPath, 'utils', 'ConfigReader.java'), configReader);
+    writeProjectFile(path.join(mainJavaPath, 'utils', 'ConfigReader.java'), configReader);
 
     // 10. DriverManager.java (Using WebDriverManager)
     const driverManager = `package ${groupId}.${packageName}.utils;
@@ -1045,7 +1085,7 @@ public class DriverManager {
         }
     }
 }`;
-    fs.writeFileSync(path.join(mainJavaPath, 'utils', 'DriverManager.java'), driverManager);
+    writeProjectFile(path.join(mainJavaPath, 'utils', 'DriverManager.java'), driverManager);
 
     // 11. WaitUtils.java
     const waitUtils = `package ${groupId}.${packageName}.utils;
@@ -1071,7 +1111,7 @@ public class WaitUtils {
         wait.until(ExpectedConditions.visibilityOf(element));
     }
 }`;
-    fs.writeFileSync(path.join(mainJavaPath, 'utils', 'WaitUtils.java'), waitUtils);
+    writeProjectFile(path.join(mainJavaPath, 'utils', 'WaitUtils.java'), waitUtils);
 
     // 12. BasePage.java
     const basePage = `package ${groupId}.${packageName}.pages;
@@ -1101,7 +1141,7 @@ public class BasePage {
         driver.get(url);
     }
 }`;
-    fs.writeFileSync(path.join(mainJavaPath, 'pages', 'BasePage.java'), basePage);
+    writeProjectFile(path.join(mainJavaPath, 'pages', 'BasePage.java'), basePage);
 
     // 13. LoginPage.java
     const loginPage = `package ${groupId}.${packageName}.pages;
@@ -1132,7 +1172,7 @@ public class LoginPage extends BasePage {
         loginButton.click();
     }
 }`;
-    fs.writeFileSync(path.join(mainJavaPath, 'pages', 'LoginPage.java'), loginPage);
+    writeProjectFile(path.join(mainJavaPath, 'pages', 'LoginPage.java'), loginPage);
 
     // 14. BaseTest.java
     const baseTest = `package ${groupId}.${packageName}.tests;
@@ -1157,7 +1197,7 @@ public class BaseTest {
         DriverManager.quitDriver();
     }
 }`;
-    fs.writeFileSync(path.join(testJavaPath, 'tests', 'BaseTest.java'), baseTest);
+    writeProjectFile(path.join(testJavaPath, 'tests', 'BaseTest.java'), baseTest);
 
     // 15. LoginTest.java
     const loginTest = `package ${groupId}.${packageName}.tests;
@@ -1178,7 +1218,7 @@ public class LoginTest extends BaseTest {
         Assert.assertTrue(driver.getCurrentUrl().contains("inventory.html"), "Login failed!");
     }
 }`;
-    fs.writeFileSync(path.join(testJavaPath, 'tests', 'LoginTest.java'), loginTest);
+    writeProjectFile(path.join(testJavaPath, 'tests', 'LoginTest.java'), loginTest);
 
     // 15.1 Cucumber Specific Files
     if (isCucumber) {
@@ -1188,7 +1228,7 @@ public class LoginTest extends BaseTest {
     Given I am on the login page
     When I enter valid username and password
     Then I should be redirected to the dashboard`;
-        fs.writeFileSync(path.join(testResourcesPath, 'features', 'login.feature'), featureFile);
+        writeProjectFile(path.join(testResourcesPath, 'features', 'login.feature'), featureFile);
 
         // Step Definitions
         const stepdefs = `package ${groupId}.${packageName}.stepdefinitions;
@@ -1223,7 +1263,7 @@ public class LoginStepDefinitions {
         DriverManager.quitDriver();
     }
 }`;
-        fs.writeFileSync(path.join(testJavaPath, 'stepdefinitions', 'LoginStepDefinitions.java'), stepdefs);
+        writeProjectFile(path.join(testJavaPath, 'stepdefinitions', 'LoginStepDefinitions.java'), stepdefs);
 
         // Runner
         const runner = `package ${groupId}.${packageName}.runners;
@@ -1244,7 +1284,7 @@ public class CucumberTestRunner extends AbstractTestNGCucumberTests {
         return super.scenarios();
     }
 }`;
-        fs.writeFileSync(path.join(testJavaPath, 'runners', 'CucumberTestRunner.java'), runner);
+        writeProjectFile(path.join(testJavaPath, 'runners', 'CucumberTestRunner.java'), runner);
     }
 
     if (features.apiTesting) {
@@ -1260,7 +1300,7 @@ public class ApiBaseTest {
         RestAssured.baseURI = "https://jsonplaceholder.typicode.com";
     }
 }`;
-        fs.writeFileSync(path.join(testJavaPath, 'api', 'ApiBaseTest.java'), apiBaseTest);
+        writeProjectFile(path.join(testJavaPath, 'api', 'ApiBaseTest.java'), apiBaseTest);
 
         const usersApiTest = `package ${groupId}.${packageName}.api;
 
@@ -1297,7 +1337,7 @@ public class UsersApiTest extends ApiBaseTest {
             .body("name", equalTo("morpheus"));
     }
 }`;
-        fs.writeFileSync(path.join(testJavaPath, 'api', 'UsersApiTest.java'), usersApiTest);
+        writeProjectFile(path.join(testJavaPath, 'api', 'UsersApiTest.java'), usersApiTest);
     }
 
     // 16. README.md
@@ -1329,7 +1369,7 @@ mvn clean install
 \`\`\`bash
 mvn test
 \`\`\``;
-    fs.writeFileSync(path.join(outputPath, 'README.md'), readme);
+    writeProjectFile(path.join(outputPath, 'README.md'), readme);
 }
 
 // Launch Interactive Browser
@@ -1381,12 +1421,13 @@ app.get('/api/browser/capture', async (req, res) => {
     try {
         const cookies = await activeContext.cookies();
         const html = await activePage.content();
+        const url = activePage.url();
 
-        console.log(`Captured ${cookies.length} cookies and HTML.`);
+        console.log(`Captured ${cookies.length} cookies, HTML, and url=${url}`);
 
         // DO NOT close the browser here. Keep it open for further navigation.
 
-        res.json({ cookies, html });
+        res.json({ cookies, html, url });
     } catch (error) {
         console.error('Capture error:', error);
         res.status(500).json({ error: 'Failed to capture data', details: error.message });
@@ -1470,6 +1511,33 @@ app.post('/api/scrape', async (req, res) => {
     }
 });
 
+// In-flight localization jobs, keyed by jobId. Each holds the cumulative issues
+// found so far so the client can poll and render incrementally; dropped ~10 min
+// after completion. (Module-level, like runStore for test runs.)
+const localizationJobs = new Map();
+
+// Parse an LLM issue-array response, tolerant of code fences, surrounding prose,
+// and TRUNCATION (a long localization issue list can exceed the token cap).
+// Falls back to scanning balanced top-level {...} objects so a partial final
+// object is dropped instead of losing the whole chunk's findings.
+function salvageJsonArray(text) {
+    if (!text || typeof text !== 'string') return [];
+    let s = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const start = s.indexOf('[');
+    if (start !== -1) s = s.slice(start);
+    const end = s.lastIndexOf(']');
+    if (end > 0) { try { const a = JSON.parse(s.slice(0, end + 1)); if (Array.isArray(a)) return a; } catch { /* salvage below */ } }
+    const objs = []; let depth = 0, st = -1, inStr = false, esc = false;
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+        if (ch === '"') inStr = true;
+        else if (ch === '{') { if (depth === 0) st = i; depth++; }
+        else if (ch === '}') { depth--; if (depth === 0 && st !== -1) { try { objs.push(JSON.parse(s.slice(st, i + 1))); } catch { /* skip incomplete */ } st = -1; } }
+    }
+    return objs;
+}
+
 // Localization Analysis Endpoint (Text-extraction + Chunked for large pages)
 app.post('/api/analyze-localization', async (req, res) => {
     const { html, targetLanguage } = req.body;
@@ -1482,9 +1550,15 @@ app.post('/api/analyze-localization', async (req, res) => {
         const endpoint = process.env.VITE_LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
         const llmModel = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
         const genAI = new GoogleGenerativeAI(apiKey, endpoint);
-        const model = genAI.getGenerativeModel({ 
+        const model = genAI.getGenerativeModel({
             model: llmModel,
-            generationConfig: { temperature: 0.2 }
+            // Bound gpt-oss's reasoning (consistent with the other generators) but
+            // leave output uncapped — a localization issue list can be long, and a
+            // max_tokens cap would truncate it. timeoutMs is raised well above the
+            // client's 120s default: a large page chunk takes minutes on the local
+            // model, and the 120s abort was silently failing EVERY chunk (→ a false
+            // "no issues" on pages that are clearly untranslated).
+            generationConfig: { temperature: 0.2, reasoningEffort: 'low', timeoutMs: 240000 }
         });
 
         const isEnglishDialect = targetLanguage.includes('American English') || targetLanguage.includes('British English');
@@ -1559,8 +1633,11 @@ app.post('/api/analyze-localization', async (req, res) => {
         console.log(`[Localization] After dedup: ${textContent.length} chars`);
 
 
-        // ── Step 3: Chunk at 20,000 chars (~10k tokens — very safe under the 65k limit) ──
-        const CHUNK_SIZE = 20000;
+        // ── Step 3: Chunk at 8,000 chars ──
+        // Smaller chunks keep each LLM call's output (and time) bounded so it
+        // completes within the timeout. A 20k chunk on an all-English page asks
+        // the model to enumerate hundreds of strings → minutes of output → abort.
+        const CHUNK_SIZE = 8000;
         const chunks = [];
         for (let i = 0; i < textContent.length; i += CHUNK_SIZE) {
             chunks.push(textContent.substring(i, i + CHUNK_SIZE));
@@ -1583,6 +1660,7 @@ app.post('/api/analyze-localization', async (req, res) => {
                 return `You are a Localization QA Expert${chunkNote}.
 The page SHOULD use ${dialectTo}. Scan the text below for ${dialectFrom} words/phrases.
 Focus: spelling (${spellingExamples}), vocabulary, date formats. Ignore brand names and proper nouns.
+Report UP TO 20 of the most prominent issues — do NOT list every repeated occurrence.
 
 For each issue: { "original": "exact text", "suggestion": "corrected text", "context": "brief description" }
 
@@ -1592,7 +1670,8 @@ ${chunk}
 Return ONLY a JSON array. Empty array [] if no issues.`;
             } else {
                 return `You are a Localization QA Expert${chunkNote}.
-The page SHOULD be fully in ${targetLanguage}. Find every English word or sentence visible to users.
+The page SHOULD be fully in ${targetLanguage}. Identify untranslated English strings visible to users.
+Report UP TO 20 of the most prominent ones — do NOT exhaustively list every word or repeated occurrence.
 Ignore: brand names, proper nouns, technical product names, URLs.
 
 For each issue: { "original": "english text", "suggestion": "intended ${targetLanguage} translation", "context": "brief location" }
@@ -1604,42 +1683,199 @@ Return ONLY a JSON array. Empty array [] if no issues.`;
             }
         };
 
-        // ── Step 4: Analyze all chunks sequentially ──
-        const allIssues = [];
-        for (let i = 0; i < chunks.length; i++) {
-            console.log(`[Localization] Chunk ${i + 1}/${chunks.length} (~${Math.round(chunks[i].length / 4)} estimated tokens)...`);
-            try {
-                const prompt = buildPrompt(chunks[i], i, chunks.length);
-                const responseText = (await generateWithRetry(model, prompt))
-                    .replace(/```json/g, '').replace(/```/g, '').trim();
+        // ── Step 4: Kick off an async job and stream results chunk-by-chunk ──
+        // The local model is slow (a large page can take minutes), so instead of
+        // one long blocking request we register a job, return its id immediately,
+        // and merge each chunk's issues into the job as they complete. The client
+        // polls /status/:jobId and renders issues incrementally.
+        const projectId = req.body.projectId || req.query.projectId || req.body.project_id;
+        const scannedUrl = activePage?.url() || 'Unknown Page';
+        const jobId = `loc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const job = { status: 'running', total: chunks.length, done: 0, issues: [], error: null, seen: new Set() };
+        localizationJobs.set(jobId, job);
 
-                const jsonStart = responseText.indexOf('[');
-                const jsonEnd = responseText.lastIndexOf(']');
-                if (jsonStart !== -1 && jsonEnd !== -1) {
-                    const parsed = JSON.parse(responseText.substring(jsonStart, jsonEnd + 1));
-                    allIssues.push(...parsed);
+        res.json({ jobId, totalChunks: chunks.length });
+
+        // Background worker — runs after the response is sent.
+        (async () => {
+            let failedChunks = 0;
+            for (let i = 0; i < chunks.length; i++) {
+                console.log(`[Localization] Chunk ${i + 1}/${chunks.length} (~${Math.round(chunks[i].length / 4)} estimated tokens)...`);
+                try {
+                    const responseText = await generateWithRetry(model, buildPrompt(chunks[i], i, chunks.length));
+                    for (const issue of salvageJsonArray(responseText)) {
+                        const key = ((issue && issue.original) || '').toLowerCase().trim();
+                        if (!key || job.seen.has(key)) continue;
+                        job.seen.add(key);
+                        job.issues.push(issue);
+                    }
+                } catch (chunkErr) {
+                    // Empty/length-capped or aborted LLM call — count as a failure
+                    // (don't mask it as "no issues") and keep going.
+                    failedChunks++;
+                    console.warn(`[Localization] Chunk ${i + 1} failed: ${chunkErr.message}`);
                 }
-            } catch (chunkErr) {
-                console.warn(`[Localization] Chunk ${i + 1} failed: ${chunkErr.message}`);
-                // Continue — partial results are better than none
+                job.done = i + 1;
             }
-        }
 
-        // ── Step 5: Deduplicate results by 'original' text ──
-        const seen = new Set();
-        const dedupedIssues = allIssues.filter(issue => {
-            const key = (issue.original || '').toLowerCase().trim();
-            if (!key || seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
+            console.log(`[Localization] Done. ${job.issues.length} unique issues. Failed chunks: ${failedChunks}/${chunks.length}`);
 
-        console.log(`[Localization] Done. ${dedupedIssues.length} unique issues found (${allIssues.length} raw).`);
-        res.json({ issues: dedupedIssues, chunks: chunks.length });
+            // If EVERY chunk failed, the analysis failed — surface it rather than
+            // reporting an empty result that looks like a clean page.
+            if (chunks.length > 0 && failedChunks === chunks.length) {
+                job.status = 'failed';
+                job.error = 'Localization analysis failed: the language model returned no usable output for the page (large pages can exhaust it). Please try again, or scan a smaller page.';
+            } else {
+                job.status = 'completed';
+                // Persist a LocalizationResult for Release Readiness.
+                try {
+                    if (projectId) {
+                        const totalIssues = job.issues.length;
+                        await LocalizationResult.create({
+                            project_id: projectId,
+                            translation_accuracy: Math.max(0, 100 - (totalIssues * 1.5)),
+                            localization_score: Math.max(0, 100 - (totalIssues * 3.0)),
+                            missing_keys: totalIssues,
+                            overflow_issues: 0,
+                            scanned_url: scannedUrl,
+                        });
+                        await calculateAndSaveReadiness(projectId);
+                    }
+                } catch (dbErr) {
+                    console.error('[Readiness] Failed to save LocalizationResult:', dbErr.message);
+                }
+            }
+            // Keep the finished job around briefly so the client can read the final state.
+            setTimeout(() => localizationJobs.delete(jobId), 10 * 60 * 1000);
+        })();
 
     } catch (error) {
         console.error('Localization Analysis Error:', error);
-        res.status(500).json({ error: error.message });
+        if (!res.headersSent) res.status(500).json({ error: error.message });
+    }
+});
+
+// GET /api/analyze-localization/status/:jobId — poll a running localization job.
+// Returns the issues accumulated so far (cumulative) so the UI can render them
+// incrementally while the remaining chunks are still being analyzed.
+app.get('/api/analyze-localization/status/:jobId', (req, res) => {
+    const job = localizationJobs.get(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Unknown or expired localization job.' });
+    res.json({ status: job.status, done: job.done, total: job.total, issues: job.issues, error: job.error });
+});
+
+// ─── Performance scan (Phase 1): Lighthouse front-end audit ───
+// Runs Lighthouse against a URL (reusing Playwright's bundled Chromium) and
+// returns the performance score + Core Web Vitals + top opportunities. No LLM
+// needed — Lighthouse is local. SSRF-validated like the other URL endpoints.
+app.post('/api/analyze-performance', async (req, res) => {
+    const { url, projectId } = req.body || {};
+    if (!url) return res.status(400).json({ error: 'url is required.' });
+    const check = await validateHttpUrl(url);
+    if (!check.valid) return res.status(400).json({ error: check.error });
+
+    let chrome;
+    try {
+        const lighthouse = (await import('lighthouse')).default;
+        const chromeLauncher = await import('chrome-launcher');
+        chrome = await chromeLauncher.launch({
+            chromePath: chromium.executablePath(),
+            chromeFlags: ['--headless=new', '--no-sandbox', '--disable-gpu'],
+        });
+        console.log(`[Performance] Running Lighthouse on ${check.href}...`);
+        const runnerResult = await lighthouse(check.href, {
+            port: chrome.port,
+            output: 'json',
+            logLevel: 'error',
+            onlyCategories: ['performance'],
+        });
+        const lhr = runnerResult.lhr;
+
+        const ms = (id) => {
+            const a = lhr.audits[id];
+            return a && typeof a.numericValue === 'number' ? Math.round(a.numericValue) : null;
+        };
+        const score = Math.round((lhr.categories.performance.score || 0) * 100);
+        const clsAudit = lhr.audits['cumulative-layout-shift'];
+        const metrics = {
+            lcp: ms('largest-contentful-paint'),
+            cls: clsAudit && typeof clsAudit.numericValue === 'number' ? Number(clsAudit.numericValue.toFixed(3)) : null,
+            tbt: ms('total-blocking-time'),
+            fcp: ms('first-contentful-paint'),
+            speedIndex: ms('speed-index'),
+            ttfb: ms('server-response-time'),
+        };
+        // Top load opportunities (failing audits with potential savings).
+        const opportunities = (lhr.categories.performance.auditRefs || [])
+            .filter(ref => ref.group === 'load-opportunities')
+            .map(ref => lhr.audits[ref.id])
+            .filter(a => a && a.score !== null && a.score < 0.9)
+            .map(a => ({
+                title: a.title,
+                savingsMs: a.details && typeof a.details.overallSavingsMs === 'number' ? Math.round(a.details.overallSavingsMs) : null,
+                description: String(a.description || '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').slice(0, 220),
+            }))
+            .sort((x, y) => (y.savingsMs || 0) - (x.savingsMs || 0))
+            .slice(0, 8);
+
+        console.log(`[Performance] Score ${score} for ${check.href}`);
+
+        // Persist for Release Readiness (non-fatal; mirrors the other scanners).
+        try {
+            if (projectId) {
+                await PerformanceResult.create({
+                    project_id: projectId,
+                    performance_score: score,
+                    lcp_ms: metrics.lcp,
+                    cls: metrics.cls,
+                    tbt_ms: metrics.tbt,
+                    ttfb_ms: metrics.ttfb,
+                    scanned_url: check.href,
+                });
+                await calculateAndSaveReadiness(projectId);
+            }
+        } catch (dbErr) {
+            console.error('[Performance] Failed to persist PerformanceResult:', dbErr.message);
+        }
+
+        res.json({ score, metrics, opportunities, scannedUrl: check.href });
+    } catch (err) {
+        console.error('[Performance] Lighthouse error:', err.message);
+        res.status(500).json({ error: `Performance scan failed: ${err.message}` });
+    } finally {
+        if (chrome) { try { await chrome.kill(); } catch { /* best-effort */ } }
+    }
+});
+
+// AI triage of a Lighthouse result — prioritized plain-English fixes. Kept
+// SEPARATE from the scan so the fast scan isn't blocked by the slow local LLM;
+// the UI fetches this after showing the raw report. Fail-loud (502), never silent.
+app.post('/api/performance-insights', async (req, res) => {
+    const { score, metrics = {}, opportunities = [], url } = req.body || {};
+    const apiKey = req.headers['x-api-key'] || process.env.VITE_LLM_API_KEY;
+    if (!apiKey) return res.status(401).json({ error: 'LLM API key missing.' });
+    try {
+        const genAI = new GoogleGenerativeAI(apiKey, process.env.VITE_LLM_ENDPOINT);
+        const model = genAI.getGenerativeModel({
+            model: process.env.VITE_LLM_MODEL || 'gpt-oss-20b',
+            generationConfig: { temperature: 0.2, reasoningEffort: 'low', timeoutMs: 120000 },
+        });
+        const opps = (Array.isArray(opportunities) && opportunities.length)
+            ? opportunities.map(o => `- ${o.title}${o.savingsMs ? ` (~${o.savingsMs} ms)` : ''}`).join('\n')
+            : '(none flagged)';
+        const prompt = `You are a senior web-performance engineer. From this Lighthouse result, write a SHORT triage in plain text (NO markdown headings): first a one-line verdict, then "Top fixes:" with the 3 highest-impact actions, each with the likely user impact. Be concrete and concise.
+
+URL: ${url || 'n/a'}
+Performance score: ${score}/100
+Core Web Vitals: LCP ${metrics.lcp ?? '?'} ms, CLS ${metrics.cls ?? '?'}, TBT ${metrics.tbt ?? '?'} ms, TTFB ${metrics.ttfb ?? '?'} ms
+Opportunities:
+${opps}`;
+        const summary = (await generateWithRetry(model, prompt)).trim();
+        if (!summary) return res.status(502).json({ error: 'AI returned an empty summary — try again.' });
+        res.json({ summary });
+    } catch (err) {
+        console.error('[Performance] AI insights failed:', err.message);
+        res.status(502).json({ error: `AI insights failed: ${err.message}` });
     }
 });
 
@@ -1686,13 +1922,14 @@ app.post('/api/analyze-accessibility', async (req, res) => {
         // --- NEW: AI HYBRID AUDIT ---
         let aiAudit = null;
         let authKey = req.headers['x-api-key'];
+        const includeAiAudit = req.body.includeAiAudit !== false;
 
         // Sanitize auth key (sometimes "undefined" string is passed)
         if (authKey === 'undefined' || authKey === 'null') {
             authKey = null;
         }
 
-        if (authKey) {
+        if (authKey && includeAiAudit) {
             console.log(`Running AI Audit via Local LLM... Key present (Starts with ${authKey.substring(0, 4)}...)`);
             try {
                 // Optimize HTML to reduce token usage
@@ -1769,6 +2006,9 @@ app.post('/api/analyze-accessibility', async (req, res) => {
                     aiAudit = { error: `AI Audit failed: ${aiErr.message}` };
                 }
             }
+        } else if (!includeAiAudit) {
+            console.log("Skipping AI Audit: User disabled AI expert audit in scan options.");
+            aiAudit = { skipped: true, error: "AI Audit was skipped. Enable 'AI WCAG Expert Audit' in the scan panel to run full WCAG checks." };
         } else {
             console.log("Skipping AI Audit: No API Key provided in headers.");
             aiAudit = { error: "API Key missing. Please ensure a valid API Key is provided in the request headers." };
@@ -1776,6 +2016,37 @@ app.post('/api/analyze-accessibility', async (req, res) => {
 
         console.log(`Scan complete. Found ${axeResults.violations.length} axe violations.`);
         if (aiAudit && !aiAudit.error) console.log(`AI Audit complete. Found ${aiAudit.issues?.length || 0} issues.`);
+
+        // --- NEW: SAVE ACCESSIBILITY PROFILE FOR RELEASE READINESS ---
+        try {
+            const projectId = req.body.projectId || req.query.projectId || req.body.project_id;
+            if (projectId) {
+                console.log(`[Readiness] Auto-saving AccessibilityResult for project ${projectId}...`);
+                const critCount = axeResults.violations.filter(v => v.impact === 'critical').length + (aiAudit?.issues?.filter(i => i.severity === 'Critical').length || 0);
+                const seriousCount = axeResults.violations.filter(v => v.impact === 'serious').length + (aiAudit?.issues?.filter(i => i.severity === 'Serious').length || 0);
+                const moderateCount = axeResults.violations.filter(v => v.impact === 'moderate').length + (aiAudit?.issues?.filter(i => i.severity === 'Moderate').length || 0);
+                const minorCount = axeResults.violations.filter(v => v.impact === 'minor').length;
+                
+                const compliancePct = Math.max(0, 100 - (critCount * 10 + seriousCount * 5 + moderateCount * 2));
+                const accScore = Math.max(0, 100 - (critCount * 15 + seriousCount * 8 + moderateCount * 3));
+
+                await AccessibilityResult.create({
+                    project_id: projectId,
+                    wcag_compliance: compliancePct,
+                    accessibility_score: accScore,
+                    critical_violations: critCount,
+                    serious_violations: seriousCount,
+                    moderate_violations: moderateCount,
+                    minor_violations: minorCount,
+                    scanned_url: activePage?.url() || 'Unknown Page',
+                });
+
+                // Auto-compute readiness score
+                await calculateAndSaveReadiness(projectId);
+            }
+        } catch (dbErr) {
+            console.error('[Readiness] Failed to save AccessibilityResult:', dbErr.message);
+        }
 
         res.json({
             scannedUrl: activePage.url(),
@@ -1816,7 +2087,7 @@ const RUN_LOGS_DIR = 'temp_runner_logs';
 function persistRunLogs(runId, run) {
     try {
         if (!fs.existsSync(RUN_LOGS_DIR)) fs.mkdirSync(RUN_LOGS_DIR, { recursive: true });
-        fs.writeFileSync(path.join(RUN_LOGS_DIR, `${runId}.log`), run.logs.join(''));
+        writeProjectFile(path.join(RUN_LOGS_DIR, `${runId}.log`), run.logs.join(''));
     } catch (err) {
         console.error(`[Runner ${runId}] Failed to persist logs:`, err.message);
     }
@@ -1995,6 +2266,77 @@ function parseMavenResults(projectRoot) {
 }
 
 // Helper: parse Playwright JSON reporter output
+// Locate the start of Playwright's JSON report inside mixed (line+json) reporter
+// output. The report is the trailing JSON object and begins with the root
+// "config" key. The old marker ('{"version"') no longer matches modern
+// Playwright reports, which silently yielded empty results (0 passed/failed).
+function findPlaywrightJsonStart(text) {
+    const cfgIdx = text.indexOf('"config"');
+    if (cfgIdx === -1) return -1;
+    return text.lastIndexOf('{', cfgIdx);
+}
+
+// Strip ANSI escape codes (e.g. Playwright embeds color codes in error
+// messages). Built from a runtime char to keep the regex literal-free of
+// control characters (avoids the no-control-regex lint rule).
+const ANSI_RE = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*[A-Za-z]', 'g');
+function stripAnsi(s) {
+    return typeof s === 'string' ? s.replace(ANSI_RE, '') : s;
+}
+
+// Accumulate live Playwright progress as output streams in, so the dashboard
+// counters don't oscillate when the capped log buffer rotates. Failure blocks
+// are numbered sequentially ("1) tests/…", "2) tests/…"), so the highest number
+// seen is the cumulative failure count; "[N/total]" gives started/total. All
+// values are tracked as running maxima — monotonic and eviction-proof.
+function updatePlaywrightProgress(run, chunk) {
+    if (!run || run.framework !== 'playwright') return;
+    // Playwright prints "Running N tests using M worker(s)" when the test phase
+    // actually starts. Reset and begin counting there, so earlier output — npm
+    // install and (now) Playwright browser downloads, which ALSO emit "[1/3]"
+    // style progress — can't pollute the live pass/fail counts and make them
+    // jump (e.g. 3 → 0 → 3). Anything before this banner is ignored.
+    const banner = chunk.match(/Running\s+(\d+)\s+tests?\s+using/);
+    if (banner) {
+        run.pwLive = { total: parseInt(banner[1], 10), started: 0, failed: 0 };
+        run.pwCounting = true;
+    }
+    if (!run.pwCounting) return;
+    const live = run.pwLive || (run.pwLive = { total: 0, started: 0, failed: 0 });
+    let m;
+    const progRe = /\[(\d+)\/(\d+)\]/g;
+    while ((m = progRe.exec(chunk)) !== null) {
+        const n = parseInt(m[1], 10), tot = parseInt(m[2], 10);
+        if (n > live.started) live.started = n;
+        if (tot > live.total) live.total = tot;
+    }
+    // Failure-summary entries are "  1) tests/x" or, when projects are used,
+    // "  1) [chromium] › tests\x". Track the highest index (monotonic).
+    const failRe = /(\d+)\)\s+(?:\[[^\]]+\]\s+›\s+)?tests[\\/]/g;
+    while ((m = failRe.exec(chunk)) !== null) {
+        const num = parseInt(m[1], 10);
+        if (num > live.failed) live.failed = num;
+    }
+}
+
+// Resolve Playwright results, preferring the JSON report file (written via
+// PLAYWRIGHT_JSON_OUTPUT_NAME). The stdout log buffer is capped, so a large
+// suite's report can have its start evicted — reading the file avoids that.
+// Falls back to scraping the (possibly truncated) logs.
+function readPlaywrightSuites(reportFile, allLogs) {
+    try {
+        if (reportFile && fs.existsSync(reportFile)) {
+            const suites = parsePlaywrightResults(fs.readFileSync(reportFile, 'utf8'));
+            if (suites.length > 0) return suites;
+        }
+    } catch { /* fall back to log scraping */ }
+    const jsonStart = findPlaywrightJsonStart(allLogs);
+    if (jsonStart !== -1) {
+        try { return parsePlaywrightResults(allLogs.substring(jsonStart)); } catch { /* ignore */ }
+    }
+    return [];
+}
+
 function parsePlaywrightResults(jsonOutput) {
     const suites = [];
     try {
@@ -2006,8 +2348,8 @@ function parsePlaywrightResults(jsonOutput) {
                 const status = result?.status === 'passed' ? 'PASSED'
                     : result?.status === 'failed' ? 'FAILED'
                         : result?.status === 'skipped' ? 'SKIPPED' : 'UNKNOWN';
-                const errMsg = result?.error?.message || null;
-                const stackTr = result?.error?.stack || null;
+                const errMsg = stripAnsi(result?.error?.message) || null;
+                const stackTr = stripAnsi(result?.error?.stack) || null;
                 return {
                     name: spec.title,
                     classname: suite.title,
@@ -2075,9 +2417,9 @@ function parseLiveResult(line, framework) {
 }
 
 // Helper: run a command and stream logs
-function runCommand(cmd, args, cwd, runId, onComplete) {
+function runCommand(cmd, args, cwd, runId, onComplete, extraEnv = {}) {
     console.log(`[Runner ${runId}] Running: ${cmd} ${args.join(' ')} in ${cwd}`);
-    const child = spawn(cmd, args, { cwd, shell: true, env: { ...process.env, CI: 'true' } });
+    const child = spawn(cmd, args, { cwd, shell: true, env: { ...process.env, CI: 'true', ...extraEnv } });
     const run = runStore.get(runId);
 
     const processLine = (line) => {
@@ -2093,12 +2435,14 @@ function runCommand(cmd, args, cwd, runId, onComplete) {
     child.stdout.on('data', (data) => {
         const line = data.toString();
         appendRunLog(run, line);
+        updatePlaywrightProgress(run, line);
         process.stdout.write(`[${runId}] ${line}`);
         line.split('\n').forEach(l => processLine(l));
     });
     child.stderr.on('data', (data) => {
         const line = data.toString();
         appendRunLog(run, line);
+        updatePlaywrightProgress(run, line);
         line.split('\n').forEach(l => processLine(l));
     });
     child.on('close', (code) => {
@@ -2114,9 +2458,50 @@ function runCommand(cmd, args, cwd, runId, onComplete) {
     run.childProcess = child;
 }
 
+/**
+ * Choose the npm install command for a JS/TS project. `npm ci` is faster and
+ * reproducible but REQUIRES a package-lock.json; projects without one (e.g.
+ * AAQUA-generated API test projects) must use `npm install`, which also
+ * creates the lockfile.
+ */
+function npmInstallArgs(projectRoot) {
+    const hasLock = fs.existsSync(path.join(projectRoot, 'package-lock.json'));
+    return hasLock ? ['ci', '--prefer-offline'] : ['install'];
+}
+
+/**
+ * Persist a Test Runner summary as an AutomationResult row so Release
+ * Readiness can pick it up, then recompute the readiness profile.
+ * No-op when projectId is missing (e.g. legacy callers that pre-date the
+ * project selector wiring) or when the run produced zero tests.
+ */
+async function persistRunToReadiness(projectId, summary) {
+    if (!projectId || !summary || !summary.total) return;
+    try {
+        const total = Number(summary.total) || 0;
+        const passed = Number(summary.passed) || 0;
+        const failed = Number(summary.failed) || 0;
+        const passRate = total > 0 ? (passed / total) * 100 : 0;
+        // summary.duration is a string like "12.34s" or "—"; pull the integer seconds.
+        const durationMatch = typeof summary.duration === 'string' ? summary.duration.match(/[\d.]+/) : null;
+        const duration = durationMatch ? Math.round(parseFloat(durationMatch[0])) : null;
+
+        await AutomationResult.create({
+            project_id: projectId,
+            pass_rate: Math.round(passRate * 10) / 10,
+            failed_tests: failed,
+            total_tests: total,
+            duration,
+        });
+        await calculateAndSaveReadiness(projectId);
+    } catch (err) {
+        console.error('[Runner] Failed to persist AutomationResult for readiness:', err.message);
+    }
+}
+
 // POST /api/run-tests-local — Run tests from a local project directory
 app.post('/api/run-tests-local', async (req, res) => {
-    const { projectPath, isHeadless = true } = req.body;
+    const { projectPath, isHeadless = true, projectId = null } = req.body;
     if (!projectPath) return res.status(400).json({ error: 'projectPath is required' });
     // Normalize path separators
     const normalizedPath = path.resolve(projectPath);
@@ -2141,6 +2526,7 @@ app.post('/api/run-tests-local', async (req, res) => {
         liveResults: [],
         exitCode: null,
         error: null,
+        projectId,
     });
 
     try {
@@ -2186,30 +2572,29 @@ app.post('/api/run-tests-local', async (req, res) => {
                 r.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name, classname: t.classname })));
                 r.status = 'completed';
                 persistRunLogs(runId, r);
+                persistRunToReadiness(r.projectId, r.results.summary);
             });
         } else if (framework === 'playwright') {
-            runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
+            runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
                 const r2 = runStore.get(runId);
                 r2.logs.push(`[AAQUA] Dependencies installed. Running Playwright...\n`);
+                const reportFile = path.join(projectRoot, `aaqua-pw-${runId}.json`);
                 const pwArgs = ['playwright', 'test', '--reporter=line,json', '--output=playwright-results'];
                 if (!isHeadless) pwArgs.push('--headed');
                 runCommand('npx', pwArgs, projectRoot, runId, (code) => {
                     const r3 = runStore.get(runId);
                     appendRunLog(r3, `\n[AAQUA] Process exited with code ${code}\n`);
-                    const allLogs = r3.logs.join('');
-                    const jsonStart = allLogs.lastIndexOf('{"version"');
-                    let suites = [];
-                    if (jsonStart !== -1) {
-                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch { /* ignored */ }
-                    }
+                    const suites = readPlaywrightSuites(reportFile, r3.logs.join(''));
                     r3.results = { suites, summary: buildSummary(suites) };
                     r3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
                     r3.status = 'completed';
                     persistRunLogs(runId, r3);
-                });
+                    persistRunToReadiness(r3.projectId, r3.results.summary);
+                    try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
+                }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile });
             });
         } else if (framework === 'cypress') {
-            runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
+            runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
                 const cyArgs = ['cypress', 'run', '--reporter', 'json'];
                 if (!isHeadless) cyArgs.push('--headed');
                 runCommand('npx', cyArgs, projectRoot, runId, (code) => {
@@ -2218,6 +2603,7 @@ app.post('/api/run-tests-local', async (req, res) => {
                     r3.results = { suites: [], summary: { total: 0, passed: 0, failed: 0, skipped: 0, duration: '—' } };
                     r3.status = 'completed';
                     persistRunLogs(runId, r3);
+                    persistRunToReadiness(r3.projectId, r3.results.summary);
                 });
             });
         }
@@ -2237,6 +2623,7 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
     // multer parses non-file form fields into req.body. The TestRunner UI
     // sends `headed` only when the host advertises a display server.
     const runHeaded = req.body?.headed === 'true' || req.body?.headed === true;
+    const projectId = req.body?.projectId || null;
 
     const runId = crypto.randomBytes(6).toString('hex');
     const extractDir = path.join('temp_runner', runId);
@@ -2251,6 +2638,7 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
         liveResults: [],
         exitCode: null,
         error: null,
+        projectId,
     });
 
     try {
@@ -2293,38 +2681,37 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
                 run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name, classname: t.classname })));
                 run.status = 'completed';
                 persistRunLogs(runId, run);
+                persistRunToReadiness(run.projectId, run.results.summary);
             });
         } else if (framework === 'playwright') {
             // Install deps first
-            runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
+            runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
                 const run2 = runStore.get(runId);
                 appendRunLog(run2, `[AAQUA] Dependencies installed. Running Playwright (${runHeaded ? 'headed' : 'headless'})...\n`);
-                const pwArgs = ['playwright', 'test', '--reporter=json', '--output=playwright-results'];
+                const reportFile = path.join(projectRoot, `aaqua-pw-${runId}.json`);
+                const pwArgs = ['playwright', 'test', '--reporter=line,json', '--output=playwright-results'];
                 if (runHeaded) pwArgs.push('--headed');
                 runCommand('npx', pwArgs, projectRoot, runId, (code) => {
                     const run3 = runStore.get(runId);
                     appendRunLog(run3, `\n[AAQUA] Process exited with code ${code}\n`);
-                    // Try to read json from stdout logs
-                    const allLogs = run3.logs.join('');
-                    const jsonStart = allLogs.lastIndexOf('{"version"');
-                    let suites = [];
-                    if (jsonStart !== -1) {
-                        try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch { /* ignored */ }
-                    }
+                    const suites = readPlaywrightSuites(reportFile, run3.logs.join(''));
                     run3.results = { suites, summary: buildSummary(suites) };
                     run3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
                     run3.status = 'completed';
                     persistRunLogs(runId, run3);
-                });
+                    persistRunToReadiness(run3.projectId, run3.results.summary);
+                    try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
+                }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile });
             });
         } else if (framework === 'cypress') {
-            runCommand('npm', ['ci', '--prefer-offline'], projectRoot, runId, () => {
+            runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
                 runCommand('npx', ['cypress', 'run', '--reporter', 'json'], projectRoot, runId, (code) => {
                     const run3 = runStore.get(runId);
                     appendRunLog(run3, `\n[AAQUA] Cypress exited with code ${code}\n`);
                     run3.results = { suites: [], summary: { total: 0, passed: 0, failed: 0, skipped: 0, duration: '—' } };
                     run3.status = 'completed';
                     persistRunLogs(runId, run3);
+                    persistRunToReadiness(run3.projectId, run3.results.summary);
                 });
             });
         }
@@ -2445,12 +2832,19 @@ app.get('/api/run-status/:runId', (req, res) => {
                     liveResults = { suites, summary };
                 }
             } else if (run.framework === 'playwright') {
-                // Playwright: parse dot reporter or console lines
-                const passed = (logText.match(/✓|passed/g) || []).length;
-                const failed = (logText.match(/✗|×|failed/gi) || []).length;
-                if (passed + failed > 0) {
-                    const suites = [{ name: 'Live Progress', tests: [], duration: '—' }];
-                    liveResults = { suites, summary: { total: passed + failed, passed, failed, skipped: 0, duration: '—' } };
+                // Use the cumulative counters from updatePlaywrightProgress
+                // (eviction-proof), not a re-scan of the capped log buffer.
+                const p = run.pwLive;
+                if (p && (p.total > 0 || p.started > 0)) {
+                    const failed = p.failed;
+                    // "started" counts tests begun; begun-minus-failed is a
+                    // provisional pass count (in-flight tests may still fail).
+                    const passed = Math.max(0, p.started - failed);
+                    const total = p.total || p.started;
+                    liveResults = {
+                        suites: [{ name: 'Live Progress', tests: [], duration: '—' }],
+                        summary: { total, passed, failed, skipped: 0, duration: '—' },
+                    };
                 }
             }
         } catch { /* ignore live parse errors */ }
@@ -2490,6 +2884,7 @@ app.post('/api/retry-tests/:runId', (req, res) => {
         liveResults: [],
         exitCode: null,
         error: null,
+        projectId: prevRun.projectId || null,
     });
 
     res.json({ runId: retryRunId, framework: prevRun.framework });
@@ -2511,21 +2906,29 @@ app.post('/api/retry-tests/:runId', (req, res) => {
             run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name, classname: t.classname })));
             run.status = 'completed';
             persistRunLogs(retryRunId, run);
+            // Retries execute only the previously-failed subset, so their summary
+            // is NOT representative of the full suite — intentionally NOT persisted
+            // to Release Readiness (it would clobber the last full run, e.g. show
+            // 0/29 for a retry of 29 failures and trip the automation hard gate).
         });
     } else if (framework === 'playwright') {
-        const grepPattern = failedTests.map(t => t.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-        runCommand('npx', ['playwright', 'test', '--reporter=line,json', '--grep', grepPattern], projectRoot, retryRunId, (code) => {
+        // Re-run only previously-failed tests via Playwright's --last-failed
+        // (reads <outputDir>/.last-run.json). Avoids a giant --grep alternation
+        // of test titles, whose "|" separators and spaces were parsed by the
+        // shell as pipes/commands ("'Add' is not recognized").
+        const reportFile = path.join(projectRoot, `aaqua-pw-${retryRunId}.json`);
+        runCommand('npx', ['playwright', 'test', '--last-failed', '--reporter=line,json', '--output=playwright-results'], projectRoot, retryRunId, (code) => {
             const run = runStore.get(retryRunId);
             appendRunLog(run, `\n[AAQUA] Retry exited with code ${code}\n`);
-            const allLogs = run.logs.join('');
-            const jsonStart = allLogs.lastIndexOf('{"version"');
-            let suites = [];
-            if (jsonStart !== -1) { try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch { /* ignored */ } }
+            const suites = readPlaywrightSuites(reportFile, run.logs.join(''));
             run.results = { suites, summary: buildSummary(suites) };
             run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
             run.status = 'completed';
             persistRunLogs(retryRunId, run);
-        });
+            // Retries run only the failed subset (not representative) — intentionally
+            // NOT persisted to Release Readiness. See the Maven retry above.
+            try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
+        }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile });
     }
 });
 
@@ -2542,13 +2945,203 @@ app.get('/api/runtime-info', (req, res) => {
     });
 });
 
+// ─── API test generation: parse an OpenAPI/Swagger spec into a catalog ───
+// Phase A1 of the API/BPMN test-gen plan. Accepts the spec three ways:
+//   - multipart file upload (field "specFile")
+//   - JSON body { specUrl }   (SSRF-validated)
+//   - JSON body { specText }  (raw JSON/YAML)
+// Returns a normalized endpoint catalog. No script generation yet.
+app.post('/api/parse-spec', upload.fields([{ name: 'specFile', maxCount: 1 }, { name: 'envFile', maxCount: 1 }]), async (req, res) => {
+    const specFile = req.files && req.files.specFile && req.files.specFile[0];
+    const envFile = req.files && req.files.envFile && req.files.envFile[0];
+    try {
+        let input;
+
+        if (specFile) {
+            input = { type: 'file', value: specFile.path };
+        } else if (req.body && req.body.specUrl) {
+            const check = await validateHttpUrl(req.body.specUrl);
+            if (!check.valid) {
+                return res.status(400).json({ error: check.error });
+            }
+            input = { type: 'url', value: check.href };
+        } else if (req.body && req.body.specText) {
+            input = { type: 'text', value: req.body.specText };
+        } else {
+            return res.status(400).json({ error: 'Provide a spec via specFile (upload), specUrl, or specText.' });
+        }
+
+        // Optional Postman environment file — resolves {{variables}} in a collection.
+        if (envFile) {
+            input.envValue = fs.readFileSync(envFile.path, 'utf8');
+        }
+
+        const catalog = await parseSpec(input);
+        res.json(catalog);
+    } catch (err) {
+        console.error('[ParseSpec] error:', err.message);
+        res.status(400).json({ error: `Failed to parse API spec: ${err.message}` });
+    } finally {
+        // Clean up the multer temp uploads regardless of outcome.
+        for (const f of [specFile, envFile]) {
+            if (f) { try { fs.unlinkSync(f.path); } catch { /* best-effort */ } }
+        }
+    }
+});
+
+// ─── API test generation (Phase A2): catalog → abstract test cases ───
+// Accepts { endpoints, categories }. endpoints come from /api/parse-spec.
+// Returns per-endpoint generated test cases (no code emission — that's A3).
+app.post('/api/generate-api-testcases', async (req, res) => {
+    try {
+        const { endpoints, categories } = req.body || {};
+        if (!Array.isArray(endpoints) || endpoints.length === 0) {
+            return res.status(400).json({ error: 'endpoints array is required (from /api/parse-spec).' });
+        }
+
+        let apiKey = req.headers['x-api-key'];
+        if (apiKey === 'undefined' || apiKey === 'null') apiKey = null;
+        apiKey = apiKey || process.env.VITE_LLM_API_KEY;
+        if (!apiKey) {
+            return res.status(401).json({ error: 'LLM API key missing (send x-api-key or set VITE_LLM_API_KEY).' });
+        }
+
+        const results = await generateApiTestCases(endpoints, { categories }, apiKey);
+        res.json({ results });
+    } catch (err) {
+        console.error('[GenerateApiTestCases] error:', err.message);
+        res.status(500).json({ error: `Failed to generate test cases: ${err.message}` });
+    }
+});
+
+// ─── API test generation (Phase A3): cases → runnable project ZIP ───
+// Deterministic emitters (no LLM) render the A2 cases the client already has
+// into a REST Assured (Java) or Playwright (TS) project, streamed as a ZIP.
+// Body: { framework: 'restassured'|'playwright', info:{title,serverUrl}, groups:[{operationId,method,path,tags,secured,cases}] }
+app.post('/api/generate-api-tests', (req, res) => {
+    try {
+        const { framework, info, groups } = req.body || {};
+        if (!Array.isArray(groups) || groups.length === 0) {
+            return res.status(400).json({ error: 'groups array is required (endpoints with generated cases).' });
+        }
+        if (!['restassured', 'playwright'].includes(framework)) {
+            return res.status(400).json({ error: "framework must be 'restassured' or 'playwright'." });
+        }
+
+        const files = framework === 'restassured'
+            ? emitRestAssured({ info: info || {}, groups })
+            : emitPlaywright({ info: info || {}, groups });
+
+        const zip = new AdmZip();
+        for (const [relPath, contents] of Object.entries(files)) {
+            zip.addFile(relPath, Buffer.from(contents, 'utf8'));
+        }
+        const buffer = zip.toBuffer();
+
+        const safe = String((info && info.title) || 'api').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'api';
+        const filename = `${safe}-${framework}-tests.zip`;
+        res.set('Content-Type', 'application/zip');
+        res.set('Content-Disposition', `attachment; filename=${filename}`);
+        res.set('Access-Control-Expose-Headers', 'Content-Disposition');
+        res.send(buffer);
+    } catch (err) {
+        console.error('[GenerateApiTests] error:', err.message);
+        res.status(500).json({ error: `Failed to generate project: ${err.message}` });
+    }
+});
+
+// ─── k6 load test (Phase 4, generate-only): catalog → runnable k6 script ───
+// Body: { info:{title,serverUrl}, endpoints:[{method,path,...}] }. Returns a ZIP
+// (load-test.js + README) the team runs themselves — no k6 dependency in AAQUA.
+app.post('/api/generate-load-test', (req, res) => {
+    try {
+        const { info, endpoints } = req.body || {};
+        if (!Array.isArray(endpoints) || endpoints.length === 0) {
+            return res.status(400).json({ error: 'endpoints array is required.' });
+        }
+        const files = emitK6({ info: info || {}, endpoints });
+        const zip = new AdmZip();
+        for (const [relPath, contents] of Object.entries(files)) {
+            zip.addFile(relPath, Buffer.from(contents, 'utf8'));
+        }
+        const buffer = zip.toBuffer();
+        const safe = String((info && info.title) || 'api').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'api';
+        res.set('Content-Type', 'application/zip');
+        res.set('Content-Disposition', `attachment; filename=${safe}-k6-load-test.zip`);
+        res.set('Access-Control-Expose-Headers', 'Content-Disposition');
+        res.send(buffer);
+    } catch (err) {
+        console.error('[GenerateLoadTest] error:', err.message);
+        res.status(500).json({ error: `Failed to generate load test: ${err.message}` });
+    }
+});
+
+// ─── API flow generation (Phase B1): catalog → ordered process flows ───
+// For process-orchestrated (BPMN/Camunda) APIs. LLM infers ordered flows whose
+// steps chain ids captured from earlier responses. Body: { endpoints, info }.
+app.post('/api/generate-api-flows', async (req, res) => {
+    try {
+        const { endpoints, info } = req.body || {};
+        if (!Array.isArray(endpoints) || endpoints.length === 0) {
+            return res.status(400).json({ error: 'endpoints array is required (from /api/parse-spec).' });
+        }
+        let apiKey = req.headers['x-api-key'];
+        if (apiKey === 'undefined' || apiKey === 'null') apiKey = null;
+        apiKey = apiKey || process.env.VITE_LLM_API_KEY;
+        if (!apiKey) {
+            return res.status(401).json({ error: 'LLM API key missing (send x-api-key or set VITE_LLM_API_KEY).' });
+        }
+
+        const flows = await generateFlows(endpoints, { info }, apiKey);
+        res.json({ flows });
+    } catch (err) {
+        console.error('[GenerateApiFlows] error:', err.message);
+        res.status(500).json({ error: `Failed to generate flows: ${err.message}` });
+    }
+});
+
+// ─── API flow generation (Phase B3): flows → runnable Playwright ZIP ───
+// Body: { info:{title,serverUrl,auth,dataVars}, flows:[{name,description,steps}] }
+app.post('/api/generate-api-flow-tests', (req, res) => {
+    try {
+        const { info, flows } = req.body || {};
+        if (!Array.isArray(flows) || flows.length === 0) {
+            return res.status(400).json({ error: 'flows array is required.' });
+        }
+
+        const files = emitPlaywrightFlows({ info: info || {}, flows });
+        const zip = new AdmZip();
+        for (const [relPath, contents] of Object.entries(files)) {
+            zip.addFile(relPath, Buffer.from(contents, 'utf8'));
+        }
+        const buffer = zip.toBuffer();
+
+        const safe = String((info && info.title) || 'api').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'api';
+        const filename = `${safe}-playwright-flows.zip`;
+        res.set('Content-Type', 'application/zip');
+        res.set('Content-Disposition', `attachment; filename=${filename}`);
+        res.set('Access-Control-Expose-Headers', 'Content-Disposition');
+        res.send(buffer);
+    } catch (err) {
+        console.error('[GenerateApiFlowTests] error:', err.message);
+        res.status(500).json({ error: `Failed to generate flow project: ${err.message}` });
+    }
+});
+
+// ─── Projects: cross-cutting resource shared by every feature ────────────
+// Projects are not security-specific — Scan, AutomationResult,
+// AccessibilityResult, LocalizationResult, and ReleaseReadiness all hang off
+// Project — so the CRUD lives at the top level.
+app.use('/api/projects', securityRateLimiter, projectRoutes);
+
 // ─── AI Secure Engine: Mount security routes ────────────
 // Authentication is owned by Keycloak; no /api/security/auth endpoints — clients
 // obtain tokens via the OIDC code+PKCE flow against the realm directly.
-app.use('/api/security/projects', securityRateLimiter, projectRoutes);
 app.use('/api/security/scan', securityRateLimiter, scanRoutes);
 app.use('/api/security/dashboard', securityRateLimiter, dashboardRoutes);
 app.use('/api/security/governance', securityRateLimiter, governanceRoutes);
+app.use('/api/jira', securityRateLimiter, jiraRoutes);
+app.use('/api/readiness', securityRateLimiter, readinessRoutes);
 
 // ZAP health check (no auth required)
 app.get('/api/security/zap/health', async (req, res) => {
@@ -2897,16 +3490,15 @@ app.post('/api/apply-heal', async (req, res) => {
             });
         } else if (framework === 'playwright' && sourceFile) {
             const relSpec = path.relative(projectRoot, sourceFile);
-            runCommand('npx', ['playwright', 'test', relSpec, `--grep=${testName}`, '--reporter=json'], projectRoot, healRunId, (code) => {
+            const reportFile = path.join(projectRoot, `aaqua-pw-${healRunId}.json`);
+            runCommand('npx', ['playwright', 'test', relSpec, `--grep=${testName}`, '--reporter=line,json'], projectRoot, healRunId, (code) => {
                 const r = runStore.get(healRunId);
                 r.logs.push(`\n[AAQUA] Heal re-run exited with code ${code}\n`);
-                const allLogs = r.logs.join('');
-                const jsonStart = allLogs.lastIndexOf('{"version"');
-                let suites = [];
-                if (jsonStart !== -1) { try { suites = parsePlaywrightResults(allLogs.substring(jsonStart)); } catch { /* Ignored */ } }
+                const suites = readPlaywrightSuites(reportFile, r.logs.join(''));
                 r.results = { suites, summary: buildSummary(suites) };
                 r.status = 'completed';
-            });
+                try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
+            }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile });
         }
 
     } catch (err) {

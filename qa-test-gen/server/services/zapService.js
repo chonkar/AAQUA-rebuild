@@ -195,17 +195,28 @@ async function verifySpiderResults(spiderId, targetUrl) {
 /**
  * Wait for passive scan to finish (ZAP runs passive scanning automatically)
  */
-export async function waitForPassiveScan(pollInterval = 2000, dbScanId = null) {
+export async function waitForPassiveScan(onProgress, pollInterval = 2000, dbScanId = null) {
     let remaining = -1;
+    let initialRemaining = -1;
     while (remaining !== 0) {
         if (dbScanId && isAborted(dbScanId)) {
             throw new Error('Scan stopped by user');
         }
-        await new Promise(r => setTimeout(r, pollInterval));
         const data = await zapRequest('/JSON/pscan/view/recordsToScan/');
         remaining = parseInt(data.recordsToScan, 10);
-        if (remaining > 0) console.log(`[ZAP] Passive scan: ${remaining} records remaining`);
+        if (initialRemaining === -1) {
+            initialRemaining = remaining;
+        }
+        if (remaining > 0) {
+            console.log(`[ZAP] Passive scan: ${remaining} records remaining (initial: ${initialRemaining})`);
+            const p = initialRemaining > 0 ? Math.max(0, Math.min(99, Math.round(((initialRemaining - remaining) / initialRemaining) * 100))) : 0;
+            if (onProgress) onProgress(p);
+        }
+        if (remaining !== 0) {
+            await new Promise(r => setTimeout(r, pollInterval));
+        }
     }
+    if (onProgress) onProgress(100);
     console.log('[ZAP] Passive scan completed.');
 }
 
@@ -478,8 +489,13 @@ export async function runBaselineScan(project, onProgress, dbScan = null) {
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     const spiderId = await startSpider(targetUrl, hasContext ? `project-${project.id}` : null);
     if (dbScan) await dbScan.update({ zap_scan_id: `spider-${spiderId}` });
-    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p), 3000, 300000, dbScan?.id);
-    await waitForPassiveScan(2000, dbScan?.id);
+    
+    // Spidering phase: 0% - 40%
+    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', Math.round(p * 0.4)), 3000, 300000, dbScan?.id);
+    
+    // Passive scan phase: 40% - 60%
+    await waitForPassiveScan((p) => onProgress && onProgress('passive_scanning', 40 + Math.round(p * 0.2)), 2000, dbScan?.id);
+    
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     return getAlerts(targetUrl);
 }
@@ -497,16 +513,23 @@ export async function runFullActiveScan(project, onProgress, dbScan = null) {
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     const spiderId = await startSpider(targetUrl, hasContext ? `project-${project.id}` : null);
     if (dbScan) await dbScan.update({ zap_scan_id: `spider-${spiderId}` });
-    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p * 0.3), 3000, 300000, dbScan?.id);
+    
+    // Spidering phase: 0% - 15%
+    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', Math.round(p * 0.15)), 3000, 300000, dbScan?.id);
 
     // Verify the spider actually fetched pages successfully
     await verifySpiderResults(spiderId, targetUrl);
 
-    await waitForPassiveScan(2000, dbScan?.id);
+    // Passive scan phase: 15% - 25%
+    await waitForPassiveScan((p) => onProgress && onProgress('passive_scanning', 15 + Math.round(p * 0.1)), 2000, dbScan?.id);
+    
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     const activeScanId = await startActiveScan(targetUrl);
     if (dbScan) await dbScan.update({ zap_scan_id: `active-${activeScanId}` });
-    await waitForActiveScan(activeScanId, (p) => onProgress && onProgress('scanning', 30 + p * 0.7), 5000, 900000, dbScan?.id);
+    
+    // Active scan phase: 25% - 65%
+    await waitForActiveScan(activeScanId, (p) => onProgress && onProgress('scanning', 25 + Math.round(p * 0.4)), 5000, 900000, dbScan?.id);
+    
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     return getAlerts(targetUrl);
 }
@@ -524,19 +547,30 @@ export async function runApiScan(specUrl, project, onProgress, dbScan = null) {
     if (targetUrl) await accessUrl(targetUrl); // Prime the tree
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     await importOpenApiSpec(specUrl, targetUrl);
+    
     if (targetUrl) {
         const spiderId = await startSpider(targetUrl, hasContext ? `project-${project.id}` : null);
         if (dbScan) await dbScan.update({ zap_scan_id: `spider-${spiderId}` });
-        await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p * 0.3), 3000, 300000, dbScan?.id);
+        // Spidering phase: 0% - 15%
+        await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', Math.round(p * 0.15)), 3000, 300000, dbScan?.id);
         await verifySpiderResults(spiderId, targetUrl);
+    } else {
+        if (onProgress) onProgress('spidering', 15);
     }
-    await waitForPassiveScan(2000, dbScan?.id);
+    
+    // Passive scan phase: 15% - 25%
+    await waitForPassiveScan((p) => onProgress && onProgress('passive_scanning', 15 + Math.round(p * 0.1)), 2000, dbScan?.id);
+    
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     if (targetUrl) {
         const activeScanId = await startActiveScan(targetUrl);
         if (dbScan) await dbScan.update({ zap_scan_id: `active-${activeScanId}` });
-        await waitForActiveScan(activeScanId, (p) => onProgress && onProgress('scanning', 30 + p * 0.7), 5000, 900000, dbScan?.id);
+        // Active scan phase: 25% - 65%
+        await waitForActiveScan(activeScanId, (p) => onProgress && onProgress('scanning', 25 + Math.round(p * 0.4)), 5000, 900000, dbScan?.id);
+    } else {
+        if (onProgress) onProgress('scanning', 65);
     }
+    
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     return getAlerts(targetUrl || specUrl);
 }
@@ -554,8 +588,13 @@ export async function runPassiveScan(project, onProgress, dbScan = null) {
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     const spiderId = await startSpider(targetUrl, hasContext ? `project-${project.id}` : null);
     if (dbScan) await dbScan.update({ zap_scan_id: `spider-${spiderId}` });
-    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p), 3000, 300000, dbScan?.id);
-    await waitForPassiveScan(2000, dbScan?.id);
+    
+    // Spidering phase: 0% - 40%
+    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', Math.round(p * 0.4)), 3000, 300000, dbScan?.id);
+    
+    // Passive scan phase: 40% - 60%
+    await waitForPassiveScan((p) => onProgress && onProgress('passive_scanning', 40 + Math.round(p * 0.2)), 2000, dbScan?.id);
+    
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     return getAlerts(targetUrl);
 }
@@ -573,13 +612,21 @@ export async function runFuzzerScan(project, onProgress, dbScan = null) {
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     const spiderId = await startSpider(targetUrl, hasContext ? `project-${project.id}` : null);
     if (dbScan) await dbScan.update({ zap_scan_id: `spider-${spiderId}` });
-    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', p * 0.2), 3000, 300000, dbScan?.id);
+    
+    // Spidering phase: 0% - 15%
+    await waitForSpider(spiderId, (p) => onProgress && onProgress('spidering', Math.round(p * 0.15)), 3000, 300000, dbScan?.id);
     await verifySpiderResults(spiderId, targetUrl);
-    await waitForPassiveScan(2000, dbScan?.id);
+    
+    // Passive scan phase: 15% - 25%
+    await waitForPassiveScan((p) => onProgress && onProgress('passive_scanning', 15 + Math.round(p * 0.1)), 2000, dbScan?.id);
+    
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     const activeScanId = await startActiveScan(targetUrl);
     if (dbScan) await dbScan.update({ zap_scan_id: `active-${activeScanId}` });
-    await waitForActiveScan(activeScanId, (p) => onProgress && onProgress('scanning', 20 + p * 0.8), 5000, 900000, dbScan?.id);
+    
+    // Active scan phase: 25% - 65%
+    await waitForActiveScan(activeScanId, (p) => onProgress && onProgress('scanning', 25 + Math.round(p * 0.4)), 5000, 900000, dbScan?.id);
+    
     if (dbScan && isAborted(dbScan.id)) throw new Error('Scan stopped by user');
     return getAlerts(targetUrl);
 }

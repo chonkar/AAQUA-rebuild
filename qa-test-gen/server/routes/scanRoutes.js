@@ -5,6 +5,7 @@ import { authenticateToken } from '../middleware/auth.js';
 import * as zapService from '../services/zapService.js';
 import { analyzeVulnerabilities } from '../services/aiAnalysisService.js';
 import { calculateGovernanceMetrics, checkForRegressions } from '../services/governanceService.js';
+import { calculateAndSaveReadiness } from '../services/readinessService.js';
 import { createTicketsForCriticalHigh } from '../services/jiraService.js';
 import htmlDocx from 'html-docx-js';
 
@@ -134,16 +135,20 @@ async function executeScan(scan, project, openapiUrl) {
     const log = (line) => logScan(scan.id, line);
     try {
         log(`Starting ${scan.scan_type} scan against ${scan.target_url}`);
-        await scan.update({ status: 'spidering' });
+        await scan.update({ status: 'spidering', progress: 0 });
         await flushScanLogs(scan);
 
         const updateProgress = async (status, progress) => {
-            console.log(`[Scan] Progress update: ${status} (${progress}%)`);
+            let mappedStatus = status;
+            if (status === 'passive_scanning') {
+                mappedStatus = 'scanning';
+            }
+            console.log(`[Scan] Progress update: ${mappedStatus} (original: ${status}, ${progress}%)`);
             // Check if aborted in-between to avoid database writes
             if (zapService.isAborted(scan.id)) {
                 throw new Error('Scan stopped by user');
             }
-            await scan.update({ status, progress });
+            await scan.update({ status: mappedStatus, progress });
         };
 
         // Phase 1: Run ZAP scan
@@ -168,11 +173,24 @@ async function executeScan(scan, project, openapiUrl) {
         }
 
         log(`ZAP returned ${alerts.length} alert(s); starting AI analysis`);
-        await scan.update({ status: 'analyzing', progress: 60 });
+        
+        // Define base and span of AI analysis based on scan type
+        const isDeepScan = ['active', 'api', 'fuzzer'].includes(scan.scan_type);
+        const aiBase = isDeepScan ? 65 : 60;
+        const aiSpan = 20; // AI progress takes up to 20% span
+        
+        await scan.update({ status: 'analyzing', progress: aiBase });
         await flushScanLogs(scan);
 
         // Phase 2: AI analysis
-        const enrichedVulns = await analyzeVulnerabilities(alerts);
+        const enrichedVulns = await analyzeVulnerabilities(alerts, async (batchIdx, totalBatches) => {
+            const progressPct = aiBase + Math.round((batchIdx / totalBatches) * aiSpan);
+            console.log(`[Scan] AI analysis batch progress update: analyzing (${progressPct}%)`);
+            if (zapService.isAborted(scan.id)) {
+                throw new Error('Scan stopped by user');
+            }
+            await scan.update({ status: 'analyzing', progress: progressPct });
+        });
         log(`AI analysis complete for ${enrichedVulns.length} vulnerability/ies`);
 
         // Phase 3: Check regressions
@@ -180,7 +198,8 @@ async function executeScan(scan, project, openapiUrl) {
         log(`Regression check complete (${withRegressions.filter(v => v.is_regression).length} regressions flagged)`);
 
         // Phase 4: Persist vulnerabilities
-        await scan.update({ progress: 80 });
+        const persistProgress = isDeepScan ? 85 : 80;
+        await scan.update({ status: 'analyzing', progress: persistProgress });
         const savedVulns = [];
         for (const vuln of withRegressions) {
             const saved = await Vulnerability.create({
@@ -207,6 +226,9 @@ async function executeScan(scan, project, openapiUrl) {
             log(`Created ${tickets.length} Jira ticket(s) for Critical/High findings`);
         }
 
+        // Final transition progress step
+        await scan.update({ status: 'analyzing', progress: 95 });
+
         // Mark complete
         log(`Scan completed: ${savedVulns.length} vulnerabilities found`);
         await scan.update({
@@ -215,6 +237,15 @@ async function executeScan(scan, project, openapiUrl) {
             completed_at: new Date(),
         });
         await flushScanLogs(scan);
+
+        // Recompute Release Readiness so a newly-blocked security scan flips
+        // the dashboard immediately. Wrapped so a readiness failure cannot
+        // mark a successful scan as failed.
+        try {
+            await calculateAndSaveReadiness(project.id);
+        } catch (readinessErr) {
+            console.error('[Scan] Readiness recompute failed:', readinessErr.message);
+        }
 
         // Enforce 30-scan retention limit per project
         await enforceScanRetention(project.id);

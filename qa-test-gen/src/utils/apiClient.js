@@ -3,18 +3,35 @@
  * Usage:
  *   const auth = useAuth();
  *   const api = createApiClient(() => auth.user?.access_token);
- *   const data = await api.get('/api/security/projects');
+ *   const data = await api.get('/api/projects');
  */
 const API_PREFIX = import.meta.env.BASE_URL.replace(/\/$/, '');   // '' in dev, '/aaqua' in QA
 
 export function createApiClient(getToken) {
     async function request(path, { method = 'GET', body, headers = {} } = {}) {
         const token = typeof getToken === 'function' ? getToken() : getToken;
+        
+        // Auto-inject user's dynamic JIRA configuration if present in localStorage
+        const jiraConfigStr = window.localStorage.getItem('aaqua_jira_config');
+        const jiraHeaders = {};
+        if (jiraConfigStr) {
+            try {
+                const config = JSON.parse(jiraConfigStr);
+                if (config.url) jiraHeaders['x-jira-url'] = config.url.trim();
+                if (config.email) jiraHeaders['x-jira-email'] = config.email.trim();
+                if (config.token) jiraHeaders['x-jira-token'] = config.token.trim();
+                if (config.projectKey) jiraHeaders['x-jira-project-key'] = config.projectKey.trim();
+            } catch (e) {
+                console.error('[apiClient] Failed parsing local JIRA config:', e);
+            }
+        }
+
         const res = await fetch(`${API_PREFIX}${path}`, {
             method,
             headers: {
                 'Content-Type': 'application/json',
                 ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...jiraHeaders,
                 ...headers,
             },
             body: body !== undefined ? JSON.stringify(body) : undefined,

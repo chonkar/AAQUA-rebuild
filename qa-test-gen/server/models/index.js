@@ -3,6 +3,11 @@ import Project from './Project.js';
 import Scan from './Scan.js';
 import Vulnerability from './Vulnerability.js';
 import GovernanceMetric from './GovernanceMetric.js';
+import AutomationResult from './AutomationResult.js';
+import AccessibilityResult from './AccessibilityResult.js';
+import LocalizationResult from './LocalizationResult.js';
+import PerformanceResult from './PerformanceResult.js';
+import ReleaseReadiness from './ReleaseReadiness.js';
 
 // ─── Associations ────────────────────────────────────────
 // User identity is owned by Keycloak; `owner_id` and `initiated_by` store the
@@ -19,6 +24,26 @@ Vulnerability.belongsTo(Scan, { foreignKey: 'scan_id', as: 'scan' });
 // Scan → GovernanceMetric (one-to-one)
 Scan.hasOne(GovernanceMetric, { foreignKey: 'scan_id', as: 'governance', onDelete: 'CASCADE', hooks: true });
 GovernanceMetric.belongsTo(Scan, { foreignKey: 'scan_id', as: 'scan' });
+
+// Project → AutomationResult (one-to-many)
+Project.hasMany(AutomationResult, { foreignKey: 'project_id', as: 'automationResults', onDelete: 'CASCADE', hooks: true });
+AutomationResult.belongsTo(Project, { foreignKey: 'project_id', as: 'project' });
+
+// Project → AccessibilityResult (one-to-many)
+Project.hasMany(AccessibilityResult, { foreignKey: 'project_id', as: 'accessibilityResults', onDelete: 'CASCADE', hooks: true });
+AccessibilityResult.belongsTo(Project, { foreignKey: 'project_id', as: 'project' });
+
+// Project → LocalizationResult (one-to-many)
+Project.hasMany(LocalizationResult, { foreignKey: 'project_id', as: 'localizationResults', onDelete: 'CASCADE', hooks: true });
+LocalizationResult.belongsTo(Project, { foreignKey: 'project_id', as: 'project' });
+
+// Project → PerformanceResult (one-to-many)
+Project.hasMany(PerformanceResult, { foreignKey: 'project_id', as: 'performanceResults', onDelete: 'CASCADE', hooks: true });
+PerformanceResult.belongsTo(Project, { foreignKey: 'project_id', as: 'project' });
+
+// Project → ReleaseReadiness (one-to-many)
+Project.hasMany(ReleaseReadiness, { foreignKey: 'project_id', as: 'releaseReadinesses', onDelete: 'CASCADE', hooks: true });
+ReleaseReadiness.belongsTo(Project, { foreignKey: 'project_id', as: 'project' });
 
 // ─── Sync helper ─────────────────────────────────────────
 
@@ -52,5 +77,10 @@ export {
     Scan,
     Vulnerability,
     GovernanceMetric,
+    AutomationResult,
+    AccessibilityResult,
+    LocalizationResult,
+    PerformanceResult,
+    ReleaseReadiness,
     initDatabase,
 };

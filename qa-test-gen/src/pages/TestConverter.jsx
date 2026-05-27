@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { Upload, FileText, Check, AlertCircle, Loader2, Download, Code } from 'lucide-react';
 import { convertProject } from '../services/migrationService';
+import { useProject } from '../context/ProjectContext';
 
 const TestConverter = () => {
+    const { selectedProjectId } = useProject();
     const [file, setFile] = useState(null);
     const [targetFramework, setTargetFramework] = useState('Playwright');
     const [isConverting, setIsConverting] = useState(false);
@@ -55,7 +57,7 @@ const TestConverter = () => {
             setProgress(10);
             setProgressDetail('Extracting files...');
 
-            const responseBlob = await convertProject(file, targetFramework, apiKey);
+            const responseBlob = await convertProject(file, targetFramework, apiKey, selectedProjectId || null);
 
             clearInterval(progressInterval);
             setProgress(95);

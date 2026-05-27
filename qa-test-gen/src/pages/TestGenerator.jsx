@@ -4,13 +4,22 @@ import TestCaseTable from '../components/features/TestCaseTable';
 import ExportControls from '../components/features/ExportControls';
 import { generateTestCases } from '../services/testCaseGenerationService';
 import { exportToExcel, exportToJSON } from '../utils/exportUtils';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Clock } from 'lucide-react';
+
+// Format an elapsed-seconds value as "12.3s" or "1m 05s".
+const fmtDuration = (s) => {
+    if (s == null) return '';
+    if (s >= 60) return `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, '0')}s`;
+    return `${s.toFixed(1)}s`;
+};
 
 const TestGenerator = () => {
     const [testCases, setTestCases] = useState([]);
     const [requirementHistory, setRequirementHistory] = useState([]);
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState(null);
+    const [genSeconds, setGenSeconds] = useState(null);
+    const [lastBatchCount, setLastBatchCount] = useState(0);
     const abortControllerRef = useRef(null);
 
     const handleCancel = () => {
@@ -28,10 +37,14 @@ const TestGenerator = () => {
 
         setIsGenerating(true);
         setError(null);
+        setGenSeconds(null);
+        const startedAt = performance.now();
         try {
             const results = await generateTestCases(requirement, requirementHistory, controller.signal);
             setTestCases(prev => [...prev, ...results]);
             setRequirementHistory(prev => [...prev, requirement]);
+            setLastBatchCount(Array.isArray(results) ? results.length : 0);
+            setGenSeconds((performance.now() - startedAt) / 1000);
         } catch (err) {
             if (err.name === 'AbortError') {
                 console.log("Cancelled");
@@ -46,7 +59,24 @@ const TestGenerator = () => {
         }
     };
 
-    const handleExportExcel = () => exportToExcel(testCases, 'Functional_Test_Cases', 'Test Cases');
+    // Map to an ordered, human-labeled "Test Cases" sheet so a first-time
+    // reviewer can read it top-to-bottom (ID → context → detailed steps → result).
+    const handleExportExcel = () => {
+        const rows = testCases.map((tc, i) => ({
+            'Test Case ID': tc.id || `FT_${String(i + 1).padStart(3, '0')}`,
+            'Module': tc.module || '',
+            'Feature': tc.feature || '',
+            'Scenario': tc.scenario || '',
+            'Test Type': tc.testType || 'Functional',
+            'Priority': tc.priority || '',
+            'Platform': tc.platform || '',
+            'Preconditions': tc.preconditions || 'None',
+            'Test Data': tc.testData || 'N/A',
+            'Test Steps': Array.isArray(tc.steps) ? tc.steps.join('\n') : (tc.steps || ''),
+            'Expected Result': tc.expectedResult || '',
+        }));
+        exportToExcel(rows, 'Functional_Test_Cases', 'Test Cases');
+    };
     const handleExportJSON = () => exportToJSON(testCases);
 
     return (
@@ -76,9 +106,16 @@ const TestGenerator = () => {
 
             {testCases.length > 0 && (
                 <div className="results-section">
+                    {genSeconds != null && (
+                        <div className="gen-timing">
+                            <Clock size={14} />
+                            <span>Generated {lastBatchCount} test case{lastBatchCount === 1 ? '' : 's'} in {fmtDuration(genSeconds)}</span>
+                        </div>
+                    )}
                     <ExportControls
                         onExportExcel={handleExportExcel}
                         onExportJSON={handleExportJSON}
+                        testCases={testCases}
                         disabled={isGenerating}
                     />
                     <TestCaseTable testCases={testCases} />
@@ -109,6 +146,19 @@ const TestGenerator = () => {
         }
         .results-section {
           margin-top: 2rem;
+        }
+        .gen-timing {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.4rem;
+          margin-bottom: 0.75rem;
+          padding: 0.35rem 0.7rem;
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: var(--accent-secondary);
+          background: rgba(59, 130, 246, 0.08);
+          border: 1px solid rgba(59, 130, 246, 0.25);
+          border-radius: 99px;
         }
       `}</style>
         </div>
