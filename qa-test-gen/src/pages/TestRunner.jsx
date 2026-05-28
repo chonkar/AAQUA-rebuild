@@ -91,7 +91,7 @@ const TestRow = ({ test }) => {
     return (
         <div className="tr-test-row">
             <div className="tr-test-main" onClick={() => test.errorMessage && setShowTrace(!showTrace)}>
-                <_Icon size={16} style={{ color: STATUS_COLORS[test.status], flexShrink: 0 }} />
+                <Icon size={16} style={{ color: STATUS_COLORS[test.status], flexShrink: 0 }} />
                 <span className="tr-test-name">{test.name}</span>
                 <span className={`tr-status-badge ${test.status.toLowerCase()}`}>{test.status}</span>
                 <span className="tr-test-dur">{test.duration}</span>

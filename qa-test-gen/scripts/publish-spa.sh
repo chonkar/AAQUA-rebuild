@@ -18,7 +18,7 @@ mkdir -p "$TARGET"
 
 # Default to HTTPS — once TLS is terminated at shared-nginx, mixing in HTTP URLs
 # triggers browser mixed-content blocks. Override via .env or shell env if needed.
-VITE_KEYCLOAK_URL="${VITE_KEYCLOAK_URL:-https://10.13.1.182/auth}"
+VITE_KEYCLOAK_URL="${VITE_KEYCLOAK_URL:-https://aaqua.aaseya.com:8443/auth}"
 
 echo "Building SPA with:"
 echo "  VITE_KEYCLOAK_URL=$VITE_KEYCLOAK_URL"

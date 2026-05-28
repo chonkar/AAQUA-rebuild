@@ -14,7 +14,7 @@ COPY src ./src
 ARG VITE_LLM_API_KEY=server-injected
 ARG VITE_LLM_ENDPOINT=https://llm.lab.aaseya.com/v1
 ARG VITE_LLM_MODEL=gpt-oss-20b
-ARG VITE_KEYCLOAK_URL=https://10.13.1.182/auth
+ARG VITE_KEYCLOAK_URL=https://aaqua.aaseya.com:8443/auth
 ARG VITE_KEYCLOAK_REALM=aaseya-platform
 ARG VITE_KEYCLOAK_CLIENT_ID=aaqua-frontend
 ARG VITE_BASE_PATH=/aaqua/

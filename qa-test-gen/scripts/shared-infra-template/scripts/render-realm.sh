@@ -4,7 +4,7 @@
 # Run once before the first `docker compose up` of shared-infra.
 set -euo pipefail
 
-: "${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL, e.g. http://10.13.1.182}"
+: "${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL, e.g. https://aaqua.aaseya.com:8443}"
 : "${AAQUA_REPO:=/opt/aaqua}"
 SRC="$AAQUA_REPO/keycloak/aaseya-platform-realm.template.json"
 DST="/opt/shared-infra/keycloak/realms/aaseya-platform-realm.json"

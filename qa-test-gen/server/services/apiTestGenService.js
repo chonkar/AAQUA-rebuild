@@ -21,6 +21,27 @@ const CATEGORY_HINTS = {
 };
 
 /**
+ * Mirror of the "Skip a category ONLY when…" rules in buildPrompt: returns
+ * true when the LLM is *allowed* to omit `category` for this endpoint, false
+ * when omission would leave a coverage gap the user expected to be filled.
+ * Keep in sync with the prompt rules below.
+ */
+export function isLegitimatelySkippable(category, endpoint) {
+    if (category === 'auth') {
+        return !(Array.isArray(endpoint.security) && endpoint.security.length > 0);
+    }
+    if (category === 'negative' || category === 'boundary') {
+        const paramCount = (endpoint.pathParams?.length || 0)
+            + (endpoint.queryParams?.length || 0)
+            + (endpoint.headerParams?.length || 0);
+        const hasBody = !!endpoint.requestBodySchema;
+        return paramCount === 0 && !hasBody;
+    }
+    // positive, schema — a valid request can always be issued; never skippable.
+    return false;
+}
+
+/**
  * Trim a JSON schema to a bounded string so a huge deref'd schema can't blow
  * the prompt token budget.
  */
@@ -154,7 +175,35 @@ export async function generateApiTestCases(endpoints, options = {}, apiKey) {
                 `LLM timed out after ${LLM_TIMEOUT_MS / 1000}s`
             );
             const parsed = extractJson(raw);
-            const cases = Array.isArray(parsed.cases) ? parsed.cases : [];
+            let cases = Array.isArray(parsed.cases) ? parsed.cases : [];
+
+            // Backfill: small/local models (e.g. gpt-oss-20b) routinely drop
+            // 'negative' or 'auth' even when the prompt's skip rules don't allow
+            // it, leaving users with only positive + schema for an endpoint that
+            // clearly has invalidatable inputs. Re-prompt ONCE for any requested
+            // category the LLM omitted unjustifiably; bounded to one extra call
+            // per endpoint so cost stays predictable.
+            const present = new Set(cases.map(c => c && c.category).filter(Boolean));
+            const missing = categories.filter(c =>
+                !present.has(c) && !isLegitimatelySkippable(c, endpoint)
+            );
+            if (missing.length > 0) {
+                try {
+                    const rawBackfill = await withTimeout(
+                        generateWithRetry(model, buildPrompt(endpoint, missing)),
+                        LLM_TIMEOUT_MS,
+                        `LLM timed out after ${LLM_TIMEOUT_MS / 1000}s (backfill)`
+                    );
+                    const parsedBackfill = extractJson(rawBackfill);
+                    const extra = Array.isArray(parsedBackfill.cases) ? parsedBackfill.cases : [];
+                    if (extra.length > 0) cases = cases.concat(extra);
+                } catch (err) {
+                    // Best-effort: keep the original cases so the user still
+                    // gets the partial coverage instead of nothing.
+                    console.warn(`[apiTestGen] backfill failed for ${meta.method} ${meta.path} (missing: ${missing.join(',')}): ${err.message}`);
+                }
+            }
+
             results.push({ endpoint: meta, cases });
         } catch (err) {
             results.push({ endpoint: meta, cases: [], error: err.message });

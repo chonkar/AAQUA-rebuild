@@ -1,4 +1,4 @@
-# Shared infrastructure tier on host 10.13.1.182.
+# Shared infrastructure tier on host aaqua.aaseya.com (:8443 public TLS).
 # - postgres-17:    multi-tenant cluster, INTERNAL ONLY (5443 = tooling only)
 # - keycloak:       multi-realm IAM, INTERNAL ONLY (reached via shared-nginx)
 # - nginx:          public edge on :80 (later :443), routes path-prefix per tenant
@@ -47,12 +47,14 @@ services:
       KEYCLOAK_ADMIN:        ${KEYCLOAK_ADMIN_USER:-superadmin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set in .env}
       KC_HTTP_RELATIVE_PATH: /auth
-      # KC_HOSTNAME must be a BARE HOSTNAME (no scheme). If you pass a URL like
-      # `http://10.13.1.182`, Keycloak treats the whole string as the host and
-      # produces malformed issuer URLs like `http://http//10.13.1.182/...` on
+      # KC_HOSTNAME must be a BARE HOSTNAME (no scheme, no port). If you pass a URL
+      # like `https://aaqua.aaseya.com:8443`, Keycloak treats the whole string as
+      # the host and produces malformed issuer URLs like `https://https//...` on
       # frontchannel endpoints (login page, logout). Keep KC_PUBLIC_BASE_URL
       # (full URL) separate — that one's used by render-realm.sh, not by Keycloak.
-      KC_HOSTNAME: ${KC_HOSTNAME:-10.13.1.182}
+      # Non-default port goes in KC_HOSTNAME_PORT, not KC_HOSTNAME.
+      KC_HOSTNAME: ${KC_HOSTNAME:-aaqua.aaseya.com}
+      KC_HOSTNAME_PORT: ${KC_HOSTNAME_PORT:-8443}
       KC_PROXY: edge
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"

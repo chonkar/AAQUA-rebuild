@@ -6,6 +6,11 @@ import {
   CheckCircle, AlertTriangle, XCircle, Info, ChevronRight, Gauge
 } from 'lucide-react';
 
+// Total number of quality pillars the readiness score can draw from:
+// automation, accessibility, localization, performance, security.
+// Keep in sync with the per-pillar checks in mapReadinessProfile.
+const TOTAL_PILLARS = 5;
+
 const ReleaseReadiness = () => {
   const auth = useAuth();
   const { selectedProjectId, selectedProject } = useProject();
@@ -236,7 +241,7 @@ const ReleaseReadiness = () => {
               <div className="metrics-summary-chips">
                 <div className="summary-chip">
                   <span className="chip-label">Evaluation Scope</span>
-                  <span className="chip-val">{data?.evaluatedDimensionsCount || 0} / 4 Pillars Active</span>
+                  <span className="chip-val">{data?.evaluatedDimensionsCount || 0} / {TOTAL_PILLARS} Pillars Active</span>
                 </div>
                 <div className="summary-chip">
                   <span className="chip-label">Source Repository</span>

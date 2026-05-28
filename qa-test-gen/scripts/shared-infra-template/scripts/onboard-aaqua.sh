@@ -5,7 +5,7 @@ set -euo pipefail
 
 SHARED=/opt/shared-infra
 AAQUA=${AAQUA_REPO:-/opt/aaqua}
-PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://10.13.1.182}
+PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://aaqua.aaseya.com:8443}
 
 echo "==> Creating tenant directory layout"
 mkdir -p "$SHARED"/{secrets/aaqua,nginx/sites/aaqua,keycloak/realms}

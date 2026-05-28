@@ -78,6 +78,66 @@ function getFiles(dir, files = []) {
     return files;
 }
 
+// Migration scaffolding: the LLM converts source files but never emits a runnable
+// project shell. Without these helpers, the resulting zip has no package.json /
+// playwright.config.js / cypress.config.js, so Test Runner's detectFramework()
+// rejects it as 'unknown'. We remap each converted file into the target
+// framework's test directory (with the right .spec/.cy extension) and write a
+// minimal but complete scaffold so the zip is detectable AND runnable after
+// `npm install`.
+function remapMigratedPath(relativePath, targetFramework) {
+    const parts = relativePath.split(/[\\/]/);
+    // Strip common Maven/Java layout prefixes so we don't end up with
+    // tests/src/test/java/... nesting in the output.
+    const stripPrefixes = [
+        ['src', 'test', 'java'], ['src', 'main', 'java'],
+        ['src', 'test'], ['src', 'main'], ['src'],
+    ];
+    for (const prefix of stripPrefixes) {
+        if (parts.length > prefix.length && prefix.every((p, i) => parts[i] === p)) {
+            parts.splice(0, prefix.length);
+            break;
+        }
+    }
+    const fileName = parts.pop();
+    const base = fileName.replace(/\.(java|py|cs|js|ts|jsx|tsx)$/i, '');
+    if (targetFramework === 'Cypress') {
+        return path.join('cypress', 'e2e', ...parts, `${base}.cy.js`);
+    }
+    // Default: Playwright
+    return path.join('tests', ...parts, `${base}.spec.js`);
+}
+
+function scaffoldMigratedProject(outputPath, targetFramework) {
+    if (targetFramework === 'Cypress') {
+        const pkg = {
+            name: 'migrated-cypress-suite',
+            version: '1.0.0',
+            scripts: { test: 'cypress run', 'cy:open': 'cypress open' },
+            devDependencies: { cypress: '^13.6.0' },
+        };
+        fs.writeFileSync(path.join(outputPath, 'package.json'), JSON.stringify(pkg, null, 2));
+        fs.writeFileSync(path.join(outputPath, 'cypress.config.js'),
+            `const { defineConfig } = require('cypress');\n\nmodule.exports = defineConfig({\n  e2e: {\n    baseUrl: 'http://localhost:3000',\n    specPattern: 'cypress/e2e/**/*.cy.{js,ts}',\n    setupNodeEvents() {},\n  },\n});\n`);
+        return;
+    }
+    // Default: Playwright (JavaScript)
+    const pkg = {
+        name: 'migrated-playwright-suite',
+        version: '1.0.0',
+        scripts: {
+            test: 'playwright test',
+            'test:headed': 'playwright test --headed',
+            'test:debug': 'playwright test --debug',
+            postinstall: 'playwright install',
+        },
+        devDependencies: { '@playwright/test': '^1.58.0' },
+    };
+    fs.writeFileSync(path.join(outputPath, 'package.json'), JSON.stringify(pkg, null, 2));
+    fs.writeFileSync(path.join(outputPath, 'playwright.config.js'),
+        `const { defineConfig, devices } = require('@playwright/test');\n\nmodule.exports = defineConfig({\n  testDir: './tests',\n  fullyParallel: true,\n  retries: 0,\n  reporter: 'html',\n  use: {\n    baseURL: 'http://localhost:3000',\n    trace: 'on-first-retry',\n    screenshot: 'only-on-failure',\n  },\n  projects: [\n    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },\n  ],\n});\n`);
+}
+
 app.post('/api/convert', upload.single('projectZip'), async (req, res) => {
     const targetFramework = req.body.targetFramework || 'Playwright';
     const apiKey = req.headers['x-api-key'];
@@ -140,36 +200,39 @@ app.post('/api/convert', upload.single('projectZip'), async (req, res) => {
             await new Promise(resolve => setTimeout(resolve, 2000));
             console.log(`Converting: ${relativePath}`);
 
+            const langHint = targetFramework === 'Cypress'
+                ? 'Cypress (JavaScript, CommonJS, using `describe`/`it`/`cy.*`)'
+                : 'Playwright (JavaScript, ES modules, using `@playwright/test` — import `test` and `expect` from it)';
             const prompt = `
-                You are a Test Migration Expert. Convert the following Selenium code to ${targetFramework}.
+                You are a Test Migration Expert. Convert the following Selenium code to ${langHint}.
                 File: ${relativePath}
-                
+
                 Rules:
-                1. Keep the same test structure logic.
-                2. Use modern ${targetFramework} patterns (e.g. Page Object Model if apparent).
-                3. Return ONLY the code. No markdown formatting.
-                
+                1. Keep the same test structure and assertions.
+                2. Use modern ${targetFramework} patterns (Page Object Model if apparent in the source).
+                3. The output file will be saved with a JavaScript extension — write valid JavaScript only, no Java/Python/C# syntax.
+                4. Return ONLY the code. No markdown fences, no commentary.
+
                 Content:
                 ${content}
             `;
 
+            const targetFile = path.join(outputPath, remapMigratedPath(relativePath, targetFramework));
+            fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+
             try {
                 let text = await generateWithRetry(model, prompt);
-
-                // Clean markdown
+                // Clean markdown fences if the LLM emits them anyway
                 text = text.replace(/```[a-z]*\n?/g, '').replace(/```/g, '');
-
-                const targetFile = path.join(outputPath, relativePath);
-                fs.mkdirSync(path.dirname(targetFile), { recursive: true });
                 fs.writeFileSync(targetFile, text);
             } catch (aiErr) {
                 console.error(`Failed to convert ${relativePath}`, aiErr);
-                // Write original file as fallback with comment
-                const targetFile = path.join(outputPath, relativePath);
-                fs.mkdirSync(path.dirname(targetFile), { recursive: true });
-                fs.writeFileSync(targetFile, `// CONVERSION FAILED: ${aiErr.message}\n` + content);
+                fs.writeFileSync(targetFile, `// CONVERSION FAILED: ${aiErr.message}\n// Original source from: ${relativePath}\n/*\n${content}\n*/\n`);
             }
         }
+
+        // 4b. Emit framework scaffold so the zip is runnable + detectable by Test Runner
+        scaffoldMigratedProject(outputPath, targetFramework);
 
         // 5. Zip Output
         const outputZip = new AdmZip();
@@ -1805,18 +1868,26 @@ app.post('/api/analyze-performance', async (req, res) => {
             speedIndex: ms('speed-index'),
             ttfb: ms('server-response-time'),
         };
-        // Top load opportunities (failing audits with potential savings).
+        // Failing / sub-optimal performance audits. Lighthouse 13 dropped the old
+        // 'load-opportunities' auditRef group, so select by score instead — and
+        // exclude the metric audits (already shown as CWV cards) and
+        // informative/not-applicable ones.
+        const METRIC_AUDIT_IDS = new Set([
+            'largest-contentful-paint', 'first-contentful-paint', 'cumulative-layout-shift',
+            'total-blocking-time', 'speed-index', 'interactive', 'max-potential-fid', 'server-response-time',
+        ]);
         const opportunities = (lhr.categories.performance.auditRefs || [])
-            .filter(ref => ref.group === 'load-opportunities')
             .map(ref => lhr.audits[ref.id])
-            .filter(a => a && a.score !== null && a.score < 0.9)
+            .filter(a => a && a.score !== null && a.score < 0.9
+                && !['informative', 'notApplicable', 'manual'].includes(a.scoreDisplayMode)
+                && !METRIC_AUDIT_IDS.has(a.id))
             .map(a => ({
                 title: a.title,
                 savingsMs: a.details && typeof a.details.overallSavingsMs === 'number' ? Math.round(a.details.overallSavingsMs) : null,
                 description: String(a.description || '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').slice(0, 220),
             }))
             .sort((x, y) => (y.savingsMs || 0) - (x.savingsMs || 0))
-            .slice(0, 8);
+            .slice(0, 10);
 
         console.log(`[Performance] Score ${score} for ${check.href}`);
 
@@ -2417,9 +2488,13 @@ function parseLiveResult(line, framework) {
 }
 
 // Helper: run a command and stream logs
-function runCommand(cmd, args, cwd, runId, onComplete, extraEnv = {}) {
+function runCommand(cmd, args, cwd, runId, onComplete, extraEnv = {}, options = {}) {
+    // shell defaults to true (npm/mvn/cypress need PATH resolution via the shell).
+    // Direct-Node Playwright invocations pass shell:false to avoid spawning a
+    // cmd.exe per run — see playwrightSpawn() for why that matters on Windows.
+    const useShell = options.shell !== false;
     console.log(`[Runner ${runId}] Running: ${cmd} ${args.join(' ')} in ${cwd}`);
-    const child = spawn(cmd, args, { cwd, shell: true, env: { ...process.env, CI: 'true', ...extraEnv } });
+    const child = spawn(cmd, args, { cwd, shell: useShell, env: { ...process.env, CI: 'true', ...extraEnv } });
     const run = runStore.get(runId);
 
     const processLine = (line) => {
@@ -2467,6 +2542,44 @@ function runCommand(cmd, args, cwd, runId, onComplete, extraEnv = {}) {
 function npmInstallArgs(projectRoot) {
     const hasLock = fs.existsSync(path.join(projectRoot, 'package-lock.json'));
     return hasLock ? ['ci', '--prefer-offline'] : ['install'];
+}
+
+/**
+ * Build a spawn descriptor that runs the project's local Playwright CLI directly
+ * via Node (shell:false), instead of `npx playwright ...` through cmd.exe.
+ *
+ * Why: on Windows every `shell:true` spawn launches a cmd.exe, which consumes
+ * desktop-heap. In the long-lived AAQUA server, after enough runs new child
+ * processes fail to initialize at the OS level and exit with 0xC0000142
+ * (STATUS_DLL_INIT_FAILED, decimal 3221225794) — before any test output appears.
+ * Invoking node -> cli.js avoids the cmd.exe layer entirely.
+ *
+ * Falls back to the historic `npx playwright` form if the local CLI isn't present
+ * (e.g. an unusual install layout), so behaviour is unchanged in that case.
+ */
+function playwrightSpawn(projectRoot, extraArgs) {
+    const cli = path.join(projectRoot, 'node_modules', '@playwright', 'test', 'cli.js');
+    if (fs.existsSync(cli)) {
+        return { cmd: process.execPath, args: [cli, ...extraArgs], options: { shell: false } };
+    }
+    return { cmd: 'npx', args: ['playwright', ...extraArgs], options: {} };
+}
+
+/**
+ * Decode opaque Windows NTSTATUS exit codes into a human-readable hint so the
+ * run log explains an OS-level process-startup crash rather than printing a bare
+ * 10-digit number. Returns '' for ordinary exit codes (0, 1, ...).
+ */
+function describeExitCode(code) {
+    if (code === 3221225794) {
+        return ' (0xC0000142 STATUS_DLL_INIT_FAILED — the OS could not start the test process; ' +
+            'no tests ran. Usually transient on Windows: restart the AAQUA server (clears desktop-heap ' +
+            'pressure) or exclude the run directory from antivirus, then re-run.)';
+    }
+    if (code === 3221225786) {
+        return ' (0xC000013A — process was terminated, e.g. Ctrl-C or console close.)';
+    }
+    return '';
 }
 
 /**
@@ -2579,11 +2692,12 @@ app.post('/api/run-tests-local', async (req, res) => {
                 const r2 = runStore.get(runId);
                 r2.logs.push(`[AAQUA] Dependencies installed. Running Playwright...\n`);
                 const reportFile = path.join(projectRoot, `aaqua-pw-${runId}.json`);
-                const pwArgs = ['playwright', 'test', '--reporter=line,json', '--output=playwright-results'];
+                const pwArgs = ['test', '--reporter=line,json', '--output=playwright-results'];
                 if (!isHeadless) pwArgs.push('--headed');
-                runCommand('npx', pwArgs, projectRoot, runId, (code) => {
+                const pw = playwrightSpawn(projectRoot, pwArgs);
+                runCommand(pw.cmd, pw.args, projectRoot, runId, (code) => {
                     const r3 = runStore.get(runId);
-                    appendRunLog(r3, `\n[AAQUA] Process exited with code ${code}\n`);
+                    appendRunLog(r3, `\n[AAQUA] Process exited with code ${code}${describeExitCode(code)}\n`);
                     const suites = readPlaywrightSuites(reportFile, r3.logs.join(''));
                     r3.results = { suites, summary: buildSummary(suites) };
                     r3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
@@ -2591,7 +2705,7 @@ app.post('/api/run-tests-local', async (req, res) => {
                     persistRunLogs(runId, r3);
                     persistRunToReadiness(r3.projectId, r3.results.summary);
                     try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
-                }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile });
+                }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, pw.options);
             });
         } else if (framework === 'cypress') {
             runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
@@ -2689,11 +2803,12 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
                 const run2 = runStore.get(runId);
                 appendRunLog(run2, `[AAQUA] Dependencies installed. Running Playwright (${runHeaded ? 'headed' : 'headless'})...\n`);
                 const reportFile = path.join(projectRoot, `aaqua-pw-${runId}.json`);
-                const pwArgs = ['playwright', 'test', '--reporter=line,json', '--output=playwright-results'];
+                const pwArgs = ['test', '--reporter=line,json', '--output=playwright-results'];
                 if (runHeaded) pwArgs.push('--headed');
-                runCommand('npx', pwArgs, projectRoot, runId, (code) => {
+                const pw = playwrightSpawn(projectRoot, pwArgs);
+                runCommand(pw.cmd, pw.args, projectRoot, runId, (code) => {
                     const run3 = runStore.get(runId);
-                    appendRunLog(run3, `\n[AAQUA] Process exited with code ${code}\n`);
+                    appendRunLog(run3, `\n[AAQUA] Process exited with code ${code}${describeExitCode(code)}\n`);
                     const suites = readPlaywrightSuites(reportFile, run3.logs.join(''));
                     run3.results = { suites, summary: buildSummary(suites) };
                     run3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
@@ -2701,7 +2816,7 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
                     persistRunLogs(runId, run3);
                     persistRunToReadiness(run3.projectId, run3.results.summary);
                     try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
-                }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile });
+                }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, pw.options);
             });
         } else if (framework === 'cypress') {
             runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
@@ -2917,9 +3032,10 @@ app.post('/api/retry-tests/:runId', (req, res) => {
         // of test titles, whose "|" separators and spaces were parsed by the
         // shell as pipes/commands ("'Add' is not recognized").
         const reportFile = path.join(projectRoot, `aaqua-pw-${retryRunId}.json`);
-        runCommand('npx', ['playwright', 'test', '--last-failed', '--reporter=line,json', '--output=playwright-results'], projectRoot, retryRunId, (code) => {
+        const pwRetry = playwrightSpawn(projectRoot, ['test', '--last-failed', '--reporter=line,json', '--output=playwright-results']);
+        runCommand(pwRetry.cmd, pwRetry.args, projectRoot, retryRunId, (code) => {
             const run = runStore.get(retryRunId);
-            appendRunLog(run, `\n[AAQUA] Retry exited with code ${code}\n`);
+            appendRunLog(run, `\n[AAQUA] Retry exited with code ${code}${describeExitCode(code)}\n`);
             const suites = readPlaywrightSuites(reportFile, run.logs.join(''));
             run.results = { suites, summary: buildSummary(suites) };
             run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
@@ -2928,7 +3044,7 @@ app.post('/api/retry-tests/:runId', (req, res) => {
             // Retries run only the failed subset (not representative) — intentionally
             // NOT persisted to Release Readiness. See the Maven retry above.
             try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
-        }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile });
+        }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, pwRetry.options);
     }
 });
 
@@ -3491,14 +3607,15 @@ app.post('/api/apply-heal', async (req, res) => {
         } else if (framework === 'playwright' && sourceFile) {
             const relSpec = path.relative(projectRoot, sourceFile);
             const reportFile = path.join(projectRoot, `aaqua-pw-${healRunId}.json`);
-            runCommand('npx', ['playwright', 'test', relSpec, `--grep=${testName}`, '--reporter=line,json'], projectRoot, healRunId, (code) => {
+            const pwHeal = playwrightSpawn(projectRoot, ['test', relSpec, `--grep=${testName}`, '--reporter=line,json']);
+            runCommand(pwHeal.cmd, pwHeal.args, projectRoot, healRunId, (code) => {
                 const r = runStore.get(healRunId);
-                r.logs.push(`\n[AAQUA] Heal re-run exited with code ${code}\n`);
+                r.logs.push(`\n[AAQUA] Heal re-run exited with code ${code}${describeExitCode(code)}\n`);
                 const suites = readPlaywrightSuites(reportFile, r.logs.join(''));
                 r.results = { suites, summary: buildSummary(suites) };
                 r.status = 'completed';
                 try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
-            }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile });
+            }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, pwHeal.options);
         }
 
     } catch (err) {
