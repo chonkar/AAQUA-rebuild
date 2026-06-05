@@ -488,7 +488,7 @@ const TestRunner = () => {
                             style={{ padding: '0.5rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}
                             onClick={async () => {
                                 try {
-                                    const res = await fetch('http://localhost:3001/api/browse-folder');
+                                    const res = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, '')}/api/browse-folder`);
                                     const data = await res.json();
                                     if (data.path) setProjectPath(data.path);
                                 } catch (err) {

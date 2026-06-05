@@ -28,12 +28,17 @@ services:
     # Production server: enforces hostname, requires explicit HTTPS or a known reverse proxy.
     command: ["start", "--optimized"]
     environment:
-      # Hostname Keycloak advertises (set in .env, e.g. https://auth.aaseya.com).
+      # Bare hostname Keycloak advertises (no scheme, no port; set in .env, e.g. auth.aaseya.com).
+      # Non-default port goes in KC_HOSTNAME_PORT, not KC_HOSTNAME.
       KC_HOSTNAME: ${KEYCLOAK_HOSTNAME}
       KC_HOSTNAME_STRICT: "true"
+      # Lenient backchannel: the upstream proxy + the backend talk to Keycloak via internal DNS
+      # that won't match KC_HOSTNAME; without this, JWKS / token-exchange calls would be rejected.
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
       KC_HOSTNAME_STRICT_HTTPS: "true"
-      # Trust the X-Forwarded-* headers from the reverse proxy.
-      KC_PROXY: edge
+      # Trust the X-Forwarded-* headers from the reverse proxy. KC_PROXY_HEADERS replaces the
+      # deprecated KC_PROXY=edge (removed in Keycloak 26+).
+      KC_PROXY_HEADERS: xforwarded
       # Disable the dev-mode HTTP listener; TLS is terminated upstream.
       KC_HTTP_ENABLED: "false"
       # Caches survive restarts and replicate across nodes when scaled.

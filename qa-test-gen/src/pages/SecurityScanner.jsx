@@ -5,8 +5,11 @@ import { createApiClient } from '../utils/apiClient';
 import { useProject } from '../context/ProjectContext';
 import JiraDefectButton from '../components/features/JiraDefectButton';
 
-const API = 'http://localhost:3001/api/security';
-const PROJECTS_API = 'http://localhost:3001/api/projects';
+// BASE_URL handles dev (Vite proxies `/api`) and QA (shared-nginx routes
+// `/aaqua/api`). Hardcoded localhost:3001 worked in dev but 404'd in QA.
+const API_PREFIX = import.meta.env.BASE_URL.replace(/\/$/, '');
+const API = `${API_PREFIX}/api/security`;
+const PROJECTS_API = `${API_PREFIX}/api/projects`;
 
 const SecurityScanner = () => {
     // ─── Auth state (Keycloak OIDC) ──────────────────────

@@ -112,9 +112,10 @@ const ReleaseReadiness = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const endpoint = window.location.origin.includes('localhost')
-        ? `http://localhost:3001/api/readiness/${selectedProjectId}`
-        : `/api/readiness/${selectedProjectId}`;
+      // BASE_URL handles dev (`''`, Vite proxies `/api`) and QA (`'/aaqua'`,
+      // shared-nginx routes `/aaqua/api`). Hardcoding `/api/...` 404s in QA.
+      const API_PREFIX = import.meta.env.BASE_URL.replace(/\/$/, '');
+      const endpoint = `${API_PREFIX}/api/readiness/${selectedProjectId}`;
       const res = await fetch(endpoint, {
         headers: {
           'Authorization': token ? `Bearer ${token}` : ''
