@@ -7,11 +7,12 @@ AAQUA is a React + Express platform that combines a suite of AI-driven QA tools 
 | If you want to… | Read |
 |---|---|
 | Run the stack on your laptop | [`LOCAL_SETUP.md`](LOCAL_SETUP.md) |
+| **Provision a fresh GCP VM from scratch** (cloud-init Docker install, repo clone, shared-infra seed) | [`scripts/gcp-provision.sh`](scripts/gcp-provision.sh) — edit the `CONFIGURE ME` block at the top, then run from your workstation. Pair with `scripts/gcp-vm-startup.sh`. |
 | Deploy to a QA / staging server (shared-infra model) | [`DEPLOYMENT.md`](DEPLOYMENT.md) and the executable plan at [`docs/superpowers/plans/2026-05-08-shared-infra-deployment.md`](docs/superpowers/plans/2026-05-08-shared-infra-deployment.md) |
 | Understand the deployment design | [`docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md`](docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md) |
 | Understand the AI Secure Engine subsystem (`/api/security/*`) | [`SECURITY_ENGINE_README.md`](SECURITY_ENGINE_README.md) |
 | Understand the architecture and codebase conventions | [`CLAUDE.md`](CLAUDE.md) |
-| Look up a deployment gotcha (HTTPS / mixed-content, self-signed cert + JWKS, DB secret file, role claim location, `/aaqua/` BASE_URL trap, etc.) | [`CLAUDE.md` § Deployment gotchas](CLAUDE.md#deployment-gotchas-learned-the-hard-way-during-the-qa-box-stand-up) |
+| Look up a deployment gotcha (HTTPS / mixed-content, self-signed cert + JWKS, DB secret file, role claim location, `/aaqua/` BASE_URL trap, GCP provisioning quirks, nginx upstream resolution, Keycloak realm reset, etc.) | [`CLAUDE.md` § Deployment gotchas](CLAUDE.md#deployment-gotchas-learned-the-hard-way-during-the-qa-box-stand-up) (22 numbered gotchas as of 2026-06-05) |
 
 ## Stack at a glance
 

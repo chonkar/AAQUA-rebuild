@@ -9,7 +9,7 @@
 >
 > **Lessons we learned during the shared-infra QA stand-up (apply when re-deploying):**
 > 1. The realm requires PKCE-S256, which needs `crypto.subtle` — only available over **HTTPS** or on `localhost`/`127.0.0.1`. A LAN-IP HTTP deploy will silently break the SPA login flow. Terminate TLS at shared-nginx (self-signed cert is acceptable for internal QA).
-> 2. `KC_HOSTNAME` must be a **bare hostname** (`10.13.1.182`), NOT a URL. Pass full URLs only via `KC_PUBLIC_BASE_URL` for realm-template substitution.
+> 2. `KC_HOSTNAME` must be a **bare hostname** (`aaqua.aaseya.com`), NOT a URL. Pass full URLs only via `KC_PUBLIC_BASE_URL` for realm-template substitution. Non-default port goes in `KC_HOSTNAME_PORT` (`8443`).
 > 3. Drop `--optimized` from Keycloak's command — the upstream image is built for H2; `start --optimized` ignores `KC_DB=postgres` and crashes.
 > 4. Healthcheck Alpine containers via `127.0.0.1`, not `localhost` (musl resolves to `::1` first; nginx isn't IPv6-bound).
 > 5. Shell scripts must have `+x` set in the git index (`git update-index --chmod=+x`); committing from Windows defaults to `100644` and the official nginx image silently skips non-executable `.envsh` files.
@@ -59,7 +59,7 @@
 
 Inside the `app` container, **supervisord** runs nginx and the Node backend together. nginx is the only listener bound to the container's external interface; Express on `:3001` is bound to the loopback and reached only via nginx's `proxy_pass http://127.0.0.1:3001`. Postgres hosts two schemas — `public` (app data) and `keycloak` (IAM data) — isolated via Postgres roles and `KC_DB_SCHEMA`. End users hit ports **80** (the SPA) and **8082** (login redirect) — both must be open externally. Ports 5442 and 8040 should be firewalled to the office / VPN only; they exist for pgAdmin / ZAP UI access during debugging.
 
-> **TLS:** terminate HTTPS at a reverse proxy (Caddy / Traefik / nginx + certbot) in front of both `:80` and `:8082`. When you do, set `KC_HOSTNAME=https://auth.your-domain`, `KC_HOSTNAME_STRICT=true`, `KC_HOSTNAME_STRICT_HTTPS=true`, `KC_PROXY=edge`, and update the realm's `redirectUris` to your public SPA hostname.
+> **TLS:** terminate HTTPS at a reverse proxy (Caddy / Traefik / nginx + certbot) in front of both `:80` and `:8082`. When you do, set `KC_HOSTNAME=<bare-hostname>` (+ `KC_HOSTNAME_PORT=<port>` if non-standard), `KC_HOSTNAME_STRICT=true`, `KC_HOSTNAME_STRICT_BACKCHANNEL=false`, `KC_HOSTNAME_STRICT_HTTPS=true`, `KC_PROXY_HEADERS=xforwarded` (this replaces the deprecated `KC_PROXY=edge`), and update the realm's `redirectUris` to your public SPA hostname.
 
 ---
 
@@ -152,9 +152,12 @@ Most settings live in `docker-compose.yml` under the `app` service. Edit if need
 | `VITE_LLM_MODEL` | `gpt-oss-20b` | To switch models |
 | `JIRA_ENABLED` | `false` | Set `true` only if Jira integration is required |
 | `ALLOW_PRIVATE_SCAN` | `false` | Set `true` to let ZAP scan internal/private IPs (relaxes the SSRF guard) |
-| `KC_HOSTNAME` | `http://localhost:8082` | Always set to the public Keycloak URL on a real server |
+| `KC_HOSTNAME` | `aaqua.aaseya.com` | Bare hostname only (no scheme, no port) — set to the public Keycloak hostname |
+| `KC_HOSTNAME_PORT` | `8443` | Public port if non-standard (omit / leave default if serving on 443) |
+| `KC_HOSTNAME_STRICT` | `true` | Rejects requests whose `Host` header doesn't match `KC_HOSTNAME` — prevents stale-IP / wrong-DNS access |
+| `KC_HOSTNAME_STRICT_BACKCHANNEL` | `false` | Lets the backend container reach Keycloak via the docker-internal hostname for JWKS / token exchange |
 | `KC_HOSTNAME_STRICT_HTTPS` | `false` | Set `true` once HTTPS is terminated upstream |
-| `KC_PROXY` | `none` | Set to `edge` when fronted by a reverse proxy that terminates TLS |
+| `KC_PROXY_HEADERS` | unset | Set to `xforwarded` when fronted by a reverse proxy that terminates TLS (replaces deprecated `KC_PROXY=edge`) |
 
 Token lifetimes (15-min access / 30-day refresh / password policy) are controlled by the realm export at `keycloak/aaseya-platform-realm.json` — edit there and restart Keycloak to apply.
 
@@ -466,7 +469,7 @@ These are flagged because the user requested "available for all the end users." 
 
 1. **Legacy endpoints are unauthenticated.** `/api/convert`, `/api/scrape`, `/api/run-tests*`, `/api/browser/*`, `/api/analyze-*` have no token check. The `/api/security/*` subsystem is protected by the Keycloak token middleware, but the legacy endpoints in `server/index.js` are not. Anyone who can reach `:80` can drive Playwright on the server. Mitigations: (a) firewall to VPN only, (b) add an nginx `auth_request` in front of `/api/` that validates the Keycloak token, or (c) wrap the legacy routes with the same `authenticateToken` middleware that protects `/api/security/*`.
 2. **`/llm-api` is an open proxy.** nginx forwards anything under `/llm-api/` to the LLM endpoint with the production Authorization header. Anyone who can hit the QA server can spend the team's LLM quota. Mitigations: tighten the location block to specific paths (e.g. only `^/llm-api/v1/chat/completions$`), add `limit_req_zone`, and require an internal cookie or token.
-3. **No TLS by default.** Compose publishes plain HTTP on `:80` and `:8082`. For external use, terminate TLS with a reverse proxy (Caddy / Traefik / nginx with certbot) in front of both. Once HTTPS is wired up, set `KC_HOSTNAME=https://<auth-host>`, `KC_HOSTNAME_STRICT=true`, `KC_HOSTNAME_STRICT_HTTPS=true`, `KC_PROXY=edge`, and update the realm's `redirectUris` and `webOrigins` to the HTTPS frontend URL.
+3. **No TLS by default.** Compose publishes plain HTTP on `:80` and `:8082`. For external use, terminate TLS with a reverse proxy (Caddy / Traefik / nginx with certbot) in front of both. Once HTTPS is wired up, set `KC_HOSTNAME=<bare-hostname>` (+ `KC_HOSTNAME_PORT=<port>` if non-standard), `KC_HOSTNAME_STRICT=true`, `KC_HOSTNAME_STRICT_BACKCHANNEL=false`, `KC_HOSTNAME_STRICT_HTTPS=true`, `KC_PROXY_HEADERS=xforwarded` (replaces deprecated `KC_PROXY=edge`), and update the realm's `redirectUris` and `webOrigins` to the HTTPS frontend URL.
 4. **Containers run as root.** Both `aaqua-app` (because supervisord manages nginx) and `aaqua-keycloak` (the upstream image's default) run as root. Acceptable for an internal QA box; not acceptable for a hardened deployment — switch to a non-root build of each image before exposing to the internet.
 5. **`docker-compose.security.yml` is for local dev only.** It uses `start-dev` and `POSTGRES_HOST_AUTH_METHOD: trust`. Don't run it on the QA server; the production stack is `docker-compose.yml` only.
 6. **Default admin passwords.** The bootstrap `${KEYCLOAK_ADMIN_PASSWORD}` and the seed admins' temporary passwords are powerful — make sure they're rotated to strong values and that the seed admins have completed UPDATE_PASSWORD before the system goes public.
