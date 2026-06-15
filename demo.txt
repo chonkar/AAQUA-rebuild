@@ -1,0 +1,40 @@
+
+Demo story:
+1. BDC user should be able to search for the required Quote in the application
+2. On clicking the Quote, the quote that is in 'QUOTATION PRESENTED' status should open the Quote Acceptance page
+3. The following details of the Quotes should be displayed on the screen - Employer Details screen (Read-Only) - Options for selection > Amend Rates > Quote Acceptance > Quote Rejection
+4. When Amend Rates is selected, then the premium result screen must be displayed where the rates can be amended
+5. When 'Quote Acceptance' is selected, then the Quote Acceptance screen must open (refer in the description section)
+6. The Quote Acceptance screen must show the following details - Quote date - Commencement date- This is for selection - Table with the all the Benefits listed. Columns should have the following fields > Benefit - Benefit's category name (Read-Only) > Accepted - checkboxes (an option to select all at once) > Billing Basis - User selection (flat amount, Percentage of payroll, unit rate ) > Premium Rates - rates per category to be displayed
+If the categories are not selected then shall we dont consider those for installation - Whatever is accepted only those Benefits are sent for installation - The Quote will be marked as accepted and flow will proceed.
+7. The user must have the following options on the screen - Back - Save - Install (OOS for this story) - Cancel
+
+
+{
+  "id": "integer",
+  "name": "string",
+  "email": "string",
+  "phone": "string",
+  "age": "integer",
+  "salary": "decimal",
+  "isActive": "boolean",
+  "createdDate": "datetime"
+}
+121.241.55.218
+User name:kavita735
+
+Password:$ecuReH0larD@16&*
+
+KeyCloack:
+https://10.13.1.182/auth/admin/master/console/#/aaseya-platform/users/9dbe5a14-bf84-402f-8629-e14204cff594/settings
+pd: 66ZuR3kpmJ3QVjQb4fkGRP9ZRiN3rQf6zXjfYfXMxYo=
+ 
+
+https://www.alarabiya.net/- localization testing
+
+https://www.saucedemo.com
+
+ https://petstore3.swagger.io/api/v3/openapi.json
+
+
+JITA API-ATATT3xFfGF0ahbV7yw3-d92mITQwKWuuPAAjWJ63dK20s7S0Qp0chC_auZUAZOxrplzQbSThLOoYNpe8Ulp3iXksNUV0XcGU6Sdeee_sQWexYEIs3PVZKPMGrkSgu1Lx-Itr07kLBVgyeEdYwt0yIdfXaMzAluHjxOtdaOgVlbs5QRVf5A0rhw=60370ACB
