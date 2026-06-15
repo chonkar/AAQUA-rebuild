@@ -80,7 +80,10 @@ const Header = () => {
   const handleSignIn = () => auth.signinRedirect();
   const handleSignOut = () => auth.signoutRedirect();
 
-  const getBaseUrl = () => window.location.origin.includes('localhost') ? 'http://localhost:3001' : '';
+  // BASE_URL = '/' in dev (Vite proxies /api -> :3001) and '/aaqua/' in QA (shared-nginx
+  // routes /aaqua/api -> backend). Stripping the trailing slash so we can concatenate '/api/...'
+  // without producing '//api/...'. Returning '' in dev lets Vite's proxy do the work.
+  const getBaseUrl = () => import.meta.env.BASE_URL.replace(/\/$/, '');
 
   const handleCreateProject = async (e) => {
     e.preventDefault();

@@ -565,7 +565,6 @@ const TestRunner = () => {
                             </div>
                         </div>
                     )}
-                    
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem', cursor: hasDisplayServer ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', opacity: hasDisplayServer ? 1 : 0.5 }} title={!hasDisplayServer ? "No display server detected on host. Headed mode is disabled." : ""}>
                         <input
                             type="checkbox"

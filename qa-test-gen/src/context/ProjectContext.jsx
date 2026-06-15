@@ -31,9 +31,10 @@ export const ProjectProvider = ({ children }) => {
     if (!auth.isAuthenticated) return;
     setIsLoading(true);
     try {
-      const endpoint = window.location.origin.includes('localhost')
-        ? 'http://localhost:3001/api/projects'
-        : '/api/projects';
+      // BASE_URL handles dev (`''`, Vite proxies `/api`) and QA (`'/aaqua'`,
+      // shared-nginx routes `/aaqua/api`). Hardcoding `/api/projects` 404s in QA.
+      const API_PREFIX = import.meta.env.BASE_URL.replace(/\/$/, '');
+      const endpoint = `${API_PREFIX}/api/projects`;
       
       const token = auth.user?.access_token || '';
       const res = await fetch(endpoint, {
