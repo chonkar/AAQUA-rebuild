@@ -55,8 +55,12 @@ services:
       # Non-default port goes in KC_HOSTNAME_PORT, not KC_HOSTNAME.
       KC_HOSTNAME: ${KC_HOSTNAME:-aaqua.aaseya.com}
       KC_HOSTNAME_PORT: ${KC_HOSTNAME_PORT:-8443}
-      KC_PROXY: edge
-      KC_HOSTNAME_STRICT: "false"
+      # KC_PROXY_HEADERS replaces the deprecated KC_PROXY=edge (gone in Keycloak 26).
+      KC_PROXY_HEADERS: xforwarded
+      # STRICT=true enforces hostname match on frontchannel URLs (login, logout); STRICT_BACKCHANNEL=false
+      # lets the backend reach Keycloak via the docker-internal hostname for JWKS fetch and token exchange.
+      KC_HOSTNAME_STRICT: "true"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"

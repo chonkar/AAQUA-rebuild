@@ -1,4 +1,6 @@
-const API_URL = 'http://localhost:3001/api';
+// BASE_URL handles dev (Vite proxies `/api`) and QA (shared-nginx routes
+// `/aaqua/api`). Hardcoded localhost:3001 worked in dev but 404'd in QA.
+const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
 /** Analyse a single failed test and get locator suggestions */
 export const analyseHeal = async ({ testName, classname, errorMessage, stackTrace, pageUrl }) => {

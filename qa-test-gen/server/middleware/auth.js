@@ -4,8 +4,8 @@ dotenv.config();
 
 // Two URLs because they often need to differ in containerized deploys:
 //   - KEYCLOAK_REALM_URL is what Keycloak puts in the `iss` claim (public URL,
-//     e.g. https://10.13.1.182/auth/realms/aaseya-platform). jwtVerify uses
-//     this to validate the token's issuer with exact string equality.
+//     e.g. https://aaqua.aaseya.com:8443/auth/realms/aaseya-platform). jwtVerify
+//     uses this to validate the token's issuer with exact string equality.
 //   - KEYCLOAK_JWKS_URL (optional) is the URL the backend uses to fetch the
 //     JWKS. Inside docker-compose, the public hostname often isn't reachable
 //     from the app container — use the docker service name instead, e.g.

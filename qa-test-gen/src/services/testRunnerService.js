@@ -16,6 +16,26 @@ export const runTestsLocal = async (projectPath, isHeadless = true, projectId = 
     return response.json(); // { runId, framework }
 };
 
+export const runTestsZip = async (zipFile, isHeadless = true, projectId = null) => {
+    const formData = new FormData();
+    formData.append('projectZip', zipFile);
+    formData.append('headed', String(!isHeadless));
+    if (projectId) {
+        formData.append('projectId', projectId);
+    }
+
+    const response = await fetch(`${API_URL}/run-tests`, {
+        method: 'POST',
+        body: formData,
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error || 'Failed to start test run');
+    }
+    return response.json(); // { runId, framework }
+};
+
+
 export const getRunStatus = async (runId, since = 0) => {
     const q = since ? `?since=${since}` : '';
     const response = await fetch(`${API_URL}/run-status/${runId}${q}`);

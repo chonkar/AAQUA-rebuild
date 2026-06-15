@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Clock, FolderOpen, ChevronDown, ChevronRight, Terminal, BarChart3, Download, CalendarClock, Wrench } from 'lucide-react';
-import { runTestsLocal, getRunStatus, retryFailedTests, getRuntimeInfo } from '../services/testRunnerService';
+import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Clock, FolderOpen, ChevronDown, ChevronRight, Terminal, BarChart3, Download, CalendarClock, Wrench, Upload } from 'lucide-react';
+import { runTestsLocal, runTestsZip, getRunStatus, retryFailedTests, getRuntimeInfo } from '../services/testRunnerService';
 import { startBatchHeal, getBatchHealStatus, applyHeal } from '../services/autoHealService';
 import { useProject } from '../context/ProjectContext';
 
@@ -142,6 +142,8 @@ const LiveConsole = ({ logs, isRunning }) => {
 const TestRunner = () => {
     const { selectedProjectId } = useProject();
     const [projectPath, setProjectPath] = useState('');
+    const [runMode, setRunMode] = useState('path'); // 'path' | 'zip'
+    const [zipFile, setZipFile] = useState(null);
     const [runId, setRunId] = useState(null);
     const [retrySourceRunId, setRetrySourceRunId] = useState(null);
     const [headed, setHeaded] = useState(() => {
@@ -253,11 +255,17 @@ const TestRunner = () => {
 
     // Run
     const handleRun = async () => {
-        if (!projectPath.trim()) return;
+        if (runMode === 'path' && !projectPath.trim()) return;
+        if (runMode === 'zip' && !zipFile) return;
         setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
         logCursorRef.current = 0;
         try {
-            const data = await runTestsLocal(projectPath.trim(), !headed, selectedProjectId || null);
+            let data;
+            if (runMode === 'path') {
+                data = await runTestsLocal(projectPath.trim(), !headed, selectedProjectId || null);
+            } else {
+                data = await runTestsZip(zipFile, !headed, selectedProjectId || null);
+            }
             if (data.error) { setStatus('error'); setError(data.error); setHasRun(true); return; }
             setRunId(data.runId);
             setRetrySourceRunId(data.runId);
@@ -470,36 +478,93 @@ const TestRunner = () => {
 
             {/* Input Panel */}
             <div className="tr-input-panel card">
+                {/* Tabs to switch run mode */}
+                <div className="tr-mode-tabs">
+                    <button
+                        className={`tr-mode-tab ${runMode === 'path' ? 'active' : ''}`}
+                        onClick={() => setRunMode('path')}
+                        disabled={isRunning || isScheduled}
+                    >
+                        <FolderOpen size={16} />
+                        <span>Local Directory Path</span>
+                    </button>
+                    <button
+                        className={`tr-mode-tab ${runMode === 'zip' ? 'active' : ''}`}
+                        onClick={() => setRunMode('zip')}
+                        disabled={isRunning || isScheduled}
+                    >
+                        <Upload size={16} />
+                        <span>Upload ZIP File</span>
+                    </button>
+                </div>
+
                 <div className="tr-input-row">
-                    <FolderOpen size={20} style={{ color: 'var(--accent-secondary)', flexShrink: 0 }} />
-                    <div style={{ display: 'flex', flex: 1, gap: '0.5rem' }}>
-                        <input
-                            type="text"
-                            className="input-field"
-                            placeholder="Enter project path, e.g. D:\MyProject"
-                            value={projectPath}
-                            onChange={(e) => setProjectPath(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && !isRunning && handleRun()}
-                            disabled={isRunning || isScheduled}
-                            style={{ flex: 1 }}
-                        />
-                        <button 
-                            className="btn" 
-                            style={{ padding: '0.5rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}
-                            onClick={async () => {
-                                try {
-                                    const res = await fetch('http://localhost:3001/api/browse-folder');
-                                    const data = await res.json();
-                                    if (data.path) setProjectPath(data.path);
-                                } catch (err) {
-                                    console.error("Browse folder error:", err);
-                                }
-                            }}
-                            disabled={isRunning || isScheduled}
-                        >
-                            Browse
-                        </button>
-                    </div>
+                    {runMode === 'path' ? (
+                        <>
+                            <FolderOpen size={20} style={{ color: 'var(--accent-secondary)', flexShrink: 0 }} />
+                            <div style={{ display: 'flex', flex: 1, gap: '0.5rem' }}>
+                                <input
+                                    type="text"
+                                    className="input-field"
+                                    placeholder="Enter project path, e.g. D:\MyProject"
+                                    value={projectPath}
+                                    onChange={(e) => setProjectPath(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && !isRunning && handleRun()}
+                                    disabled={isRunning || isScheduled}
+                                    style={{ flex: 1 }}
+                                />
+                                <button 
+                                    className="btn" 
+                                    style={{ padding: '0.5rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}
+                                    onClick={async () => {
+                                        try {
+                                            const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+                                            const res = await fetch(`${baseUrl}/api/browse-folder`);
+                                            const data = await res.json();
+                                            if (data.path) {
+                                                setProjectPath(data.path);
+                                            } else {
+                                                alert("Folder browsing is only supported when running the server locally on Windows.\n\nPlease type the path manually, or use the 'Upload ZIP File' tab.");
+                                            }
+                                        } catch (err) {
+                                            console.error("Browse folder error:", err);
+                                            alert("Folder browsing failed. If you are on a remote server, please type the path manually or upload a ZIP file.");
+                                        }
+                                    }}
+                                    disabled={isRunning || isScheduled}
+                                >
+                                    Browse
+                                </button>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="tr-zip-upload-zone">
+                            <Upload size={20} style={{ color: 'var(--accent-secondary)', flexShrink: 0 }} />
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1 }}>
+                                <div className="tr-file-input-wrapper">
+                                    <button 
+                                        className="btn btn-secondary" 
+                                        onClick={() => document.getElementById('tr-zip-file-input').click()}
+                                        disabled={isRunning || isScheduled}
+                                        style={{ padding: '0.5rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
+                                    >
+                                        Choose ZIP File
+                                    </button>
+                                    <input
+                                        id="tr-zip-file-input"
+                                        type="file"
+                                        accept=".zip"
+                                        style={{ display: 'none' }}
+                                        onChange={(e) => setZipFile(e.target.files[0] || null)}
+                                        disabled={isRunning || isScheduled}
+                                    />
+                                </div>
+                                <div className="tr-file-name" title={zipFile ? zipFile.name : 'No file chosen'}>
+                                    {zipFile ? zipFile.name : 'No file chosen'}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem', cursor: hasDisplayServer ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', opacity: hasDisplayServer ? 1 : 0.5 }} title={!hasDisplayServer ? "No display server detected on host. Headed mode is disabled." : ""}>
                         <input
                             type="checkbox"
@@ -509,7 +574,11 @@ const TestRunner = () => {
                         />
                         Show Browser (Headed)
                     </label>
-                    <button className="btn btn-primary" onClick={handleRun} disabled={isRunning || isScheduled || !projectPath.trim()}>
+                    <button 
+                        className="btn btn-primary" 
+                        onClick={handleRun} 
+                        disabled={isRunning || isScheduled || (runMode === 'path' ? !projectPath.trim() : !zipFile)}
+                    >
                         <Play size={18} />{isRunning ? 'Running...' : 'Run Tests'}
                     </button>
                     <button className="btn btn-retry" onClick={handleRetry} disabled={!canRetry} title={!canRetry ? (isRunning ? 'Wait for run to finish' : failedCount === 0 ? 'No failed tests' : 'Run tests first') : 'Re-run failed tests'}>
@@ -518,37 +587,44 @@ const TestRunner = () => {
                 </div>
 
                 {/* Scheduler Row */}
-                <div className="tr-scheduler-row">
-                    <CalendarClock size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Schedule for:</span>
-                    <input
-                        type="date"
-                        className="input-field tr-time-input"
-                        value={scheduleDate}
-                        min={new Date().toISOString().split('T')[0]}
-                        onChange={(e) => setScheduleDate(e.target.value)}
-                        disabled={isRunning || isScheduled}
-                    />
-                    <input
-                        type="time"
-                        className="input-field tr-time-input"
-                        value={scheduleTime}
-                        onChange={(e) => setScheduleTime(e.target.value)}
-                        disabled={isRunning || isScheduled}
-                    />
-                    <button
-                        className="btn tr-schedule-btn"
-                        onClick={handleSchedule}
-                        disabled={isRunning || isScheduled || !scheduleTime || !scheduleDate || !projectPath.trim()}
-                    >
-                        <CalendarClock size={16} /> Schedule Run
-                    </button>
-                    {isScheduled && (
-                        <button className="btn tr-cancel-schedule-btn" onClick={handleCancelSchedule}>
-                            ✕ Cancel
+                {runMode === 'path' ? (
+                    <div className="tr-scheduler-row">
+                        <CalendarClock size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Schedule for:</span>
+                        <input
+                            type="date"
+                            className="input-field tr-time-input"
+                            value={scheduleDate}
+                            min={new Date().toISOString().split('T')[0]}
+                            onChange={(e) => setScheduleDate(e.target.value)}
+                            disabled={isRunning || isScheduled}
+                        />
+                        <input
+                            type="time"
+                            className="input-field tr-time-input"
+                            value={scheduleTime}
+                            onChange={(e) => setScheduleTime(e.target.value)}
+                            disabled={isRunning || isScheduled}
+                        />
+                        <button
+                            className="btn tr-schedule-btn"
+                            onClick={handleSchedule}
+                            disabled={isRunning || isScheduled || !scheduleTime || !scheduleDate || !projectPath.trim()}
+                        >
+                            <CalendarClock size={16} /> Schedule Run
                         </button>
-                    )}
-                </div>
+                        {isScheduled && (
+                            <button className="btn tr-cancel-schedule-btn" onClick={handleCancelSchedule}>
+                                ✕ Cancel
+                            </button>
+                        )}
+                    </div>
+                ) : (
+                    <div className="tr-scheduler-row" style={{ opacity: 0.6 }}>
+                        <CalendarClock size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Scheduling is only available for local directory paths.</span>
+                    </div>
+                )}
 
                 {isScheduled && (
                     <div className="tr-schedule-banner animate-fade-in">
@@ -834,6 +910,60 @@ const TestRunner = () => {
 
         /* Input Panel */
         .tr-input-panel { margin-bottom: 1.5rem; }
+        .tr-mode-tabs {
+          display: flex;
+          gap: 1rem;
+          margin-bottom: 1.25rem;
+          border-bottom: 1px solid var(--border-color);
+          padding-bottom: 0.25rem;
+        }
+        .tr-mode-tab {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.5rem 0.75rem;
+          background: transparent;
+          border: none;
+          color: var(--text-secondary);
+          font-weight: 600;
+          font-size: 0.85rem;
+          cursor: pointer;
+          border-bottom: 2px solid transparent;
+          transition: all 0.2s;
+        }
+        .tr-mode-tab:hover:not(:disabled) {
+          color: var(--text-primary);
+        }
+        .tr-mode-tab.active {
+          color: var(--accent-secondary);
+          border-bottom-color: var(--accent-secondary);
+        }
+        .tr-mode-tab:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        .tr-zip-upload-zone {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          flex: 1;
+        }
+        .tr-file-input-wrapper {
+          position: relative;
+          display: inline-block;
+        }
+        .tr-file-name {
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+          background: var(--bg-tertiary);
+          padding: 0.55rem 0.85rem;
+          border-radius: var(--radius-md);
+          border: 1px dashed var(--border-color);
+          max-width: 320px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
         .tr-input-row { display: flex; align-items: center; gap: 0.75rem; }
         .tr-input-row .input-field { flex: 1; }
         .tr-framework-badge {
