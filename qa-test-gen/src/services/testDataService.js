@@ -74,7 +74,10 @@ export const generateTestData = async (input, mode = 'prompt', count = 5) => {
 
     try {
         const genAI = new GoogleGenerativeAI(API_KEY, LLM_ENDPOINT);
-        const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+        const model = genAI.getGenerativeModel({ 
+            model: MODEL_NAME, 
+            generationConfig: { reasoningEffort: 'low' } 
+        });
 
         let promptContext = "";
 
