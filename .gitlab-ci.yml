@@ -20,5 +20,13 @@ deploy:
     - docker compose up -d --build app
     - echo "=== Deployed SPA Files Listing ==="
     - ls -la /opt/shared-infra/nginx/sites/aaqua/
+    - echo "=== Deployed SPA index.html Content ==="
+    - cat /opt/shared-infra/nginx/sites/aaqua/index.html || true
+    - echo "=== Deployed SPA Assets ==="
+    - ls -la /opt/shared-infra/nginx/sites/aaqua/assets/ || true
+    - echo "=== Nginx Container Mounts ==="
+    - docker inspect shared-nginx --format='{{json .Mounts}}' || docker inspect nginx --format='{{json .Mounts}}' || true
+    - echo "=== Copying updated Nginx configurations ==="
+    - cp -r scripts/shared-infra-template/nginx/* /opt/shared-infra/nginx/ || sudo cp -r scripts/shared-infra-template/nginx/* /opt/shared-infra/nginx/ || true
     - echo "=== Reloading Nginx to flush cache ==="
     - docker exec shared-nginx nginx -s reload || docker exec nginx nginx -s reload || docker restart shared-nginx || docker restart nginx
