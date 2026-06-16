@@ -18,3 +18,7 @@ deploy:
     - cd qa-test-gen
     - ./scripts/publish-spa.sh
     - docker compose up -d --build app
+    - echo "=== Deployed SPA Files Listing ==="
+    - ls -la /opt/shared-infra/nginx/sites/aaqua/
+    - echo "=== Restarting Nginx to flush cache ==="
+    - cd /opt/shared-infra && docker compose restart nginx
