@@ -20,5 +20,5 @@ deploy:
     - docker compose up -d --build app
     - echo "=== Deployed SPA Files Listing ==="
     - ls -la /opt/shared-infra/nginx/sites/aaqua/
-    - echo "=== Restarting Nginx to flush cache ==="
-    - cd /opt/shared-infra && docker compose restart nginx
+    - echo "=== Reloading Nginx to flush cache ==="
+    - docker exec shared-nginx nginx -s reload || docker exec nginx nginx -s reload || docker restart shared-nginx || docker restart nginx
