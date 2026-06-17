@@ -5,12 +5,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm install            # install deps
+npm install            # install deps (postinstall fetches Playwright Chromium)
 npm run dev            # Vite dev server (frontend) - default :5173
 npm run server         # Express backend on :3001 (loads .env)
+npm run start          # production-mode backend (NODE_ENV=production node server/index.js)
 npm run build          # production build → dist/
 npm run lint           # eslint .
+npm run lint:fix       # eslint . --fix
 npm run preview        # preview built bundle
+
+# One-shot Keycloak cutover migration: drops the legacy `users` table and FKs.
+# Idempotent (wrapped in BEGIN/COMMIT) — safe to re-run, no-op if already applied.
+npm run migrate:cutover   # docker exec into aaqua-postgres + psql
 
 # Local infra: Postgres + Keycloak + OWASP ZAP + Mailpit (SMTP catcher)
 docker compose -f docker-compose.security.yml up -d
@@ -22,11 +28,13 @@ There is **no test framework wired up**. The `test_*.js`, `tmp-test-llm.js`, `de
 
 ## Architecture
 
-This is the AAQUA platform: a React + Vite frontend that drives an Express backend. The frontend is a router shell (`src/App.jsx`) over ~10 feature pages in `src/pages/`, each backed by a service in `src/services/` that either calls an LLM directly or hits the Express API at `:3001`.
+This is the AAQUA platform: a React + Vite frontend that drives an Express backend. The frontend is a router shell (`src/App.jsx`) over ~13 feature pages in `src/pages/`, each backed by a service in `src/services/` that either calls an LLM directly or hits the Express API at `:3001`. The root route `/` is the **Release Readiness dashboard** (the leadership-facing landing page that aggregates automation, accessibility, performance, localization, and security signals); `/services` is the legacy tool-picker grid (`Home.jsx`).
+
+App-level providers in `App.jsx`: `AuthProvider` (`react-oidc-context`) → `ProjectProvider` (active-project scope) → `ApiTestGenProvider` (sticky API-test-generator workspace state) wrap the `<Router>`. The wrapper `RequireProject` enforces that an active project is selected before a feature page renders (Phase 1: every tool is project-scoped except auth callback, home, and readiness).
 
 ### Two-process model
 - **Frontend** (`src/`): runs in the browser, talks to LLMs directly through a Vite proxy and to the backend through `/api`.
-- **Backend** (`server/`): Express app. `server/index.js` is a 2000-line monolith holding most legacy endpoints (`/api/convert`, `/api/generate-framework`, `/api/browser/*`, `/api/scrape`, `/api/analyze-localization`, `/api/analyze-accessibility`, `/api/run-tests*`). At the bottom it mounts the modular **AI Secure Engine** routers under `/api/security/*`.
+- **Backend** (`server/`): Express app. `server/index.js` is a ~3600-line monolith holding most feature endpoints (`/api/convert`, `/api/generate-framework`, `/api/parse-spec`, `/api/analyze-performance`, `/api/performance-insights`, `/api/browser/*`, `/api/scrape`, `/api/analyze-localization`, `/api/analyze-accessibility`, `/api/run-tests*`, `/api/runtime-info`, `/api/heal-*`). At the bottom it mounts the modular **AI Secure Engine** routers — note the mount paths are **not all** under `/api/security/*`: `projectRoutes` → `/api/projects`, `scanRoutes` → `/api/security/scan`, `dashboardRoutes` → `/api/security/dashboard`, `governanceRoutes` → `/api/security/governance`, `jiraRoutes` → `/api/jira`, `readinessRoutes` → `/api/readiness`. There is intentionally **no `/api/security/auth`** — auth is delegated to Keycloak (see "Identity" below).
 - **Vite proxy** (`vite.config.js`): `/api` → `localhost:3001`, `/llm-api` → `https://llm.lab.aaseya.com` (CORS bypass for browser-side LLM calls).
 
 ### Path-prefix routing — `import.meta.env.BASE_URL` is load-bearing
@@ -44,16 +52,20 @@ There are **two near-identical `LocalLLM` classes**: `src/utils/llmClient.js` (b
 
 Configuration via `.env`: `VITE_LLM_API_KEY`, `VITE_LLM_ENDPOINT` (default `https://llm.lab.aaseya.com/v1`), `VITE_LLM_MODEL` (default `gpt-oss-20b`). The same `VITE_*` vars are read both in the browser (via `import.meta.env`) and on the server (via `process.env` after `dotenv.config()`).
 
-### AI Secure Engine subsystem (`/api/security/*`)
-A bolted-on, modular subsystem that does **not** follow the monolith pattern in `server/index.js`. It has its own layered structure under `server/`:
+### AI Secure Engine subsystem (modular routers beside the monolith)
+A bolted-on, modular subsystem that does **not** follow the monolith pattern in `server/index.js`. Note the name is historical — the subsystem has grown to host non-security domains (Jira, Release Readiness, automation/accessibility/localization/performance result persistence) that share the same Sequelize + Keycloak-auth conventions. It has its own layered structure under `server/`:
 
-- `models/` — Sequelize models (`Project`, `Scan`, `Vulnerability`, `GovernanceMetric`) with associations defined in `models/index.js`. Convention: `underscored: true`, `freezeTableName: true`. **No `User` model** — identity is owned by Keycloak; `Project.owner_id` and `Scan.initiated_by` are plain UUIDs storing the Keycloak `sub` claim.
-- `routes/` — one router per resource (`projectRoutes`, `scanRoutes`, `dashboardRoutes`, `governanceRoutes`). Governance endpoints are gated by `requireRole('admin')`.
-- `services/` — `zapService` (OWASP ZAP REST client), `aiAnalysisService` (LLM-driven vuln triage), `governanceService` (release-gate logic: blocks if Critical+High > 30% of findings), `jiraService`.
+- `models/` — Sequelize models with associations defined in `models/index.js`. Convention: `underscored: true`, `freezeTableName: true`. **No `User` model** — identity is owned by Keycloak; `Project.owner_id` and `Scan.initiated_by` are plain UUIDs storing the Keycloak `sub` claim. Current model set:
+  - **Security**: `Project`, `Scan`, `Vulnerability`, `GovernanceMetric` (project hasMany scans → hasMany vulnerabilities, scan hasOne governance metric).
+  - **Per-project result history** (all `Project.hasMany`, `onDelete: CASCADE`): `AutomationResult` (Playwright run summaries), `AccessibilityResult` (axe-core findings), `LocalizationResult` (translation-coverage scans), `PerformanceResult` (Lighthouse Core Web Vitals), `ReleaseReadiness` (composite per-dimension scorecards rolled up from the others).
+- `routes/` — one router per resource: `projectRoutes` (→ `/api/projects`), `scanRoutes` (→ `/api/security/scan`), `dashboardRoutes` (→ `/api/security/dashboard`), `governanceRoutes` (→ `/api/security/governance`, gated by `requireRole('admin')`), `jiraRoutes` (→ `/api/jira`, fetches Jira stories to seed requirements; per-request Jira creds come in via `x-jira-*` headers, not env), `readinessRoutes` (→ `/api/readiness`, joins the latest result rows across automation/accessibility/perf/localization/security into a single readiness profile).
+- `services/` — `zapService` (OWASP ZAP REST client), `aiAnalysisService` (LLM-driven vuln triage), `governanceService` (release-gate logic: blocks if Critical+High > 30% of findings), `readinessService` (computes aggregate health score from the per-dimension result tables), `jiraService` (Jira REST client with per-request credentials).
 - `middleware/` — `auth.js` (Keycloak JWT verification via `jose` + JWKS — see "Identity" below), `rateLimiter.js`, `urlValidator.js` (SSRF guard).
 
 ### Identity — Keycloak owns auth, Express only verifies tokens
 Authentication is delegated entirely to Keycloak (realm `aaseya-platform`, OIDC code+PKCE flow). `server/middleware/auth.js` verifies inbound `Authorization: Bearer <jwt>` tokens against Keycloak's JWKS using `jose`, sets `req.user = { id, email, name, roles, raw }` from the token claims, and exposes `requireRole(...allowed)` for role gating. There is **no local password store, no `/auth/login` endpoint, no JWT signing key in `.env`** — all of that lives in Keycloak. The frontend uses `react-oidc-context`; tokens flow via `src/utils/apiClient.js`. The `keycloak` schema is isolated from the app's `public` schema; `server/db.js` pins Sequelize's `search_path` to `public` so `sync({ alter: true })` cannot reach Keycloak's tables.
+
+The legacy local-user model (a `users` table with bcrypted passwords and a `JWT_SECRET`-signed HMAC flow) was retired in the Keycloak cutover. The one-shot migration at `scripts/migrate-drop-users-table.sql` drops the table and its inbound FKs from `projects.owner_id` and `scans.initiated_by`; it's wrapped in `BEGIN/COMMIT` and discovers constraint names at runtime, so it's idempotent — re-running on a cut-over DB is a no-op. Invoke via `npm run migrate:cutover`. If you see code or docs that reference `JWT_SECRET`, `JWT_EXPIRES_IN`, an `authRoutes` module, or a `User` Sequelize model, **the code is stale or wrong** — those have not existed since the cutover.
 
 ### Local mail — Mailpit (dev only)
 `docker-compose.security.yml` includes a `mailpit` container that catches every email Keycloak sends (verify-email, password reset, etc.) without delivering to a real inbox. SMTP at `mailpit:1025`, web UI at `localhost:8025`. The realm export's `smtpServer` block points at it. **Production uses real SMTP** — configured via the Keycloak admin console (Realm settings → Email), not via the realm JSON. Never include Mailpit in `docker-compose.yml` or `docker-compose.security.prod.yml`.
@@ -81,6 +93,20 @@ Both flows use **cursor-based polling**, not SSE/WebSocket. The choice is delibe
 
 ### File-upload flows
 `/api/convert` (test framework migration) and `/api/run-tests` accept ZIP uploads via `multer` into `temp_uploads/`, extract with `adm-zip` into `temp_extract/<timestamp>/`, then process. The `node_test_extract/` and `verify_proj_extracted/` directories at the repo root are leftover artifacts from previous runs and should not be edited as source.
+
+### Performance scanning — Lighthouse + chrome-launcher
+`POST /api/analyze-performance { url, projectId }` runs a Lighthouse audit by spawning Chrome via `chrome-launcher` (so it works inside the `mcr.microsoft.com/playwright` container, which already has Chromium) and returns `{ score, metrics: { lcp, cls, tbt, fcp, speedIndex, ttfb }, opportunities[], scannedUrl }`. The result is persisted to `PerformanceResult` if `projectId` is supplied. A second, deliberately separate endpoint `POST /api/performance-insights` accepts the scan result and returns AI triage as `{ summary }` — split into two calls so the scan can render immediately while the (slow) LLM insight loads progressively. AI triage requires a client-supplied `x-api-key` header (browser-held), distinct from the server's LLM key.
+
+### API Test Generation — OpenAPI spec to runnable suites
+A three-step pipeline backed by `@apidevtools/swagger-parser`:
+1. `POST /api/parse-spec` accepts an OpenAPI/Swagger spec via JSON URL, raw text, or multipart file upload (with an optional Postman environment file `envFile`) and returns a normalized catalog `{ info, endpoints }` — endpoints are flattened with `{ method, path, pathParams, queryParams, headerParams, requestBodySchema, responses, security }`. An ad-hoc "manual endpoints" mode in `ApiTestGenerator.jsx` (`buildManualCatalog`) lets users assemble the same catalog shape without a spec, so the rest of the pipeline doesn't need to fork.
+2. `POST /api/generate-test-cases { endpoints, categories }` — categories are any subset of `['positive', 'negative', 'auth', 'schema', 'boundary']` (defaults: positive + negative + schema). Returns one result row per endpoint with `cases[]`. Errors per endpoint are returned in-line so a single bad spec entry doesn't fail the whole batch.
+3. Two downstream materializations off the generated cases: `downloadAutomationProject` (zipped Playwright project), `downloadFlowProject` (multi-endpoint flow with chained state — generated via `generateFlows`), and `downloadLoadTest` (k6 / autocannon script — load-test export of a flow).
+
+The `ApiTestGenProvider` context at app level holds the workspace state (spec, selected endpoints, generated cases, flow definitions) so users can navigate away and come back without losing progress; it does **not** persist across page reloads.
+
+### Release Readiness — aggregate scorecard
+`GET /api/readiness/:projectId` joins the latest row per Project from `AutomationResult`, `AccessibilityResult`, `LocalizationResult`, `PerformanceResult`, and the latest `Scan` (+ its `GovernanceMetric`) into a single `{ profile, sources }` payload. The UI at `/` renders the per-dimension cards using the raw source numbers (test counts, vulnerability counts, axe violations) rather than values derived from the aggregate health score — so a missing dimension shows as "no data" instead of skewing the headline number. `readinessService.getLatestReadiness` returns the most recent `ReleaseReadiness` row (the rolled-up scorecard); `fetchLatestSources` returns the per-dimension raw data.
 
 ### Frontend layout
 `src/components/common/{Layout,Header,Sidebar}.jsx` provides the chrome; pages render inside `<Layout>`. Styling is per-component inline `<style>` blocks driven by CSS variables (`var(--bg-primary)`, `var(--text-muted)`, etc.) defined in `src/index.css`. There's a `useTheme` hook in `src/hooks/`. No CSS framework, no component library beyond `lucide-react` icons.
@@ -125,6 +151,8 @@ Tenant routing is path-prefix: `/aaqua/` (SPA), `/aaqua/api/` (backend), `/aaqua
 21. **HTTP→HTTPS redirect at nginx must exempt the container healthcheck path.** The official nginx image's healthcheck is `wget -qO- http://127.0.0.1/healthz`. With `return 301 https://$host$request_uri` on port 80, the wget follows the redirect to `https://127.0.0.1/healthz` — and since the cert is for `aaqua.aaseya.com` (not `127.0.0.1`), TLS verification fails, wget exits non-zero, Compose marks nginx unhealthy, restart loop. Keep `/healthz` answering 200 directly on port 80, redirect everything else. The port 80 listener also stays useful for future Let's Encrypt HTTP-01 challenges.
 
 22. **Keycloak's `Set-Cookie` headers exceed nginx default proxy buffers.** Default `proxy_buffer_size` is 4 KB; Keycloak's `AUTH_SESSION_ID` + `KC_RESTART` + `KEYCLOAK_LOCALE` plus standard headers easily exceed it. Symptom: intermittent 502 `upstream sent too big header while reading response header from upstream` on `/auth/realms/.../auth` during sign-in. Fix in the `location /auth/ { ... }` block: `proxy_buffer_size 16k; proxy_buffers 4 16k; proxy_busy_buffers_size 32k;`.
+
+23. **The repo template is the source of truth — inline edits on `/opt/shared-infra/` get clobbered on the next redeploy.** `scripts/gcp-vm-startup.sh` (cloud-init) and `scripts/publish-spa.sh` both seed `/opt/shared-infra/` from `scripts/shared-infra-template/`. Any ops-time fix applied directly to `/opt/shared-infra/nginx/conf.d/*.conf`, `docker-compose.yml`, or the secrets/realm templates that is NOT backported to the repo template WILL be reverted on next deploy. The 2026-06-17 incident exhibited the full failure mode: a previous HTTPS rollout had added the entire `server { listen 443 ssl; ... }` block (plus gotcha #21 healthz exemption and gotcha #22 buffer-size tuning) directly on the QA box; redeploy seeded from the older template; `:443` lost its listener; `https://aaqua.aaseya.com/` returned "Connection refused after 1ms" because docker-proxy was bound but no nginx listener was behind it. The compose comment `# nginx: public edge on :80 (later :443)` is the half-finished marker that exposed the gap — grep `(later)`, `TODO`, `FIXME` in `scripts/shared-infra-template/` before every redeploy. **Workflow rule**: ANY edit to `/opt/shared-infra/` MUST have a matching commit in `scripts/shared-infra-template/` before the SSH session ends.
 
 ### `docker-compose.security.yml` is local-dev only
 The local-dev compose still exists and runs Postgres + Keycloak + ZAP + Mailpit on the developer's laptop. It is **NOT** the same model as the shared-infra QA stack — it uses the older "two schemas in one DB" Postgres pattern and includes Mailpit (which has no place in QA/prod). The two are intentionally allowed to drift.
