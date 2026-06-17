@@ -28,5 +28,5 @@ deploy:
     - docker inspect shared-nginx --format='{{json .Mounts}}' || docker inspect nginx --format='{{json .Mounts}}' || true
     - echo "=== Copying updated Nginx configurations ==="
     - docker run --rm -v /opt/shared-infra:/mnt/shared-infra -v "$PWD":/mnt/repo alpine cp -r /mnt/repo/scripts/shared-infra-template/nginx/. /mnt/shared-infra/nginx/
-    - echo "=== Reloading Nginx to flush cache ==="
-    - docker exec shared-nginx nginx -s reload || docker exec nginx nginx -s reload || docker restart shared-nginx || docker restart nginx
+    - echo "=== Restarting Nginx to apply template changes and flush cache ==="
+    - docker restart shared-nginx || docker restart nginx
