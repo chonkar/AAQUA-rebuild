@@ -8,11 +8,12 @@ AAQUA is a React + Express platform that combines a suite of AI-driven QA tools 
 |---|---|
 | Run the stack on your laptop | [`LOCAL_SETUP.md`](LOCAL_SETUP.md) |
 | **Provision a fresh GCP VM from scratch** (cloud-init Docker install, repo clone, shared-infra seed) | [`scripts/gcp-provision.sh`](scripts/gcp-provision.sh) — edit the `CONFIGURE ME` block at the top, then run from your workstation. Pair with `scripts/gcp-vm-startup.sh`. |
+| **Install the CI/CD runner on the GCP VM** (auto-deploy on push to `main`) | [`scripts/install-gitlab-runner.sh`](scripts/install-gitlab-runner.sh) — register a project runner in the GitLab UI first (Tags field MUST be set), then run the script with the generated token. See [`CLAUDE.md` gotcha #24](CLAUDE.md). |
 | Deploy to a QA / staging server (shared-infra model) | [`DEPLOYMENT.md`](DEPLOYMENT.md) and the executable plan at [`docs/superpowers/plans/2026-05-08-shared-infra-deployment.md`](docs/superpowers/plans/2026-05-08-shared-infra-deployment.md) |
 | Understand the deployment design | [`docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md`](docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md) |
 | Understand the AI Secure Engine subsystem (`/api/security/*`) | [`SECURITY_ENGINE_README.md`](SECURITY_ENGINE_README.md) |
 | Understand the architecture and codebase conventions | [`CLAUDE.md`](CLAUDE.md) |
-| Look up a deployment gotcha (HTTPS / mixed-content, self-signed cert + JWKS, DB secret file, role claim location, `/aaqua/` BASE_URL trap, GCP provisioning quirks, nginx upstream resolution, Keycloak realm reset, etc.) | [`CLAUDE.md` § Deployment gotchas](CLAUDE.md#deployment-gotchas-learned-the-hard-way-during-the-qa-box-stand-up) (22 numbered gotchas as of 2026-06-05) |
+| Look up a deployment gotcha (HTTPS / mixed-content, self-signed cert + JWKS, DB secret file, role claim location, `/aaqua/` BASE_URL trap, GCP provisioning quirks, nginx upstream resolution, Keycloak realm reset, GitLab Runner UI form, etc.) | [`CLAUDE.md` § Deployment gotchas](CLAUDE.md#deployment-gotchas-learned-the-hard-way-during-the-qa-box-stand-up) (24 numbered gotchas as of 2026-06-17) |
 
 ## Stack at a glance
 
@@ -37,6 +38,19 @@ npm run dev      # terminal 2 — Vite on :5173
 ```
 
 Then open http://localhost:5173. See [`LOCAL_SETUP.md`](LOCAL_SETUP.md) for the full walkthrough including Keycloak admin bootstrap and email verification flow.
+
+## CI/CD — push-to-deploy
+
+The canonical repo lives at `https://git.lab.aaseya.com/camunda/aaqua` (migrated from GitHub on 2026-06-17). A GitLab Runner installed on the QA host (`aaqua-host` in GCP `asia-south1-a`) picks up every push to `main` and auto-deploys via [`.gitlab-ci.yml`](../.gitlab-ci.yml):
+
+1. `git fetch + reset --hard` against the latest `main`
+2. [`scripts/publish-spa.sh`](scripts/publish-spa.sh) builds the SPA in a Docker container and extracts to `/opt/shared-infra/nginx/sites/aaqua/`
+3. `docker compose up -d --build app` rebuilds the AAQUA backend image and swaps the container
+4. Re-copies the shared-infra nginx templates from the repo into `/opt/shared-infra/` and reloads `shared-nginx`
+
+Setup is one-shot via [`scripts/install-gitlab-runner.sh`](scripts/install-gitlab-runner.sh) (runs on the GCP VM, registers a `gitlab-runner` system-user service with tag `aaqua-deploy`). See [`CLAUDE.md` gotcha #24](CLAUDE.md) for the full runner architecture including the GitLab Runner 16+ auth-token model trap (the UI form is the source of truth — fill in the Tags field or the runner stays idle).
+
+The runner uses `CI_JOB_TOKEN` (short-lived, per-job, GitLab-injected) for the repo fetch — **no PAT lives on the VM**. Concurrency is pinned to 1 (publish-spa.sh's `rm -rf $TARGET` before `docker cp` would race under parallel deploys).
 
 ## Compose file map
 

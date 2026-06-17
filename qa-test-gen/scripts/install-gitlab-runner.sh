@@ -110,18 +110,24 @@ if gitlab-runner list 2>&1 | grep -qF "$RUNNER_DESCRIPTION"; then
   echo "    (To re-register: sudo gitlab-runner unregister --name \"$RUNNER_DESCRIPTION\")"
 else
   echo "==> Registering runner with GitLab"
-  # Flag name varies by GitLab Runner version:
-  #   - GitLab Runner <16:    --registration-token  (legacy "registration token")
-  #   - GitLab Runner 16+:    --token               (new "authentication token")
-  #   - GitLab Runner 18+:    --registration-token  removed entirely
-  # Detect which one the installed binary supports and pick the right flag so
-  # the script keeps working through GitLab Runner upgrades.
-  if gitlab-runner register --help 2>&1 | grep -q -- '--token '; then
-    AUTH_FLAG=--token
-  else
-    AUTH_FLAG=--registration-token
-  fi
-  echo "    Auth flag: $AUTH_FLAG"
+  # Pick the right CLI flag based on the token's PREFIX, not on the runner
+  # binary's --help output. Why prefix-detection: on GitLab Runner 19.0.1
+  # `register --help` advertises BOTH --token and --registration-token, so
+  # an unconditional `grep --token` match would always succeed — but if the
+  # user pasted a new-style `glrt-...` auth token via the legacy flag, GitLab
+  # silently downgrades to "legacy-compatible mode" and IGNORES --tag-list,
+  # --locked, --run-untagged, --access-level. Symptom: runner registers,
+  # appears online, but stays idle because tags fall back to whatever was
+  # set in the UI form (often empty).
+  #
+  # Token formats:
+  #   - glrt-...           — GitLab 16+ authentication token (from UI form) → --token
+  #   - anything else      — legacy registration token (GitLab <16)          → --registration-token
+  case "$REGISTRATION_TOKEN" in
+    glrt-*) AUTH_FLAG=--token ;;
+    *)      AUTH_FLAG=--registration-token ;;
+  esac
+  echo "    Auth flag: $AUTH_FLAG (detected from token prefix)"
   gitlab-runner register \
     --non-interactive \
     --url "$GITLAB_URL" \
