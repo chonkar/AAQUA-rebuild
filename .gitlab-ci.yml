@@ -12,6 +12,8 @@ deploy:
     DEPLOY_ROOT: /opt/aaqua/repo
     COMPOSE_PROJECT_NAME: qa-test-gen
   script:
+    - echo "=== Runner Host Public IP ==="
+    - curl -s https://ifconfig.me || wget -qO- https://ifconfig.me || true
     - cd "$DEPLOY_ROOT"
     - git fetch "https://gitlab-ci-token:${CI_JOB_TOKEN}@git.lab.aaseya.com/camunda/aaqua.git" main
     - git reset --hard FETCH_HEAD
