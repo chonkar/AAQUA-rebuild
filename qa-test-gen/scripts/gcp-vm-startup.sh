@@ -87,6 +87,24 @@ if ! docker network inspect shared-infra_default >/dev/null 2>&1; then
   docker network create shared-infra_default
 fi
 
+# Optional: install + register the GitLab Runner if a registration token was
+# supplied in the VM metadata (aaqua-gitlab-runner-token). Without the token
+# this step is silently skipped — VM provisioning still completes, and the
+# runner can be installed later by SSHing in and running install-gitlab-runner.sh
+# manually. See qa-test-gen/CLAUDE.md gotcha #24.
+RUNNER_TOKEN=$(fetch_meta aaqua-gitlab-runner-token)
+if [ -n "$RUNNER_TOKEN" ]; then
+  echo "==> Installing GitLab Runner (token from VM metadata)"
+  # Tolerate a runner-install failure — VM up without a CI runner is recoverable
+  # (operator can SSH in and re-run install-gitlab-runner.sh manually), but a
+  # VM that didn't finish booting is not. `set -e` would otherwise abort here.
+  REGISTRATION_TOKEN="$RUNNER_TOKEN" \
+    bash /opt/aaqua/qa-test-gen/scripts/install-gitlab-runner.sh \
+    || echo "WARN: GitLab Runner install failed — finish manually via install-gitlab-runner.sh after first boot"
+else
+  echo "==> Skipping GitLab Runner install (no aaqua-gitlab-runner-token metadata)"
+fi
+
 cat <<EOF
 
 ============================================================================
