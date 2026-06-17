@@ -32,3 +32,12 @@ deploy:
     - docker run --rm -v /opt/shared-infra:/mnt/shared-infra -v "$PWD":/mnt/repo alpine cp -r /mnt/repo/scripts/shared-infra-template/nginx/. /mnt/shared-infra/nginx/
     - echo "=== Restarting Nginx to apply template changes and flush cache ==="
     - docker restart shared-nginx || docker restart nginx
+    - echo "=== DIAGNOSTICS ==="
+    - echo "=== Host IP info ==="
+    - hostname -I || ip addr || true
+    - echo "=== Running Containers ==="
+    - docker ps
+    - echo "=== Active Nginx Conf.d Files ==="
+    - docker exec shared-nginx ls -la /etc/nginx/conf.d || docker exec nginx ls -la /etc/nginx/conf.d || true
+    - echo "=== Active Nginx Config Dump ==="
+    - docker exec shared-nginx nginx -T || docker exec nginx nginx -T || true
