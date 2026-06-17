@@ -37,6 +37,10 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 # ─── Stage 3: final backend runtime ───────────────────────────────────────
 FROM mcr.microsoft.com/playwright:v1.58.0-jammy
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openjdk-17-jdk maven && \
+    rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production \
     PORT=3001 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
