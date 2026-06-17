@@ -88,4 +88,8 @@ secrets:
   db_password:
     file: /opt/shared-infra/secrets/aaqua/db_password.txt
   jira_token:
-    file: ./secrets/jira_token.txt
+    # Per CLAUDE.md gotcha #8: AAQUA secrets live ONLY at /opt/shared-infra/secrets/aaqua/.
+    # Was previously a relative ./secrets/jira_token.txt path — the inconsistency caused
+    # CI deploys to fail with "bind source path does not exist" when the per-repo secrets/
+    # directory wasn't manually created on the VM.
+    file: /opt/shared-infra/secrets/aaqua/jira_token.txt
