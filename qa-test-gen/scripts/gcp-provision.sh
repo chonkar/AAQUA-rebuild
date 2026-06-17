@@ -40,7 +40,9 @@ STATIC_IP_NAME="aaqua-host-ip"
 SSH_SOURCE_CIDR="150.129.244.82/32"
 
 # --- AAQUA repo to clone onto the VM ---
-AAQUA_REPO_URL="https://github.com/chonkar/AAQUA-rebuild.git"
+# Canonical repo moved from GitHub to GitLab on 2026-06-17. See
+# qa-test-gen/CLAUDE.md gotcha #24 + the project_repo_moved_to_gitlab memory.
+AAQUA_REPO_URL="https://git.lab.aaseya.com/camunda/aaqua.git"
 AAQUA_REPO_BRANCH="main"
 
 # --- Tags (used by firewall rules to target this VM) ---
