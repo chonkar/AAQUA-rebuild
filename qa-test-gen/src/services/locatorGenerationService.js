@@ -41,7 +41,10 @@ export const generateLocators = async (htmlContent) => {
 
 const improveLocatorsWithAI = async (htmlContent, weakLocators) => {
     const genAI = new GoogleGenerativeAI(API_KEY, LLM_ENDPOINT);
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+    const model = genAI.getGenerativeModel({ 
+        model: MODEL_NAME, 
+        generationConfig: { reasoningEffort: 'low' } 
+    });
 
     const elementsData = weakLocators.map(l => ({
         element: l.element,

@@ -1,0 +1,24 @@
+stages:
+  - deploy
+
+deploy:
+  stage: deploy
+  tags:
+    - aaqua-deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  variables:
+    GIT_STRATEGY: none
+    DEPLOY_ROOT: /opt/aaqua/repo
+    COMPOSE_PROJECT_NAME: qa-test-gen
+  script:
+    - cd "$DEPLOY_ROOT"
+    - git fetch "https://gitlab-ci-token:${CI_JOB_TOKEN}@git.lab.aaseya.com/camunda/aaqua.git" main
+    - git reset --hard FETCH_HEAD
+    - cd qa-test-gen
+    - ./scripts/publish-spa.sh
+    - docker compose up -d --build app
+    - echo "=== Deployed SPA Files Listing ==="
+    - ls -la /opt/shared-infra/nginx/sites/aaqua/
+    - echo "=== Reloading Nginx to flush cache ==="
+    - docker exec shared-nginx nginx -s reload || docker exec nginx nginx -s reload || docker restart shared-nginx || docker restart nginx

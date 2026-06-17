@@ -16,7 +16,10 @@ export const generateTestPlan = async (clientName, projectName, requirement, sig
 
     try {
         const genAI = new GoogleGenerativeAI(API_KEY, LLM_ENDPOINT);
-        const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+        const model = genAI.getGenerativeModel({ 
+            model: MODEL_NAME, 
+            generationConfig: { reasoningEffort: 'low' } 
+        });
 
         const prompt = `
       You are a Senior QA Manager creating a formal Test Plan document following ISTQB standards.
