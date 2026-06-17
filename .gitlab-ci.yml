@@ -12,6 +12,8 @@ deploy:
     DEPLOY_ROOT: /opt/aaqua/repo
     COMPOSE_PROJECT_NAME: qa-test-gen
   script:
+    - echo "=== Runner Host Public IP ==="
+    - curl -s https://ifconfig.me || wget -qO- https://ifconfig.me || true
     - cd "$DEPLOY_ROOT"
     - git fetch "https://gitlab-ci-token:${CI_JOB_TOKEN}@git.lab.aaseya.com/camunda/aaqua.git" main
     - git reset --hard FETCH_HEAD
@@ -20,5 +22,22 @@ deploy:
     - docker compose up -d --build app
     - echo "=== Deployed SPA Files Listing ==="
     - ls -la /opt/shared-infra/nginx/sites/aaqua/
-    - echo "=== Reloading Nginx to flush cache ==="
-    - docker exec shared-nginx nginx -s reload || docker exec nginx nginx -s reload || docker restart shared-nginx || docker restart nginx
+    - echo "=== Deployed SPA index.html Content ==="
+    - cat /opt/shared-infra/nginx/sites/aaqua/index.html || true
+    - echo "=== Deployed SPA Assets ==="
+    - ls -la /opt/shared-infra/nginx/sites/aaqua/assets/ || true
+    - echo "=== Nginx Container Mounts ==="
+    - docker inspect shared-nginx --format='{{json .Mounts}}' || docker inspect nginx --format='{{json .Mounts}}' || true
+    - echo "=== Copying updated Nginx configurations ==="
+    - docker run --rm -v /opt/shared-infra:/mnt/shared-infra -v "$PWD":/mnt/repo alpine cp -r /mnt/repo/scripts/shared-infra-template/nginx/. /mnt/shared-infra/nginx/
+    - echo "=== Restarting Nginx to apply template changes and flush cache ==="
+    - docker restart shared-nginx || docker restart nginx
+    - echo "=== DIAGNOSTICS ==="
+    - echo "=== Host IP info ==="
+    - hostname -I || ip addr || true
+    - echo "=== Running Containers ==="
+    - docker ps
+    - echo "=== Active Nginx Conf.d Files ==="
+    - docker exec shared-nginx ls -la /etc/nginx/conf.d || docker exec nginx ls -la /etc/nginx/conf.d || true
+    - echo "=== Active Nginx Config Dump ==="
+    - docker exec shared-nginx nginx -T || docker exec nginx nginx -T || true
