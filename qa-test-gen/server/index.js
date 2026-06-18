@@ -823,7 +823,7 @@ async function generateSelenium(outputPath, projectName, features, language) {
     // 2. config.properties
     const configProperties = `base.url=https://www.saucedemo.com
 browser=chrome
-headless=false
+headless=true
 implicit.wait=10
 explicit.wait=10`;
     writeProjectFile(path.join(mainResourcesPath, 'config.properties'), configProperties);
