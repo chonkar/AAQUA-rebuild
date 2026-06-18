@@ -2787,8 +2787,17 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
             for (const d of [path.join(projectRoot, 'target', 'surefire-reports'), path.join(projectRoot, 'target', 'failsafe-reports')]) {
                 if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
             }
-            runCommand('mvn', ['clean', 'test', '-fae', '--no-transfer-progress'], projectRoot, runId, (code) => {
+            const logFile = path.join(projectRoot, 'chromedriver.log');
+            runCommand('mvn', [
+                'clean', 'test', '-fae', '--no-transfer-progress',
+                `-Dwebdriver.chrome.logfile=${logFile}`,
+                '-Dwebdriver.chrome.verboseLogging=true'
+            ], projectRoot, runId, (code) => {
                 const run = runStore.get(runId);
+                if (fs.existsSync(logFile)) {
+                    const chromeDriverLog = fs.readFileSync(logFile, 'utf8');
+                    appendRunLog(run, `\n=== ChromeDriver Verbose Log ===\n${chromeDriverLog}\n================================\n`);
+                }
                 appendRunLog(run, `\n[AAQUA] Process exited with code ${code}\n`);
                 const suites = parseMavenResults(projectRoot);
                 run.results = { suites, summary: buildSummary(suites) };
