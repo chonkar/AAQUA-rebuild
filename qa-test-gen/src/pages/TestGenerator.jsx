@@ -118,7 +118,7 @@ const TestGenerator = () => {
                         testCases={testCases}
                         disabled={isGenerating}
                     />
-                    <TestCaseTable testCases={testCases} />
+                    <TestCaseTable testCases={testCases} onTestCasesChange={setTestCases} />
                 </div>
             )}
 

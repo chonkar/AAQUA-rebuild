@@ -4,7 +4,7 @@ import { AlertOctagon, Loader2, CheckCircle2, X } from 'lucide-react';
 import { useProject } from '../../context/ProjectContext';
 import { createApiClient } from '../../utils/apiClient';
 
-const TestCaseTable = ({ testCases: propTestCases }) => {
+const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
   const { selectedProject } = useProject();
   const { isLoading, error: authError, user } = useAuth();
   const [api, setApi] = useState(null);
@@ -116,7 +116,11 @@ const TestCaseTable = ({ testCases: propTestCases }) => {
     const updated = editData[tcId];
     // Placeholder API call – can be implemented later
     // await api.put(`/api/testcases/${tcId}`, updated);
-    setTestCases(prev => prev.map(tc => (tc.id === tcId ? updated : tc)));
+    const nextTestCases = testCases.map(tc => (tc.id === tcId ? updated : tc));
+    setTestCases(nextTestCases);
+    if (onTestCasesChange) {
+      onTestCasesChange(nextTestCases);
+    }
     setEditMode(prev => ({ ...prev, [tcId]: false }));
     const { [tcId]: _, ...rest } = editData;
     setEditData(rest);
@@ -141,7 +145,11 @@ const TestCaseTable = ({ testCases: propTestCases }) => {
     const newTc = { ...newTestCase, id: `TC-${Date.now()}` };
     // Placeholder API call for creation
     // await api.post('/api/testcases', newTc);
-    setTestCases(prev => [...prev, newTc]);
+    const nextTestCases = [...testCases, newTc];
+    setTestCases(nextTestCases);
+    if (onTestCasesChange) {
+      onTestCasesChange(nextTestCases);
+    }
     closeAddModal();
   };
 
