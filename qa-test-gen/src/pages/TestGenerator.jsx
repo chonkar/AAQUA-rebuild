@@ -41,7 +41,22 @@ const TestGenerator = () => {
         const startedAt = performance.now();
         try {
             const results = await generateTestCases(requirement, requirementHistory, controller.signal);
-            setTestCases(prev => [...prev, ...results]);
+            setTestCases(prev => {
+                let maxNum = 0;
+                prev.forEach(tc => {
+                    if (tc.id && tc.id.startsWith('FT_')) {
+                        const num = parseInt(tc.id.replace('FT_', ''), 10);
+                        if (!isNaN(num) && num > maxNum) {
+                            maxNum = num;
+                        }
+                    }
+                });
+                const reindexedResults = results.map((tc, idx) => ({
+                    ...tc,
+                    id: `FT_${String(maxNum + idx + 1).padStart(3, '0')}`
+                }));
+                return [...prev, ...reindexedResults];
+            });
             setRequirementHistory(prev => [...prev, requirement]);
             setLastBatchCount(Array.isArray(results) ? results.length : 0);
             setGenSeconds((performance.now() - startedAt) / 1000);

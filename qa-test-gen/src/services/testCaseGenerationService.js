@@ -122,23 +122,36 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
             }
         });
 
+        const queryBatchWithRetry = async (b, retriesLeft = 1) => {
+            try {
+                const result = await Promise.race([
+                    model.generateContent(b.prompt),
+                    cancellationPromise
+                ]);
+                const response = await result.response;
+                const text = response.text();
+                const cases = extractTestCases(text);
+                
+                // If it succeeded but returned very few cases (less than 5), retry once if retries are left
+                if (cases.length < 5 && retriesLeft > 0) {
+                    console.warn(`[AI Batch Warning] Generated only ${cases.length} cases for ${b.name}. Retrying once...`);
+                    return await queryBatchWithRetry(b, retriesLeft - 1);
+                }
+                return cases;
+            } catch (err) {
+                if (err.name === 'AbortError') throw err;
+                console.error(`[AI Batch Error] Failed to generate ${b.name}:`, err);
+                if (retriesLeft > 0) {
+                    console.log(`[AI Batch Retry] Retrying ${b.name} after error...`);
+                    return await queryBatchWithRetry(b, retriesLeft - 1);
+                }
+                return [];
+            }
+        };
+
         // Run queries in parallel
         const results = await Promise.all(
-            batches.map(async (b) => {
-                try {
-                    const result = await Promise.race([
-                        model.generateContent(b.prompt),
-                        cancellationPromise
-                    ]);
-                    const response = await result.response;
-                    const text = response.text();
-                    return extractTestCases(text);
-                } catch (err) {
-                    if (err.name === 'AbortError') throw err;
-                    console.error(`[AI Batch Error] Failed to generate ${b.name}:`, err);
-                    return [];
-                }
-            })
+            batches.map(b => queryBatchWithRetry(b))
         );
 
         // Flatten all generated test cases
