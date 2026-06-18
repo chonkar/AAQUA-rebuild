@@ -39,6 +39,17 @@ FROM mcr.microsoft.com/playwright:v1.58.0-jammy
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends openjdk-17-jdk maven && \
+    npx playwright install chrome && \
+    mv /usr/bin/google-chrome /usr/bin/google-chrome-original && \
+    echo '#!/bin/bash' > /usr/bin/google-chrome && \
+    echo 'exec /usr/bin/google-chrome-original --no-sandbox --disable-dev-shm-usage "$@"' >> /usr/bin/google-chrome && \
+    chmod +x /usr/bin/google-chrome && \
+    if [ -f /usr/bin/google-chrome-stable ]; then \
+        mv /usr/bin/google-chrome-stable /usr/bin/google-chrome-stable-original && \
+        echo '#!/bin/bash' > /usr/bin/google-chrome-stable && \
+        echo 'exec /usr/bin/google-chrome-stable-original --no-sandbox --disable-dev-shm-usage "$@"' >> /usr/bin/google-chrome-stable && \
+        chmod +x /usr/bin/google-chrome-stable; \
+    fi && \
     rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
