@@ -42,11 +42,6 @@ deploy:
     - echo "=== Active Nginx Config Dump ==="
     - echo "=== Active Nginx Config Dump ==="
     - docker exec shared-nginx nginx -T || docker exec nginx nginx -T || true
-    - echo "=== CHROME RUN TEST DIAGNOSTICS ==="
-    - docker exec aaqua-app google-chrome --version || true
-    - docker exec aaqua-app google-chrome-original --version || true
-    - docker exec aaqua-app ls -la /usr/bin/google-chrome* || true
-    - docker exec aaqua-app cat /usr/bin/google-chrome || true
-    - docker exec aaqua-app /usr/bin/google-chrome-original --version --no-sandbox || true
-    - docker exec aaqua-app /opt/google/chrome/chrome --version --no-sandbox || true
-    - docker exec aaqua-app google-chrome --headless=new --no-sandbox --dump-dom https://example.com || true
+    - echo "=== TEST RUNNER LOGS ==="
+    - docker exec aaqua-app ls -la /app/temp_runner_logs/ || true
+    - docker exec aaqua-app sh -c 'cat /app/temp_runner_logs/$(ls -t /app/temp_runner_logs/ | head -n 1)' || true
