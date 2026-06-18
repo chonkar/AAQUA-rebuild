@@ -40,8 +40,4 @@ deploy:
     - echo "=== Active Nginx Conf.d Files ==="
     - docker exec shared-nginx ls -la /etc/nginx/conf.d || docker exec nginx ls -la /etc/nginx/conf.d || true
     - echo "=== Active Nginx Config Dump ==="
-    - echo "=== Active Nginx Config Dump ==="
     - docker exec shared-nginx nginx -T || docker exec nginx nginx -T || true
-    - echo "=== TEST RUNNER LOGS ==="
-    - docker exec aaqua-app ls -la /app/temp_runner_logs/ || true
-    - docker exec aaqua-app sh -c 'cat /app/temp_runner_logs/$(ls -t /app/temp_runner_logs/ | head -n 1)' || true
