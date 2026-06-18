@@ -151,7 +151,19 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
     setNewTestCase(prev => ({ ...prev, [field]: value }));
   };
   const handleCreate = async () => {
-    const newTc = { ...newTestCase, id: `TC-${Date.now()}` };
+    let maxNum = 0;
+    testCases.forEach(tc => {
+      if (tc.id && tc.id.startsWith('FT_')) {
+        const num = parseInt(tc.id.replace('FT_', ''), 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    });
+    const nextIdNum = maxNum + 1;
+    const nextId = `FT_${String(nextIdNum).padStart(3, '0')}`;
+
+    const newTc = { ...newTestCase, id: nextId };
     // Placeholder API call for creation
     // await api.post('/api/testcases', newTc);
     const nextTestCases = [...testCases, newTc];
