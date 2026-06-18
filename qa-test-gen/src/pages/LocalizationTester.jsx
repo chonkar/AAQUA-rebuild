@@ -1,14 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from 'react-oidc-context';
-import { Globe, Play, Search, AlertTriangle, CheckCircle, Loader2, ArrowLeft, ArrowRight, RotateCw, CornerDownLeft, Terminal, Code, AlertCircle } from 'lucide-react';
+import { Globe, Play, Search, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
 import { launchBrowser, capturePage, startLocalizationAnalysis, getLocalizationStatus } from '../services/localizationService';
 import { useProject } from '../context/ProjectContext';
 import { createApiClient } from '../utils/apiClient';
 import JiraDefectButton from '../components/features/JiraDefectButton';
 import UrlScopeWarning from '../components/common/UrlScopeWarning';
 
-// BASE_URL-prefixed relative path.
-const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
+// Heuristic scan phases — the backend runs synchronously with no progress
+// stream. Phases below mirror the actual work: capture DOM via the browser
+// endpoint, extract+chunk visible text, then loop over LLM analysis per
+// chunk. Bar asymptotes at 90% until the API resolves.
+const ANALYZE_PHASES = [
+    { label: 'Capturing rendered DOM…',         ceiling: 20, durationMs: 2000 },
+    { label: 'Extracting visible text…',        ceiling: 35, durationMs: 1500 },
+    { label: 'Chunking for AI analysis…',       ceiling: 45, durationMs: 1500 },
+    { label: 'AI translation review in progress…', ceiling: 90, durationMs: 18000 },
+];
 
 const LocalizationTester = () => {
     const { selectedProjectId, selectedProject } = useProject();
@@ -16,6 +24,7 @@ const LocalizationTester = () => {
     const api = createApiClient(() => auth.user?.access_token || '');
     const [url, setUrl] = useState('');
     const [targetLanguage, setTargetLanguage] = useState('Arabic');
+    const [isBrowserActive, setIsBrowserActive] = useState(false);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [issues, setIssues] = useState([]);
     const [error, setError] = useState(null);
@@ -32,17 +41,6 @@ const LocalizationTester = () => {
     // issues have no stable id — reset on every analyze run so badges don't
     // leak across scans.
     const [jiraState, setJiraState] = useState({});
-
-    // Mode: 'url' (Scrape/Emulate) or 'html' (Manual Paste)
-    const [mode, setMode] = useState('url');
-    const [htmlInput, setHtmlInput] = useState('');
-
-    // Remote Browser Emulator States
-    const [isBrowserOpen, setIsBrowserOpen] = useState(false);
-    const [screenshotTime, setScreenshotTime] = useState(Date.now());
-    const [browserUrl, setBrowserUrl] = useState('');
-    const [typeText, setTypeText] = useState('');
-    const [isScreencastLoading, setIsScreencastLoading] = useState(false);
 
     // Progress is now driven by REAL chunk completion from the polling loop in
     // handleAnalyze (not a heuristic timer). Just clear the poll interval if the
@@ -61,166 +59,44 @@ const LocalizationTester = () => {
     ];
 
     const handleLaunch = async () => {
-        if (!url.trim()) return;
-        setIsAnalyzing(true);
-        setError(null);
         try {
+            setError(null);
             await launchBrowser(url);
-            setIsBrowserOpen(true);
-            setBrowserUrl(url);
-            setScreenshotTime(Date.now());
+            setIsBrowserActive(true);
         } catch (err) {
-            setError(err.message || "Failed to launch browser. Ensure server is running.");
-        } finally {
-            setIsAnalyzing(false);
+            setError("Failed to launch browser. Ensure server is running.");
         }
     };
 
-    const handleScreenshotClick = async (e) => {
-        if (isScreencastLoading || isAnalyzing) return;
-        const rect = e.target.getBoundingClientRect();
-        const x = Math.round((e.clientX - rect.left) / rect.width * 1280);
-        const y = Math.round((e.clientY - rect.top) / rect.height * 800);
-
-        setIsScreencastLoading(true);
-        try {
-            const response = await fetch(`${API_URL}/browser/click`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ x, y })
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data.url) setBrowserUrl(data.url);
-                setScreenshotTime(Date.now());
-            }
-        } catch (err) {
-            console.error("Remote browser click failed:", err);
-        } finally {
-            setIsScreencastLoading(false);
-        }
-    };
-
-    const handleTypeSend = async (e) => {
-        e.preventDefault();
-        if (!typeText || isScreencastLoading || isAnalyzing) return;
-        setIsScreencastLoading(true);
-        try {
-            const response = await fetch(`${API_URL}/browser/type`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: typeText })
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data.url) setBrowserUrl(data.url);
-                setTypeText('');
-                setScreenshotTime(Date.now());
-            }
-        } catch (err) {
-            console.error("Remote browser typing failed:", err);
-        } finally {
-            setIsScreencastLoading(false);
-        }
-    };
-
-    const handlePressEnter = async () => {
-        if (isScreencastLoading || isAnalyzing) return;
-        setIsScreencastLoading(true);
-        try {
-            const response = await fetch(`${API_URL}/browser/key`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ key: 'Enter' })
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data.url) setBrowserUrl(data.url);
-                setScreenshotTime(Date.now());
-            }
-        } catch (err) {
-            console.error("Remote browser enter press failed:", err);
-        } finally {
-            setIsScreencastLoading(false);
-        }
-    };
-
-    const handleNavigate = async (e) => {
-        e.preventDefault();
-        if (!browserUrl.trim() || isScreencastLoading || isAnalyzing) return;
-        setIsScreencastLoading(true);
-        try {
-            const response = await fetch(`${API_URL}/browser/navigate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: browserUrl })
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data.url) setBrowserUrl(data.url);
-                setScreenshotTime(Date.now());
-            }
-        } catch (err) {
-            console.error("Remote browser navigation failed:", err);
-        } finally {
-            setIsScreencastLoading(false);
-        }
-    };
-
-    const handleHistory = async (direction) => {
-        if (isScreencastLoading || isAnalyzing) return;
-        setIsScreencastLoading(true);
-        try {
-            const response = await fetch(`${API_URL}/browser/history`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ direction })
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data.url) setBrowserUrl(data.url);
-                setScreenshotTime(Date.now());
-            }
-        } catch (err) {
-            console.error("Remote browser history navigation failed:", err);
-        } finally {
-            setIsScreencastLoading(false);
-        }
-    };
-
-    const handleCloseBrowser = async () => {
-        try {
-            await fetch(`${API_URL}/browser/close`, { method: 'POST' });
-        } catch (e) {
-            console.error("Failed to close browser session:", e);
-        } finally {
-            setIsBrowserOpen(false);
-        }
-    };
-
-    const triggerAnalysis = async (htmlContent) => {
+    const handleAnalyze = async () => {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         setIsAnalyzing(true);
         setError(null);
         setAnalyzeFailed(false);
         setAnalyzeProgress(0);
-        setAnalyzePhaseLabel('Initiating localization review…');
-        setIssues([]);
+        setAnalyzePhaseLabel('Capturing page…');
+        setIssues([]);          // clear previous run so new findings stream in fresh
         setChunkCount(null);
-        setJiraState({});
+        setJiraState({});       // wipe per-issue JIRA badges from any previous run
 
         try {
+            // 1. Capture HTML (and the actual page URL).
+            const capture = await capturePage();
+            setScannedUrl(capture?.url || url);
+
             const apiKey = import.meta.env.VITE_LLM_API_KEY;
             if (!apiKey) throw new Error("API Key missing");
 
+            // 2. Start the async analysis job.
             setAnalyzePhaseLabel('Starting analysis…');
-            const { jobId, totalChunks } = await startLocalizationAnalysis(htmlContent, targetLanguage, apiKey, selectedProjectId);
+            const { jobId, totalChunks } = await startLocalizationAnalysis(capture.html, targetLanguage, apiKey, selectedProjectId);
             setChunkCount(totalChunks || 1);
 
+            // 3. Poll for progress — issues stream into the panel as each chunk finishes.
             pollRef.current = setInterval(async () => {
                 try {
                     const s = await getLocalizationStatus(jobId);
-                    setIssues(s.issues || []);
+                    setIssues(s.issues || []);                       // incremental display
                     const found = (s.issues || []).length;
                     if (s.status === 'completed') {
                         clearInterval(pollRef.current); pollRef.current = null;
@@ -254,44 +130,6 @@ const LocalizationTester = () => {
         }
     };
 
-    const handleAnalyze = async () => {
-        if (mode === 'html') {
-            if (!htmlInput.trim()) {
-                setError("Please paste valid HTML content.");
-                return;
-            }
-            setScannedUrl('Manual HTML Paste');
-            await triggerAnalysis(htmlInput);
-        } else {
-            try {
-                setError(null);
-                setIsAnalyzing(true);
-                setAnalyzePhaseLabel('Capturing page…');
-                const capture = await capturePage();
-                setScannedUrl(capture?.url || url);
-                await triggerAnalysis(capture.html);
-            } catch (err) {
-                setError(err.message);
-                setIsAnalyzing(false);
-            }
-        }
-    };
-
-    const handleCaptureAndAnalyze = async () => {
-        setError(null);
-        setIsAnalyzing(true);
-        setAnalyzePhaseLabel('Capturing page session…');
-        try {
-            const capture = await capturePage();
-            setScannedUrl(capture?.url || url);
-            await handleCloseBrowser();
-            await triggerAnalysis(capture.html);
-        } catch (e) {
-            setError(e.message);
-            setIsAnalyzing(false);
-        }
-    };
-
     // Raise a single JIRA bug for a localization issue.
     const logJiraDefect = async (issue, issueKey) => {
         setJiraState(prev => ({ ...prev, [issueKey]: { status: 'logging' } }));
@@ -320,146 +158,90 @@ const LocalizationTester = () => {
                 <h2><Globe className="inline-icon" /> Localization Tester</h2>
                 <p className="lc-subtitle">Detect English text leakage on localized pages.</p>
             </div>
+
             <div className="tester-container">
-                <div className="control-panel-wrapper">
-                    <div className="mode-tabs">
-                        <button
-                            className={`tab-btn ${mode === 'url' ? 'active' : ''}`}
-                            onClick={() => setMode('url')}
-                        >
-                            <Globe size={18} /> Scrape URL
-                        </button>
-                        <button
-                            className={`tab-btn ${mode === 'html' ? 'active' : ''}`}
-                            onClick={() => setMode('html')}
-                        >
-                            <Code size={18} /> Paste HTML
-                        </button>
+                <div className="control-panel">
+                    <div className="form-group">
+                        <label>Target URL</label>
+                        <div className="input-with-button">
+                            <input
+                                type="text"
+                                value={url}
+                                onChange={(e) => setUrl(e.target.value)}
+                                placeholder="https://example.com/ar"
+                                className="form-input"
+                            />
+                            <button
+                                onClick={handleLaunch}
+                                disabled={!url || isBrowserActive}
+                                className="btn btn-primary"
+                            >
+                                <Play size={16} /> Launch
+                            </button>
+                        </div>
+                        <UrlScopeWarning url={url} />
                     </div>
 
-                    <div className="control-panel">
-                        {mode === 'url' ? (
-                            <div className="form-group">
-                                <label>Target URL</label>
-                                <div className="input-with-button">
-                                    <input
-                                        type="text"
-                                        value={url}
-                                        onChange={(e) => setUrl(e.target.value)}
-                                        placeholder="https://example.com/ar"
-                                        className="form-input"
-                                        disabled={isAnalyzing}
-                                    />
-                                    <button
-                                        onClick={handleLaunch}
-                                        disabled={!url || isBrowserOpen || isAnalyzing}
-                                        className="btn btn-primary"
-                                    >
-                                        <Play size={16} /> Launch
-                                    </button>
-                                </div>
-                                <UrlScopeWarning url={url} />
+                    <div className="form-group">
+                        <label style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.5rem', display: 'block' }}>Target Language</label>
+                        <select
+                            value={targetLanguage}
+                            onChange={(e) => setTargetLanguage(e.target.value)}
+                            className="form-select"
+                            style={{
+                                width: '100%',
+                                padding: '0.8rem',
+                                fontSize: '1rem',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-md)',
+                                backgroundColor: 'var(--bg-primary)',
+                                height: 'auto',
+                                cursor: 'pointer',
+                                color: '#2563eb', // Blue font
+                                fontWeight: 500
+                            }}
+                        >
+                            {languages.map(lang => (
+                                <option key={lang} value={lang}>{lang}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="action-area">
+                        <button
+                            onClick={handleAnalyze}
+                            disabled={!isBrowserActive || isAnalyzing}
+                            className="btn full-width"
+                            style={{ background: '#2563eb', color: '#fff', border: 'none' }}
+                        >
+                            {isAnalyzing ? <Loader2 className="spin" /> : <Search size={18} />}
+                            {isAnalyzing ? "Analyzing..." : "Analyze Current Page"}
+                        </button>
+                        <p className="hint">
+                            Navigate manually in the opened browser window, then click Analyze.
+                        </p>
+                    </div>
+
+                    {(isAnalyzing || analyzeProgress > 0) && (
+                        <div className="lc-progress" role="progressbar" aria-valuenow={analyzeProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Localization analysis progress">
+                            <div className="lc-progress-header">
+                                <span className="lc-progress-label">{analyzePhaseLabel}</span>
+                                <span className="lc-progress-pct">{analyzeProgress}%</span>
                             </div>
-                        ) : (
-                            <div className="form-group">
-                                <label>Paste HTML Content</label>
-                                <textarea
-                                    className="html-textarea"
-                                    placeholder="<html lang='ar'>...</html>"
-                                    value={htmlInput}
-                                    onChange={(e) => setHtmlInput(e.target.value)}
-                                    rows={8}
-                                    disabled={isAnalyzing}
-                                    style={{
-                                        width: '100%',
-                                        background: 'var(--bg-primary)',
-                                        color: 'var(--text-primary)',
-                                        border: '1px solid var(--border-color)',
-                                        borderRadius: 'var(--radius-md)',
-                                        padding: '0.75rem',
-                                        fontFamily: 'monospace',
-                                        fontSize: '0.85rem',
-                                        resize: 'vertical'
-                                    }}
+                            <div className="lc-progress-track">
+                                <div
+                                    className={`lc-progress-fill ${analyzeFailed ? 'failed' : ''} ${!isAnalyzing && !analyzeFailed ? 'done' : ''}`}
+                                    style={{ width: `${analyzeProgress}%` }}
                                 />
                             </div>
-                        )}
-
-                        <div className="form-group">
-                            <label style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.5rem', display: 'block' }}>Target Language</label>
-                            <select
-                                value={targetLanguage}
-                                onChange={(e) => setTargetLanguage(e.target.value)}
-                                className="form-select"
-                                style={{
-                                    width: '100%',
-                                    padding: '0.8rem',
-                                    fontSize: '1rem',
-                                    border: '1px solid var(--border-color)',
-                                    borderRadius: 'var(--radius-md)',
-                                    backgroundColor: 'var(--bg-primary)',
-                                    height: 'auto',
-                                    cursor: 'pointer',
-                                    color: '#2563eb', // Blue font
-                                    fontWeight: 500
-                                }}
-                            >
-                                {languages.map(lang => (
-                                    <option key={lang} value={lang}>{lang}</option>
-                                ))}
-                            </select>
                         </div>
+                    )}
 
-                        <div className="action-area">
-                            {mode === 'url' ? (
-                                <button
-                                    onClick={handleAnalyze}
-                                    disabled={!isBrowserOpen || isAnalyzing}
-                                    className="btn full-width"
-                                    style={{ background: '#2563eb', color: '#fff', border: 'none' }}
-                                >
-                                    {isAnalyzing ? <Loader2 className="spin" /> : <Search size={18} />}
-                                    {isAnalyzing ? "Analyzing..." : "Analyze Current Page"}
-                                </button>
-                            ) : (
-                                <button
-                                    onClick={handleAnalyze}
-                                    disabled={!htmlInput.trim() || isAnalyzing}
-                                    className="btn full-width"
-                                    style={{ background: '#2563eb', color: '#fff', border: 'none' }}
-                                >
-                                    {isAnalyzing ? <Loader2 className="spin" /> : <Search size={18} />}
-                                    {isAnalyzing ? "Analyzing..." : "Analyze Pasted HTML"}
-                                </button>
-                            )}
-                            {mode === 'url' && (
-                                <p className="hint">
-                                    Launch browser to navigate and log in, then click Analyze.
-                                </p>
-                            )}
+                    {error && (
+                        <div className="error-banner">
+                            <AlertTriangle size={18} /> {error}
                         </div>
-
-                        {(isAnalyzing || analyzeProgress > 0) && (
-                            <div className="lc-progress" role="progressbar" aria-valuenow={analyzeProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Localization analysis progress">
-                                <div className="lc-progress-header">
-                                    <span className="lc-progress-label">{analyzePhaseLabel}</span>
-                                    <span className="lc-progress-pct">{analyzeProgress}%</span>
-                                </div>
-                                <div className="lc-progress-track">
-                                    <div
-                                        className={`lc-progress-fill ${analyzeFailed ? 'failed' : ''} ${!isAnalyzing && !analyzeFailed ? 'done' : ''}`}
-                                        style={{ width: `${analyzeProgress}%` }}
-                                    />
-                                </div>
-                            </div>
-                        )}
-
-                        {error && (
-                            <div className="error-banner">
-                                <AlertTriangle size={18} /> {error}
-                            </div>
-                        )}
-                    </div>
+                    )}
                 </div>
 
                 <div className="results-panel">
@@ -518,124 +300,6 @@ const LocalizationTester = () => {
                     )}
                 </div>
             </div>
-
-            {isBrowserOpen && (
-                <div className="remote-browser-modal animate-fade-in">
-                    <div className="remote-browser-content">
-                        {/* Address bar/Nav bar */}
-                        <div className="remote-browser-header">
-                            <button
-                                className="remote-browser-nav-btn"
-                                onClick={() => handleHistory('back')}
-                                disabled={isScreencastLoading || isAnalyzing}
-                                title="Back"
-                            >
-                                <ArrowLeft size={16} />
-                            </button>
-                            <button
-                                className="remote-browser-nav-btn"
-                                onClick={() => handleHistory('forward')}
-                                disabled={isScreencastLoading || isAnalyzing}
-                                title="Forward"
-                            >
-                                <ArrowRight size={16} />
-                            </button>
-                            <button
-                                className="remote-browser-nav-btn"
-                                onClick={() => setScreenshotTime(Date.now())}
-                                disabled={isScreencastLoading || isAnalyzing}
-                                title="Refresh Viewport"
-                            >
-                                <RotateCw size={16} />
-                            </button>
-                            
-                            <form onSubmit={handleNavigate} className="remote-browser-address-form">
-                                <input
-                                    type="text"
-                                    className="remote-browser-address-input"
-                                    value={browserUrl}
-                                    onChange={(e) => setBrowserUrl(e.target.value)}
-                                    placeholder="Navigate to URL..."
-                                    disabled={isScreencastLoading || isAnalyzing}
-                                />
-                                <button type="submit" className="btn btn-secondary btn-sm" disabled={isScreencastLoading || isAnalyzing}>
-                                    Go
-                                </button>
-                            </form>
-                        </div>
-
-                        {/* Viewport Canvas */}
-                        <div className="remote-browser-viewport">
-                            <img
-                                src={`${API_URL}/browser/screenshot?t=${screenshotTime}`}
-                                alt="Remote Browser Screencast Viewport"
-                                className="remote-browser-img"
-                                onClick={handleScreenshotClick}
-                            />
-                            {(isScreencastLoading || isAnalyzing) && (
-                                <div className="remote-browser-viewport-loading">
-                                    <Loader2 className="spin" size={32} />
-                                    <span>Syncing Remote Browser...</span>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Text Input / Keyboard Interaction toolbar */}
-                        <div className="remote-browser-typing-toolbar">
-                            <Terminal size={16} className="text-muted" />
-                            <form onSubmit={handleTypeSend} className="remote-browser-type-form">
-                                <input
-                                    type="text"
-                                    className="remote-browser-type-input"
-                                    value={typeText}
-                                    onChange={(e) => setTypeText(e.target.value)}
-                                    placeholder="Type characters to input on page..."
-                                    disabled={isScreencastLoading || isAnalyzing}
-                                />
-                                <button type="submit" className="btn btn-secondary btn-sm" disabled={isScreencastLoading || isAnalyzing || !typeText}>
-                                    Type
-                                </button>
-                            </form>
-                            <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                onClick={handlePressEnter}
-                                disabled={isScreencastLoading || isAnalyzing}
-                                title="Send Enter Key"
-                                style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}
-                            >
-                                <CornerDownLeft size={14} />
-                                <span>Enter</span>
-                            </button>
-                        </div>
-
-                        {/* Close/Capture Footer actions */}
-                        <div className="remote-browser-footer">
-                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                                💡 Click viewport to click. Type text in toolbar to enter text, click Type to send.
-                            </span>
-                            <div className="remote-browser-footer-actions">
-                                <button
-                                    className="btn btn-success"
-                                    onClick={handleCaptureAndAnalyze}
-                                    disabled={isScreencastLoading || isAnalyzing}
-                                    style={{ width: 'auto' }}
-                                >
-                                    {isAnalyzing ? <Loader2 className="spin" size={16} /> : "Capture & Analyze Page"}
-                                </button>
-                                <button
-                                    className="btn btn-secondary"
-                                    onClick={handleCloseBrowser}
-                                    disabled={isScreencastLoading || isAnalyzing}
-                                    style={{ background: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}
-                                >
-                                    Close Browser
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             <style>{`
                 .localization-tester { max-width: 1000px; margin: 0 auto; }
@@ -821,220 +485,6 @@ const LocalizationTester = () => {
                     max-width: 280px;
                     overflow: hidden;
                     text-overflow: ellipsis;
-                }
-
-                /* Tabbed Interface and Remote Browser Emulator Styles */
-                .control-panel-wrapper {
-                    display: flex;
-                    flex-direction: column;
-                }
-
-                .control-panel-wrapper .control-panel {
-                    border-top-left-radius: 0;
-                }
-
-                .mode-tabs {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    margin-bottom: 0;
-                }
-
-                .tab-btn {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.5rem;
-                    background: var(--bg-secondary);
-                    border: 1px solid transparent;
-                    border-bottom: none;
-                    color: var(--text-secondary);
-                    padding: 0.75rem 1.25rem;
-                    border-radius: var(--radius-md) var(--radius-md) 0 0;
-                    cursor: pointer;
-                    font-weight: 500;
-                    transition: all 0.2s;
-                }
-
-                .tab-btn:hover {
-                    color: var(--text-primary);
-                    background: var(--bg-tertiary);
-                }
-
-                .tab-btn.active {
-                    background: var(--bg-secondary);
-                    color: var(--accent-primary);
-                    border-color: var(--border-color);
-                    border-bottom: 1px solid var(--bg-secondary);
-                    margin-bottom: -1px;
-                    position: relative;
-                    z-index: 1;
-                }
-
-                .remote-browser-modal {
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    right: 0;
-                    bottom: 0;
-                    background: rgba(15, 23, 42, 0.75);
-                    backdrop-filter: blur(8px);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    z-index: 1000;
-                    padding: 2rem;
-                }
-
-                .remote-browser-content {
-                    background: var(--bg-secondary);
-                    border: 1px solid var(--border-color);
-                    border-radius: var(--radius-lg);
-                    width: 100%;
-                    max-width: 1320px;
-                    display: flex;
-                    flex-direction: column;
-                    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
-                    overflow: hidden;
-                    animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-                }
-
-                @keyframes scaleUp {
-                    from { transform: scale(0.95); opacity: 0; }
-                    to { transform: scale(1); opacity: 1; }
-                }
-
-                .remote-browser-header {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.75rem;
-                    padding: 0.75rem 1rem;
-                    background: var(--bg-tertiary);
-                    border-bottom: 1px solid var(--border-color);
-                }
-
-                .remote-browser-nav-btn {
-                    background: var(--bg-primary);
-                    border: 1px solid var(--border-color);
-                    color: var(--text-primary);
-                    width: 32px;
-                    height: 32px;
-                    border-radius: var(--radius-md);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                }
-                .remote-browser-nav-btn:hover:not(:disabled) {
-                    background: var(--bg-secondary);
-                    border-color: var(--accent-primary);
-                    color: var(--accent-primary);
-                }
-                .remote-browser-nav-btn:disabled {
-                    opacity: 0.5;
-                    cursor: not-allowed;
-                }
-
-                .remote-browser-address-form {
-                    display: flex;
-                    flex: 1;
-                    gap: 0.5rem;
-                }
-
-                .remote-browser-address-input {
-                    flex: 1;
-                    background: var(--bg-primary);
-                    color: var(--text-primary);
-                    border: 1px solid var(--border-color);
-                    border-radius: var(--radius-md);
-                    padding: 0.375rem 0.75rem;
-                    font-size: 0.9rem;
-                }
-                .remote-browser-address-input:focus {
-                    outline: none;
-                    border-color: var(--accent-primary);
-                }
-
-                .remote-browser-viewport {
-                    position: relative;
-                    background: #000;
-                    display: flex;
-                    justify-content: center;
-                    align-items: flex-start;
-                    overflow: auto;
-                    max-height: calc(100vh - 280px);
-                    min-height: 400px;
-                }
-
-                .remote-browser-img {
-                    width: 1280px;
-                    height: 800px;
-                    min-width: 1280px;
-                    min-height: 800px;
-                    object-fit: contain;
-                    cursor: crosshair;
-                    display: block;
-                }
-
-                .remote-browser-viewport-loading {
-                    position: absolute;
-                    top: 0;
-                    left: 0;
-                    right: 0;
-                    bottom: 0;
-                    background: rgba(15, 23, 42, 0.6);
-                    backdrop-filter: blur(2px);
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 1rem;
-                    color: white;
-                    font-weight: 500;
-                    z-index: 10;
-                }
-
-                .remote-browser-typing-toolbar {
-                    display: flex;
-                    align-items: center;
-                    gap: 0.75rem;
-                    padding: 0.75rem 1rem;
-                    background: var(--bg-tertiary);
-                    border-top: 1px solid var(--border-color);
-                    border-bottom: 1px solid var(--border-color);
-                }
-
-                .remote-browser-type-form {
-                    display: flex;
-                    flex: 1;
-                    gap: 0.5rem;
-                }
-
-                .remote-browser-type-input {
-                    flex: 1;
-                    background: var(--bg-primary);
-                    color: var(--text-primary);
-                    border: 1px solid var(--border-color);
-                    border-radius: var(--radius-md);
-                    padding: 0.375rem 0.75rem;
-                    font-size: 0.9rem;
-                }
-                .remote-browser-type-input:focus {
-                    outline: none;
-                    border-color: var(--accent-primary);
-                }
-
-                .remote-browser-footer {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 0.75rem 1rem;
-                    background: var(--bg-tertiary);
-                }
-
-                .remote-browser-footer-actions {
-                    display: flex;
-                    gap: 0.75rem;
                 }
             `}</style>
         </div>

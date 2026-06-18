@@ -1457,16 +1457,13 @@ app.post('/api/browser/launch', async (req, res) => {
         // no display server). Local devs can opt out with HEADLESS=false in
         // .env to keep the historic headed-Chromium workflow for cookie/HTML
         // capture from the Setup Wizard.
-        let launchHeadless = process.env.HEADLESS !== 'false';
-        if (process.platform === 'linux' && !process.env.DISPLAY) {
-            launchHeadless = true;
-        }
+        const launchHeadless = process.env.HEADLESS !== 'false';
         activeBrowser = await chromium.launch({
             headless: launchHeadless,
         });
 
         activeContext = await activeBrowser.newContext({
-            viewport: { width: 1280, height: 800 }
+            viewport: null // maximize viewport
         });
 
         activePage = await activeContext.newPage();
@@ -1511,117 +1508,6 @@ app.post('/api/browser/close', async (req, res) => {
         res.json({ message: 'Browser closed' });
     } else {
         res.status(400).json({ error: 'No active browser to close' });
-    }
-});
-
-// Remote Browser Screencast Screenshot
-app.get('/api/browser/screenshot', async (req, res) => {
-    if (!activePage) {
-        return res.status(400).json({ error: 'No active browser page found' });
-    }
-    try {
-        const screenshot = await activePage.screenshot({ type: 'jpeg', quality: 75 });
-        res.set('Content-Type', 'image/jpeg');
-        res.send(screenshot);
-    } catch (error) {
-        console.error('Screenshot error:', error);
-        res.status(500).json({ error: 'Failed to capture screenshot', details: error.message });
-    }
-});
-
-// Remote Browser Coordinate Click
-app.post('/api/browser/click', async (req, res) => {
-    if (!activePage) {
-        return res.status(400).json({ error: 'No active browser page found' });
-    }
-    const { x, y } = req.body;
-    if (x === undefined || y === undefined) {
-        return res.status(400).json({ error: 'Coordinates x and y required' });
-    }
-    try {
-        await activePage.mouse.click(x, y);
-        res.json({ success: true, url: activePage.url() });
-    } catch (error) {
-        console.error('Click error:', error);
-        res.status(500).json({ error: 'Click action failed', details: error.message });
-    }
-});
-
-// Remote Browser Text Typing
-app.post('/api/browser/type', async (req, res) => {
-    if (!activePage) {
-        return res.status(400).json({ error: 'No active browser page found' });
-    }
-    const { text } = req.body;
-    if (text === undefined) {
-        return res.status(400).json({ error: 'Text required' });
-    }
-    try {
-        await activePage.keyboard.type(text);
-        res.json({ success: true, url: activePage.url() });
-    } catch (error) {
-        console.error('Type error:', error);
-        res.status(500).json({ error: 'Type action failed', details: error.message });
-    }
-});
-
-// Remote Browser Keyboard Key Press
-app.post('/api/browser/key', async (req, res) => {
-    if (!activePage) {
-        return res.status(400).json({ error: 'No active browser page found' });
-    }
-    const { key } = req.body;
-    if (!key) {
-        return res.status(400).json({ error: 'Key code required' });
-    }
-    try {
-        await activePage.keyboard.press(key);
-        res.json({ success: true, url: activePage.url() });
-    } catch (error) {
-        console.error('Key error:', error);
-        res.status(500).json({ error: 'Key press action failed', details: error.message });
-    }
-});
-
-// Remote Browser Direct Navigation
-app.post('/api/browser/navigate', async (req, res) => {
-    if (!activePage) {
-        return res.status(400).json({ error: 'No active browser page found' });
-    }
-    let { url } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL required' });
-
-    if (!/^https?:\/\//i.test(url)) {
-        url = 'https://' + url;
-    }
-    try {
-        await activePage.goto(url);
-        res.json({ success: true, url: activePage.url() });
-    } catch (error) {
-        console.error('Navigate error:', error);
-        res.status(500).json({ error: 'Navigation failed', details: error.message });
-    }
-});
-
-// Remote Browser Back/Forward History
-app.post('/api/browser/history', async (req, res) => {
-    if (!activePage) {
-        return res.status(400).json({ error: 'No active browser page found' });
-    }
-    const { direction } = req.body;
-    if (direction !== 'back' && direction !== 'forward') {
-        return res.status(400).json({ error: 'Direction must be either back or forward' });
-    }
-    try {
-        if (direction === 'back') {
-            await activePage.goBack().catch(() => {});
-        } else {
-            await activePage.goForward().catch(() => {});
-        }
-        res.json({ success: true, url: activePage.url() });
-    } catch (error) {
-        console.error('History error:', error);
-        res.status(500).json({ error: 'History navigation failed', details: error.message });
     }
 });
 
