@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from 'react-oidc-context'; // Ensure auth is available
-import { AlertOctagon, Loader2, CheckCircle2, X } from 'lucide-react';
+import { AlertOctagon, Loader2, CheckCircle2, X, ChevronDown, ChevronRight } from 'lucide-react';
 import { useProject } from '../../context/ProjectContext';
 import { createApiClient } from '../../utils/apiClient';
 
@@ -30,6 +30,24 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
   // Editing state
   const [editMode, setEditMode] = useState({}); // rowId => boolean
   const [editData, setEditData] = useState({}); // rowId => partial test case
+
+  // Row expansion state
+  const [expandedRows, setExpandedRows] = useState({});
+  const [allExpanded, setAllExpanded] = useState(false);
+
+  const toggleRow = (tcId) => {
+    setExpandedRows(prev => ({ ...prev, [tcId]: !prev[tcId] }));
+  };
+
+  const toggleAllRows = () => {
+    const nextState = !allExpanded;
+    setAllExpanded(nextState);
+    const updatedExpanded = {};
+    testCases.forEach(tc => {
+      updatedExpanded[tc.id] = nextState;
+    });
+    setExpandedRows(updatedExpanded);
+  };
 
   // Add new test case state
   const [showAddModal, setShowAddModal] = useState(false);
@@ -181,6 +199,9 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
         <div className="table-header">
           <h3>Generated Test Cases</h3>
           <span className="count-badge">{testCases.length} Cases</span>
+          <button className="btn btn-secondary" onClick={toggleAllRows} style={{ marginLeft: 'auto', marginRight: '0.75rem' }}>
+            {allExpanded ? "Collapse All" : "Expand All"}
+          </button>
           <button className="btn btn-primary" onClick={openAddModal}>+ Add Test Case</button>
         </div>
 
@@ -209,10 +230,16 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
                 const bugState = raisedBugs[tcId];
                 const isEditing = editMode[tcId];
                 const editVals = editData[tcId] || {};
+                const isExpanded = expandedRows[tcId] || isEditing;
 
                 return (
                   <tr key={tc.id || index}>
-                    <td className="id-cell">{tc.id}</td>
+                    <td className="id-cell" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleRow(tcId)}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        {isExpanded ? <ChevronDown size={14} style={{ flexShrink: 0 }} /> : <ChevronRight size={14} style={{ flexShrink: 0 }} />}
+                        <span>{tc.id}</span>
+                      </div>
+                    </td>
                     <td>{isEditing ? (
                       <input className="input-field" value={editVals.module || ''} onChange={e => handleChange(tcId, 'module', e.target.value)} />
                     ) : (
@@ -228,16 +255,32 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
                     )}</td>
                     <td className="multiline-cell">{isEditing ? (
                       <textarea className="input-field" rows={2} value={editVals.preconditions || ''} onChange={e => handleChange(tcId, 'preconditions', e.target.value)} />
-                    ) : (tc.preconditions || 'None')}</td>
+                    ) : (
+                      <div className={isExpanded ? "expanded-preview animate-fade-in" : "collapsed-preview"} onClick={() => toggleRow(tcId)}>
+                        {tc.preconditions || 'None'}
+                      </div>
+                    )}</td>
                     <td className="multiline-cell">{isEditing ? (
                       <textarea className="input-field" rows={2} value={editVals.testData || ''} onChange={e => handleChange(tcId, 'testData', e.target.value)} />
-                    ) : (tc.testData || 'N/A')}</td>
+                    ) : (
+                      <div className={isExpanded ? "expanded-preview animate-fade-in" : "collapsed-preview"} onClick={() => toggleRow(tcId)}>
+                        {tc.testData || 'N/A'}
+                      </div>
+                    )}</td>
                     <td className="multiline-cell">{isEditing ? (
                       <textarea className="input-field" rows={2} value={Array.isArray(editVals.steps) ? editVals.steps.join('\n') : editVals.steps || ''} onChange={e => handleChange(tcId, 'steps', e.target.value.split('\n'))} />
-                    ) : (Array.isArray(tc.steps) ? tc.steps.join('\n') : tc.steps)}</td>
+                    ) : (
+                      <div className={isExpanded ? "expanded-preview animate-fade-in" : "collapsed-preview"} onClick={() => toggleRow(tcId)}>
+                        {Array.isArray(tc.steps) ? tc.steps.join('\n') : tc.steps}
+                      </div>
+                    )}</td>
                     <td className="multiline-cell">{isEditing ? (
                       <textarea className="input-field" rows={2} value={editVals.expectedResult || ''} onChange={e => handleChange(tcId, 'expectedResult', e.target.value)} />
-                    ) : (tc.expectedResult)}</td>
+                    ) : (
+                      <div className={isExpanded ? "expanded-preview animate-fade-in" : "collapsed-preview"} onClick={() => toggleRow(tcId)}>
+                        {tc.expectedResult}
+                      </div>
+                    )}</td>
                     <td>
                       <span className={`priority-badge ${tc.priority?.split('-')[0].toLowerCase()}`}>
                         {tc.priority}
@@ -387,7 +430,24 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
           </div>
         )}
 
-        <style>{`\n          .table-card { padding: 0; overflow: hidden; }\n          .table-header { padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 1rem; }\n          .table-header h3 { font-size: 1.25rem; font-weight: 600; }\n          .count-badge { background: var(--bg-primary); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.85rem; color: var(--text-secondary); border: 1px solid var(--border-color); }\n          .table-responsive { overflow-x: auto; }\n          .qa-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }\n          .qa-table th { background: var(--bg-tertiary); text-align: left; padding: 1rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }\n          .qa-table td { padding: 1rem; border-bottom: 1px solid var(--border-color); vertical-align: top; color: var(--text-primary); }\n          .qa-table tr:last-child td { border-bottom: none; }\n          .id-cell { font-family: monospace; color: var(--text-muted); }\n          .module-tag { background: rgba(59, 130, 246, 0.1); color: var(--accent-secondary); padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; }\n          .scenario-cell { font-weight: 500; }\n          .feature-sub { margin-top: 0.25rem; font-size: 0.75rem; font-weight: 400; color: var(--text-muted); }\n          .multiline-cell { white-space: pre-wrap; line-height: 1.5; max-width: 300px; }\n          .priority-badge { padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }\n          .priority-badge.high, .priority-badge.p1, .priority-badge.p2 { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }\n          .priority-badge.medium, .priority-badge.p3 { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }\n          .priority-badge.low, .priority-badge.p4 { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }\n          .type-badge { font-size: 0.75rem; color: var(--text-muted); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 4px; }\n          .btn-defect-trigger { display: inline-flex; align-items: center; gap: 0.4rem; background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 0.4rem 0.8rem; border-radius: var(--radius-md); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }\n          .btn-defect-trigger:hover { background: rgba(239, 68, 68, 0.2); border-color: #f87171; box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }\n          .btn-defect-trigger.retry { background: rgba(245, 158, 11, 0.15); color: #fcd34d; border-color: rgba(245, 158, 11, 0.4); }\n          .bug-badge { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.4rem 0.8rem; border-radius: var(--radius-md); font-size: 0.8rem; font-weight: 700; }\n          .bug-badge.success { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }\n          .modal-backdrop { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 9999; }\n          .modal-content { width: 100%; max-width: 500px; padding: 2rem; border-radius: var(--radius-lg); border: 1px solid var(--border-color); box-shadow: var(--shadow-2xl); background: var(--bg-primary); }\n          .modal-header { display: flex; justify-content: space-between; align-items: center; }\n          .modal-close-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0.25rem; border-radius: 4px; transition: all 0.2s; }\n          .modal-close-btn:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.05); }\n          .spin { animation: spin 1s linear infinite; }\n          @keyframes spin { 100% { transform: rotate(360deg); } }\n          .input-field { width: 100%; padding: 0.4rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-primary); font-size: 0.9rem; transition: border-color 0.2s; }\n          .input-field:focus { outline: none; border-color: var(--accent-primary); }\n          .btn { padding: 0.4rem 0.8rem; border-radius: var(--radius-md); font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none; }\n          .btn-primary { background: var(--accent-primary); color: #fff; }\n          .btn-secondary { background: var(--bg-secondary); color: var(--text-primary); }\n        `}</style>
+        <style>{`\n          .table-card { padding: 0; overflow: hidden; }\n          .table-header { padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 1rem; }\n          .table-header h3 { font-size: 1.25rem; font-weight: 600; }\n          .count-badge { background: var(--bg-primary); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.85rem; color: var(--text-secondary); border: 1px solid var(--border-color); }\n          .table-responsive { overflow-x: auto; }\n          .qa-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }\n          .qa-table th { background: var(--bg-tertiary); text-align: left; padding: 1rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }\n          .qa-table td { padding: 1rem; border-bottom: 1px solid var(--border-color); vertical-align: top; color: var(--text-primary); }\n          .qa-table tr:last-child td { border-bottom: none; }\n          .id-cell { font-family: monospace; color: var(--text-muted); }\n          .module-tag { background: rgba(59, 130, 246, 0.1); color: var(--accent-secondary); padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; }\n          .scenario-cell { font-weight: 500; }\n          .feature-sub { margin-top: 0.25rem; font-size: 0.75rem; font-weight: 400; color: var(--text-muted); }\n          .multiline-cell { line-height: 1.5; max-width: 300px; }
+          .collapsed-preview {
+            max-height: 2.8em;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            white-space: normal;
+            text-overflow: ellipsis;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+          }
+          .expanded-preview {
+            white-space: pre-wrap;
+            font-size: 0.85rem;
+            color: var(--text-primary);
+          }\n          .priority-badge { padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }\n          .priority-badge.high, .priority-badge.p1, .priority-badge.p2 { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }\n          .priority-badge.medium, .priority-badge.p3 { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }\n          .priority-badge.low, .priority-badge.p4 { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }\n          .type-badge { font-size: 0.75rem; color: var(--text-muted); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 4px; }\n          .btn-defect-trigger { display: inline-flex; align-items: center; gap: 0.4rem; background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 0.4rem 0.8rem; border-radius: var(--radius-md); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }\n          .btn-defect-trigger:hover { background: rgba(239, 68, 68, 0.2); border-color: #f87171; box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }\n          .btn-defect-trigger.retry { background: rgba(245, 158, 11, 0.15); color: #fcd34d; border-color: rgba(245, 158, 11, 0.4); }\n          .bug-badge { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.4rem 0.8rem; border-radius: var(--radius-md); font-size: 0.8rem; font-weight: 700; }\n          .bug-badge.success { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }\n          .modal-backdrop { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 9999; }\n          .modal-content { width: 100%; max-width: 500px; padding: 2rem; border-radius: var(--radius-lg); border: 1px solid var(--border-color); box-shadow: var(--shadow-2xl); background: var(--bg-primary); }\n          .modal-header { display: flex; justify-content: space-between; align-items: center; }\n          .modal-close-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0.25rem; border-radius: 4px; transition: all 0.2s; }\n          .modal-close-btn:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.05); }\n          .spin { animation: spin 1s linear infinite; }\n          @keyframes spin { 100% { transform: rotate(360deg); } }\n          .input-field { width: 100%; padding: 0.4rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-primary); font-size: 0.9rem; transition: border-color 0.2s; }\n          .input-field:focus { outline: none; border-color: var(--accent-primary); }\n          .btn { padding: 0.4rem 0.8rem; border-radius: var(--radius-md); font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none; }\n          .btn-primary { background: var(--accent-primary); color: #fff; }\n          .btn-secondary { background: var(--bg-secondary); color: var(--text-primary); }\n        `}</style>
       </div>
     </div>
   );
