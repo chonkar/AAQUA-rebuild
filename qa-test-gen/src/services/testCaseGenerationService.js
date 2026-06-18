@@ -75,18 +75,15 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
         const prompt = `
       You are a Senior QA Test Architect.
       ${historyText}
-      Generate comprehensive FUNCTIONAL test cases for the following NEW requirement. You MUST generate AT LEAST 15 functional test cases. Ensure they are STRICTLY functional test cases without automation specifics:
+      Generate comprehensive FUNCTIONAL test cases for the following NEW requirement. You MUST generate AT LEAST 6 to 8 functional test cases. Ensure they are STRICTLY functional test cases without automation specifics:
       "${sanitizedRequirement}"
 
-      Cover relevant scenarios from ALL of these Test Types to ensure 100% coverage:
+      Cover relevant scenarios from these Test Types to ensure good coverage:
       1. Positive Scenarios (Happy Path)
       2. Negative Scenarios (Invalid inputs, error handling)
-      3. Boundary Value Analysis (Min/Max values)
-      4. Edge Cases (Rare but possible scenarios)
-      5. Security & Access Control (if applicable)
-      6. Navigation (moving between screens/tabs/links, Back/Breadcrumb behavior, redirects, deep links)
-      7. Field Validation including READ-ONLY / non-editable fields (verify they are displayed, pre-populated where expected, and CANNOT be edited)
-      8. Cancel / Discard / Back actions (verify no data is saved, any confirmation prompt appears, and the user is returned to the correct screen)
+      3. Boundary Value Analysis or Edge Cases
+      4. Navigation or Field Validation
+      5. Cancel / Discard / Back actions
 
       MANDATORY COVERAGE: Whenever the requirement involves any form, screen, list, or multi-step workflow, you MUST include dedicated test case(s) for EACH of: (a) Cancel/Discard/Back, (b) Read-only / non-editable field validation, and (c) Navigation between screens. Do not omit these.
 
