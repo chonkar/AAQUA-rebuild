@@ -70,7 +70,10 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
 
     if (!api) {
         console.warn('Defect integration unavailable – not logged in');
-        setRaisedBugs(prev => ({ ...prev, [tcId]: { success: false, error: 'Not authenticated' } }));
+        setRaisedBugs(prev => {
+          const currentList = Array.isArray(prev[tcId]) ? prev[tcId] : [];
+          return { ...prev, [tcId]: [...currentList.filter(b => b.success), { success: false, error: 'Not authenticated' }] };
+        });
         setIsRaising(prev => ({ ...prev, [tcId]: false }));
         return;
       }
@@ -80,11 +83,17 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
           actualResult: actualResult,
           projectName: selectedProject?.name || 'AAUQA Quality Run'
         });
-        setRaisedBugs(prev => ({ ...prev, [tcId]: { success: true, key: data.jiraKey } }));
+        setRaisedBugs(prev => {
+          const currentList = Array.isArray(prev[tcId]) ? prev[tcId] : [];
+          return { ...prev, [tcId]: [...currentList.filter(b => b.success), { success: true, key: data.jiraKey }] };
+        });
       } catch (err) {
         console.error('[Raise Defect Error]', err);
         const msg = err?.data?.error || err.message || 'Unknown error';
-        setRaisedBugs(prev => ({ ...prev, [tcId]: { success: false, error: msg } }));
+        setRaisedBugs(prev => {
+          const currentList = Array.isArray(prev[tcId]) ? prev[tcId] : [];
+          return { ...prev, [tcId]: [...currentList.filter(b => b.success), { success: false, error: msg }] };
+        });
       } finally {
         setIsRaising(prev => ({ ...prev, [tcId]: false }));
       }
@@ -225,20 +234,32 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
                     <td><span className="type-badge">{tc.testType || 'Functional'}</span></td>
                     <td>{tc.platform}</td>
                     <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
-                      {bugState?.success ? (
-                        <div className="bug-badge success animate-fade-in" title="Defect Logged Successfully">
-                          <CheckCircle2 size={14} />
-                          <span>{bugState.key}</span>
-                        </div>
-                      ) : bugState?.error ? (
-                        <button className="btn-defect-trigger retry" onClick={() => handleOpenRaiseModal(tc)} title={`Click to retry: ${bugState.error}`}>
-                          Retry Bug
-                        </button>
-                      ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'center' }}>
+                        {Array.isArray(bugState) && bugState.map((bug, bIdx) => {
+                          if (bug.success) {
+                            return (
+                              <div key={bIdx} className="bug-badge success animate-fade-in" title="Defect Logged Successfully" style={{ margin: 0 }}>
+                                <CheckCircle2 size={14} />
+                                <span>{bug.key}</span>
+                              </div>
+                            );
+                          } else {
+                            return (
+                              <div key={bIdx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.2rem' }}>
+                                <span style={{ fontSize: '0.75rem', color: '#f87171', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={bug.error}>
+                                  Err: {bug.error}
+                                </span>
+                                <button className="btn-defect-trigger retry" onClick={() => handleOpenRaiseModal(tc)} style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}>
+                                  Retry
+                                </button>
+                              </div>
+                            );
+                          }
+                        })}
                         <button className="btn-defect-trigger" onClick={() => handleOpenRaiseModal(tc)} disabled={isRaisingThis}>
-                          {isRaisingThis ? <Loader2 className="spin" size={14} /> : <><AlertOctagon size={14} /><span>Log Bug</span></>}
+                          {isRaisingThis ? <Loader2 className="spin" size={14} /> : <><AlertOctagon size={14} /><span>{Array.isArray(bugState) && bugState.some(b => b.success) ? "Log Another Bug" : "Log Bug"}</span></>}
                         </button>
-                      )}
+                      </div>
                     </td>
                     <td>
                       {isEditing ? (
