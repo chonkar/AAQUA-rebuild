@@ -108,7 +108,9 @@ const UsageDashboard = () => {
 
     // Format dates cleanly
     const formatTimestamp = (dateStr) => {
+        if (!dateStr) return '—';
         const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '—';
         return d.toLocaleDateString(undefined, {
             month: 'short',
             day: 'numeric',
@@ -367,7 +369,7 @@ const UsageDashboard = () => {
                                 <tbody>
                                     {logs.map((log) => (
                                         <tr key={log.id} className="log-row">
-                                            <td className="col-time">{formatTimestamp(log.created_at)}</td>
+                                            <td className="col-time">{formatTimestamp(log.createdAt || log.created_at)}</td>
                                             <td className="col-user">
                                                 <div className="table-user-cell">
                                                     <span className="table-user-email">{log.name || log.email}</span>
