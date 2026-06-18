@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { generateLocators } from '../services/locatorGenerationService';
 import { exportToJSON, exportToExcel } from '../utils/exportUtils';
-import { Target, Search, Copy, Download, Code, Globe, AlertCircle, Loader2 } from 'lucide-react';
+import { Target, Search, Copy, Download, Code, Globe, AlertCircle, Loader2, ArrowLeft, ArrowRight, RotateCw, CornerDownLeft, Terminal } from 'lucide-react';
 import { useProject } from '../context/ProjectContext';
 import UrlScopeWarning from '../components/common/UrlScopeWarning';
 
@@ -25,6 +25,12 @@ const LocatorGenerator = () => {
     // Interactive Mode State
     const [isBrowserOpen, setIsBrowserOpen] = useState(false);
 
+    // Remote Browser Emulator States
+    const [screenshotTime, setScreenshotTime] = useState(Date.now());
+    const [browserUrl, setBrowserUrl] = useState('');
+    const [typeText, setTypeText] = useState('');
+    const [isScreencastLoading, setIsScreencastLoading] = useState(false);
+
     // Alias useCookies to isInteractiveMode for the UI logic
     const isInteractiveMode = useCookies;
 
@@ -44,10 +50,124 @@ const LocatorGenerator = () => {
                 throw new Error(`Launch failed: ${text}`);
             }
             setIsBrowserOpen(true);
+            setBrowserUrl(urlInput);
+            setScreenshotTime(Date.now());
         } catch (e) {
             setError(e.message);
         } finally {
             setIsGenerating(false);
+        }
+    };
+
+    const handleScreenshotClick = async (e) => {
+        if (isScreencastLoading || isGenerating) return;
+        const rect = e.target.getBoundingClientRect();
+        const x = Math.round((e.clientX - rect.left) / rect.width * 1280);
+        const y = Math.round((e.clientY - rect.top) / rect.height * 800);
+
+        setIsScreencastLoading(true);
+        try {
+            const response = await fetch(`${API_URL}/browser/click`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ x, y })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.url) setBrowserUrl(data.url);
+                setScreenshotTime(Date.now());
+            }
+        } catch (err) {
+            console.error("Remote browser click failed:", err);
+        } finally {
+            setIsScreencastLoading(false);
+        }
+    };
+
+    const handleTypeSend = async (e) => {
+        e.preventDefault();
+        if (!typeText || isScreencastLoading || isGenerating) return;
+        setIsScreencastLoading(true);
+        try {
+            const response = await fetch(`${API_URL}/browser/type`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: typeText })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.url) setBrowserUrl(data.url);
+                setTypeText('');
+                setScreenshotTime(Date.now());
+            }
+        } catch (err) {
+            console.error("Remote browser typing failed:", err);
+        } finally {
+            setIsScreencastLoading(false);
+        }
+    };
+
+    const handlePressEnter = async () => {
+        if (isScreencastLoading || isGenerating) return;
+        setIsScreencastLoading(true);
+        try {
+            const response = await fetch(`${API_URL}/browser/key`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: 'Enter' })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.url) setBrowserUrl(data.url);
+                setScreenshotTime(Date.now());
+            }
+        } catch (err) {
+            console.error("Remote browser enter press failed:", err);
+        } finally {
+            setIsScreencastLoading(false);
+        }
+    };
+
+    const handleNavigate = async (e) => {
+        e.preventDefault();
+        if (!browserUrl.trim() || isScreencastLoading || isGenerating) return;
+        setIsScreencastLoading(true);
+        try {
+            const response = await fetch(`${API_URL}/browser/navigate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: browserUrl })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.url) setBrowserUrl(data.url);
+                setScreenshotTime(Date.now());
+            }
+        } catch (err) {
+            console.error("Remote browser navigation failed:", err);
+        } finally {
+            setIsScreencastLoading(false);
+        }
+    };
+
+    const handleHistory = async (direction) => {
+        if (isScreencastLoading || isGenerating) return;
+        setIsScreencastLoading(true);
+        try {
+            const response = await fetch(`${API_URL}/browser/history`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ direction })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.url) setBrowserUrl(data.url);
+                setScreenshotTime(Date.now());
+            }
+        } catch (err) {
+            console.error("Remote browser history navigation failed:", err);
+        } finally {
+            setIsScreencastLoading(false);
         }
     };
 
@@ -289,30 +409,118 @@ const LocatorGenerator = () => {
                 </div>
 
                 {isBrowserOpen && (
-                    <div className="browser-modal animate-fade-in">
-                        <div className="modal-content">
-                            <h3>Browser Session Active</h3>
-                            <div className="modal-steps">
-                                <p>1. Navigate to the desired page in the opened window.</p>
-                                <p>2. Click <strong>"Capture Current Page"</strong> below.</p>
-                                <p>3. Repeat for other pages as needed.</p>
+                    <div className="remote-browser-modal animate-fade-in">
+                        <div className="remote-browser-content">
+                            {/* Address bar/Nav bar */}
+                            <div className="remote-browser-header">
+                                <button
+                                    className="remote-browser-nav-btn"
+                                    onClick={() => handleHistory('back')}
+                                    disabled={isScreencastLoading || isGenerating}
+                                    title="Back"
+                                >
+                                    <ArrowLeft size={16} />
+                                </button>
+                                <button
+                                    className="remote-browser-nav-btn"
+                                    onClick={() => handleHistory('forward')}
+                                    disabled={isScreencastLoading || isGenerating}
+                                    title="Forward"
+                                >
+                                    <ArrowRight size={16} />
+                                </button>
+                                <button
+                                    className="remote-browser-nav-btn"
+                                    onClick={() => setScreenshotTime(Date.now())}
+                                    disabled={isScreencastLoading || isGenerating}
+                                    title="Refresh Viewport"
+                                >
+                                    <RotateCw size={16} />
+                                </button>
+                                
+                                <form onSubmit={handleNavigate} className="remote-browser-address-form">
+                                    <input
+                                        type="text"
+                                        className="remote-browser-address-input"
+                                        value={browserUrl}
+                                        onChange={(e) => setBrowserUrl(e.target.value)}
+                                        placeholder="Navigate to URL..."
+                                        disabled={isScreencastLoading || isGenerating}
+                                    />
+                                    <button type="submit" className="btn btn-secondary btn-sm" disabled={isScreencastLoading || isGenerating}>
+                                        Go
+                                    </button>
+                                </form>
                             </div>
-                            <div className="modal-actions" style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+
+                            {/* Viewport Canvas */}
+                            <div className="remote-browser-viewport">
+                                <img
+                                    src={`${API_URL}/browser/screenshot?t=${screenshotTime}`}
+                                    alt="Remote Browser Screencast Viewport"
+                                    className="remote-browser-img"
+                                    onClick={handleScreenshotClick}
+                                />
+                                {(isScreencastLoading || isGenerating) && (
+                                    <div className="remote-browser-viewport-loading">
+                                        <Loader2 className="spin" size={32} />
+                                        <span>Syncing Remote Browser...</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Text Input / Keyboard Interaction toolbar */}
+                            <div className="remote-browser-typing-toolbar">
+                                <Terminal size={16} className="text-muted" />
+                                <form onSubmit={handleTypeSend} className="remote-browser-type-form">
+                                    <input
+                                        type="text"
+                                        className="remote-browser-type-input"
+                                        value={typeText}
+                                        onChange={(e) => setTypeText(e.target.value)}
+                                        placeholder="Type characters to input on page..."
+                                        disabled={isScreencastLoading || isGenerating}
+                                    />
+                                    <button type="submit" className="btn btn-secondary btn-sm" disabled={isScreencastLoading || isGenerating || !typeText}>
+                                        Type
+                                    </button>
+                                </form>
                                 <button
-                                    className="btn btn-success"
-                                    onClick={handleCaptureAndGenerate}
-                                    style={{ flex: 1 }}
-                                    disabled={isGenerating}
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={handlePressEnter}
+                                    disabled={isScreencastLoading || isGenerating}
+                                    title="Send Enter Key"
+                                    style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}
                                 >
-                                    {isGenerating ? <Loader2 className="spin" /> : "Capture Current Page"}
+                                    <CornerDownLeft size={14} />
+                                    <span>Enter</span>
                                 </button>
-                                <button
-                                    className="btn btn-secondary"
-                                    onClick={handleCloseBrowser}
-                                    disabled={isGenerating}
-                                >
-                                    Close Browser
-                                </button>
+                            </div>
+
+                            {/* Close/Capture Footer actions */}
+                            <div className="remote-browser-footer">
+                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                    💡 Click viewport to click. Type text in toolbar to enter text, click Type to send.
+                                </span>
+                                <div className="remote-browser-footer-actions">
+                                    <button
+                                        className="btn btn-success"
+                                        onClick={handleCaptureAndGenerate}
+                                        disabled={isScreencastLoading || isGenerating}
+                                        style={{ width: 'auto' }}
+                                    >
+                                        {isGenerating ? <Loader2 className="spin" size={16} /> : "Capture Current Page"}
+                                    </button>
+                                    <button
+                                        className="btn btn-secondary"
+                                        onClick={handleCloseBrowser}
+                                        disabled={isScreencastLoading || isGenerating}
+                                        style={{ background: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}
+                                    >
+                                        Close Browser
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -700,6 +908,174 @@ const LocatorGenerator = () => {
 
                 .spin { animation: spin 1s linear infinite; }
                 @keyframes spin { 100% { transform: rotate(360deg); } }
+
+                /* Remote Browser Emulator Styles */
+                .remote-browser-modal {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(15, 23, 42, 0.75);
+                    backdrop-filter: blur(8px);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 1000;
+                    padding: 2rem;
+                }
+
+                .remote-browser-content {
+                    background: var(--bg-secondary);
+                    border: 1px solid var(--border-color);
+                    border-radius: var(--radius-lg);
+                    width: 100%;
+                    max-width: 1320px;
+                    display: flex;
+                    flex-direction: column;
+                    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+                    overflow: hidden;
+                    animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+                }
+
+                @keyframes scaleUp {
+                    from { transform: scale(0.95); opacity: 0; }
+                    to { transform: scale(1); opacity: 1; }
+                }
+
+                .remote-browser-header {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.75rem;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-tertiary);
+                    border-bottom: 1px solid var(--border-color);
+                }
+
+                .remote-browser-nav-btn {
+                    background: var(--bg-primary);
+                    border: 1px solid var(--border-color);
+                    color: var(--text-primary);
+                    width: 32px;
+                    height: 32px;
+                    border-radius: var(--radius-md);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .remote-browser-nav-btn:hover:not(:disabled) {
+                    background: var(--bg-secondary);
+                    border-color: var(--accent-primary);
+                    color: var(--accent-primary);
+                }
+                .remote-browser-nav-btn:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+
+                .remote-browser-address-form {
+                    display: flex;
+                    flex: 1;
+                    gap: 0.5rem;
+                }
+
+                .remote-browser-address-input {
+                    flex: 1;
+                    background: var(--bg-primary);
+                    color: var(--text-primary);
+                    border: 1px solid var(--border-color);
+                    border-radius: var(--radius-md);
+                    padding: 0.375rem 0.75rem;
+                    font-size: 0.9rem;
+                }
+                .remote-browser-address-input:focus {
+                    outline: none;
+                    border-color: var(--accent-primary);
+                }
+
+                .remote-browser-viewport {
+                    position: relative;
+                    background: #000;
+                    display: flex;
+                    justify-content: center;
+                    align-items: flex-start;
+                    overflow: auto;
+                    max-height: calc(100vh - 280px);
+                    min-height: 400px;
+                }
+
+                .remote-browser-img {
+                    width: 1280px;
+                    height: 800px;
+                    min-width: 1280px;
+                    min-height: 800px;
+                    object-fit: contain;
+                    cursor: crosshair;
+                    display: block;
+                }
+
+                .remote-browser-viewport-loading {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(15, 23, 42, 0.6);
+                    backdrop-filter: blur(2px);
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 1rem;
+                    color: white;
+                    font-weight: 500;
+                    z-index: 10;
+                }
+
+                .remote-browser-typing-toolbar {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.75rem;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-tertiary);
+                    border-top: 1px solid var(--border-color);
+                    border-bottom: 1px solid var(--border-color);
+                }
+
+                .remote-browser-type-form {
+                    display: flex;
+                    flex: 1;
+                    gap: 0.5rem;
+                }
+
+                .remote-browser-type-input {
+                    flex: 1;
+                    background: var(--bg-primary);
+                    color: var(--text-primary);
+                    border: 1px solid var(--border-color);
+                    border-radius: var(--radius-md);
+                    padding: 0.375rem 0.75rem;
+                    font-size: 0.9rem;
+                }
+                .remote-browser-type-input:focus {
+                    outline: none;
+                    border-color: var(--accent-primary);
+                }
+
+                .remote-browser-footer {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.75rem 1rem;
+                    background: var(--bg-tertiary);
+                }
+
+                .remote-browser-footer-actions {
+                    display: flex;
+                    gap: 0.75rem;
+                }
             `}</style>
         </div>
     );
