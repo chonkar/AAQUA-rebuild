@@ -59,10 +59,7 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
 
     try {
         const genAI = new GoogleGenerativeAI(API_KEY, LLM_ENDPOINT);
-        // reasoningEffort:'medium' bounds gpt-oss's reasoning so it doesn't burn the
-        // whole token budget thinking (the unset/high default returned empty content),
-        // while keeping more deliberation than 'low'. Verified: ~4.4k tokens, completes.
-        const model = genAI.getGenerativeModel({ model: MODEL_NAME, generationConfig: { reasoningEffort: 'medium' } });
+        const model = genAI.getGenerativeModel({ model: MODEL_NAME, generationConfig: { reasoningEffort: 'low' } });
 
         // Sanitize requirement to remove repeating dots, ellipses, and excess spacing from copied texts
         const sanitizedRequirement = (requirement || "")
