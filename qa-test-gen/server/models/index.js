@@ -8,6 +8,7 @@ import AccessibilityResult from './AccessibilityResult.js';
 import LocalizationResult from './LocalizationResult.js';
 import PerformanceResult from './PerformanceResult.js';
 import ReleaseReadiness from './ReleaseReadiness.js';
+import UserActivity from './UserActivity.js';
 
 // ─── Associations ────────────────────────────────────────
 // User identity is owned by Keycloak; `owner_id` and `initiated_by` store the
@@ -82,5 +83,6 @@ export {
     LocalizationResult,
     PerformanceResult,
     ReleaseReadiness,
+    UserActivity,
     initDatabase,
 };

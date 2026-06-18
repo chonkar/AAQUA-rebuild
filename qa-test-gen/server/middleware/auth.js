@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify, errors as joseErrors } from 'jose';
 import dotenv from 'dotenv';
+import UserActivity from '../models/UserActivity.js';
 dotenv.config();
 
 // Two URLs because they often need to differ in containerized deploys:
@@ -73,6 +74,25 @@ export async function authenticateToken(req, res, next) {
             roles: payload.realm_access?.roles ?? [],
             raw: payload,
         };
+
+        // Log user activity asynchronously (Audit Trail)
+        // Skip logging usage dashboard API requests to prevent logs clutter
+        if (req.user.email && !req.originalUrl?.includes('/api/admin/usage') && !req.url?.includes('/api/admin/usage')) {
+            UserActivity.create({
+                user_id: req.user.id,
+                email: req.user.email,
+                username: req.user.username,
+                name: req.user.name,
+                action: `${req.method} ${req.originalUrl || req.url}`,
+                ip_address: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+                details: {
+                    userAgent: req.headers['user-agent'],
+                }
+            }).catch(err => {
+                console.error('[auth] Failed to log user activity:', err.message);
+            });
+        }
+
         next();
     } catch (err) {
         if (err instanceof joseErrors.JWTExpired) {
@@ -99,6 +119,23 @@ export function requireRole(...allowed) {
         const has = allowed.some(r => req.user.roles.includes(r));
         if (!has) {
             return res.status(403).json({ error: `Requires role: ${allowed.join(' or ')}` });
+        }
+        next();
+    };
+}
+
+/**
+ * Express middleware factory: require the user's email to match the admin email.
+ * Defaults to 'kavita.chonkar@aaseya.com', but can be overridden by ADMIN_EMAIL env var.
+ */
+export function requireAdminEmail() {
+    const adminEmail = process.env.ADMIN_EMAIL || 'kavita.chonkar@aaseya.com';
+    return (req, res, next) => {
+        if (!req.user) {
+            return res.status(401).json({ error: 'Authentication required.' });
+        }
+        if (req.user.email !== adminEmail) {
+            return res.status(403).json({ error: 'Access denied. You do not have permission to access this resource.' });
         }
         next();
     };

@@ -9,7 +9,7 @@ import { rolesOf } from './oidcConfig';
  *   <ProtectedRoute><MyPage /></ProtectedRoute>
  *   <ProtectedRoute requireRoles={['admin']}><AdminPage /></ProtectedRoute>
  */
-export default function ProtectedRoute({ children, requireRoles }) {
+export default function ProtectedRoute({ children, requireRoles, allowedEmails }) {
     const auth = useAuth();
 
     useEffect(() => {
@@ -44,6 +44,16 @@ export default function ProtectedRoute({ children, requireRoles }) {
             return <FullscreenStatus
                 icon={<ShieldOff size={32} />}
                 text={`Forbidden — requires role: ${requireRoles.join(' or ')}`}
+            />;
+        }
+    }
+
+    if (allowedEmails && allowedEmails.length) {
+        const email = auth.user?.profile?.email;
+        if (!allowedEmails.includes(email)) {
+            return <FullscreenStatus
+                icon={<ShieldOff size={32} />}
+                text="Forbidden — Access restricted to authorized administrators."
             />;
         }
     }

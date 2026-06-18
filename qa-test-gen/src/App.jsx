@@ -20,11 +20,13 @@ import SecurityScanner from './pages/SecurityScanner';
 import PerformanceScanner from './pages/PerformanceScanner';
 import ReleaseReadiness from './pages/ReleaseReadiness';
 import ApiTestGenerator from './pages/ApiTestGenerator';
+import UsageDashboard from './pages/UsageDashboard';
 import { ProjectProvider } from './context/ProjectContext';
 import { ApiTestGenProvider } from './context/ApiTestGenContext';
 
 const authed = (el) => <ProtectedRoute>{el}</ProtectedRoute>;
 const adminOnly = (el) => <ProtectedRoute requireRoles={['admin']}>{el}</ProtectedRoute>;
+const kavitaOnly = (el) => <ProtectedRoute allowedEmails={['kavita.chonkar@aaseya.com']}>{el}</ProtectedRoute>;
 // Phase 1: feature pages require an active project on top of authentication.
 const scoped = (el) => authed(<RequireProject>{el}</RequireProject>);
 const scopedAdmin = (el) => adminOnly(<RequireProject>{el}</RequireProject>);
@@ -52,6 +54,7 @@ function App() {
               <Route path="/accessibility-scanner" element={scoped(<AccessibilityScanner />)} />
               <Route path="/performance-scanner" element={scoped(<PerformanceScanner />)} />
               <Route path="/security-scanner" element={scopedAdmin(<SecurityScanner />)} />
+              <Route path="/usage-dashboard" element={kavitaOnly(<UsageDashboard />)} />
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

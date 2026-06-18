@@ -2,6 +2,8 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { Settings, HelpCircle, Database, Target, ShieldCheck, Layers, Globe, PersonStanding, RefreshCw, LayoutDashboard, FileCode, FileText, Webhook, Gauge } from 'lucide-react';
 import { useProject } from '../../context/ProjectContext';
+import { useAuth } from 'react-oidc-context';
+import { Users } from 'lucide-react';
 
 // A service link that renders as a disabled, non-navigating item when no
 // project is active (Phase 1 project gate), mirroring the route-level guard.
@@ -30,6 +32,8 @@ const ServiceLink = ({ to, icon, label, locked, inactiveColor }) => {
 const Sidebar = () => {
   const { selectedProject } = useProject();
   const locked = !selectedProject;
+  const auth = useAuth();
+  const isKavita = auth.user?.profile?.email === 'kavita.chonkar@aaseya.com';
 
   return (
     <aside className="sidebar">
@@ -40,6 +44,13 @@ const Sidebar = () => {
             <LayoutDashboard size={20} />
             <span>Release Intelligence</span>
           </NavLink>
+
+          {isKavita && (
+            <NavLink to="/usage-dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <Users size={20} style={{ color: 'var(--success)' }} />
+              <span>User Dashboard</span>
+            </NavLink>
+          )}
 
           <NavLink to="/services" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <Layers size={20} />
