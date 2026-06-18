@@ -122,31 +122,49 @@ const UsageDashboard = () => {
 
     // Render bar charts using SVG
     const renderTrendChart = () => {
-        if (!summary || !summary.activityTrend || summary.activityTrend.length === 0) {
-            return (
-                <div className="empty-chart">
-                    <p>No activity trends recorded for the last 7 days.</p>
-                </div>
-            );
+        if (!summary) return null;
+
+        // Build list of last 7 days chronologically
+        const trendMap = new Map();
+        if (summary.activityTrend) {
+            summary.activityTrend.forEach(t => {
+                const dateKey = new Date(t.date).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });
+                trendMap.set(dateKey, parseInt(t.count, 10));
+            });
         }
 
-        const trends = summary.activityTrend;
-        const maxVal = Math.max(...trends.map(t => parseInt(t.count, 10)), 1) || 1;
+        const trends = [];
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            const dateKey = d.toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });
+            trends.push({
+                date: d,
+                count: trendMap.get(dateKey) || 0
+            });
+        }
+
+        const maxVal = Math.max(...trends.map(t => t.count), 5) || 5;
         const chartHeight = 150;
-        const barWidth = 35;
-        const gap = 25;
+        const chartWidth = 500;
         const paddingLeft = 40;
+        const paddingRight = 20;
+        const availableWidth = chartWidth - paddingLeft - paddingRight;
+        
+        // Spacing for exactly 7 bars
+        const barWidth = 30;
+        const gap = (availableWidth - (7 * barWidth)) / 8;
 
         return (
-            <div className="chart-container-inner">
-                <svg viewBox={`0 0 ${trends.length * (barWidth + gap) + paddingLeft + 20} 220`} className="trend-svg">
+            <div className="chart-container-inner" style={{ maxWidth: '500px', margin: '0 auto', width: '100%' }}>
+                <svg viewBox="0 0 500 220" className="trend-svg" style={{ width: '100%', height: 'auto', display: 'block' }}>
                     {/* Y Axis Grid Lines */}
                     {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
                         const yVal = chartHeight * (1 - pct) + 30;
                         const labelVal = Math.round(maxVal * pct);
                         return (
                             <g key={i} className="grid-line-group">
-                                <line x1={paddingLeft} y1={yVal} x2="100%" y2={yVal} className="grid-line" />
+                                <line x1={paddingLeft} y1={yVal} x2={chartWidth - paddingRight} y2={yVal} className="grid-line" />
                                 <text x={paddingLeft - 10} y={yVal + 4} textAnchor="end" className="grid-label">{labelVal}</text>
                             </g>
                         );
@@ -154,14 +172,12 @@ const UsageDashboard = () => {
 
                     {/* Bars */}
                     {trends.map((t, idx) => {
-                        const count = parseInt(t.count, 10);
-                        const pct = count / maxVal;
+                        const pct = t.count / maxVal;
                         const height = chartHeight * pct;
-                        const x = paddingLeft + idx * (barWidth + gap) + gap / 2;
+                        const x = paddingLeft + gap + idx * (barWidth + gap);
                         const y = chartHeight - height + 30;
                         
-                        const rawDate = new Date(t.date);
-                        const label = rawDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                        const label = t.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
                         return (
                             <g key={idx} className="chart-bar-group">
@@ -170,13 +186,15 @@ const UsageDashboard = () => {
                                     y={y} 
                                     width={barWidth} 
                                     height={Math.max(height, 2)} 
-                                    rx="6" 
+                                    rx="4" 
                                     fill="url(#bar-gradient)" 
                                     className="chart-rect"
                                 />
-                                <text x={x + barWidth / 2} y={y - 8} textAnchor="middle" className="bar-value">
-                                    {count}
-                                </text>
+                                {t.count > 0 && (
+                                    <text x={x + barWidth / 2} y={y - 8} textAnchor="middle" className="bar-value">
+                                        {t.count}
+                                    </text>
+                                )}
                                 <text x={x + barWidth / 2} y={chartHeight + 52} textAnchor="middle" className="bar-label">
                                     {label}
                                 </text>
