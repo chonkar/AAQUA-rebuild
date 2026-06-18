@@ -2787,16 +2787,31 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
             for (const d of [path.join(projectRoot, 'target', 'surefire-reports'), path.join(projectRoot, 'target', 'failsafe-reports')]) {
                 if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
             }
-            const logFile = path.join(projectRoot, 'chromedriver.log');
+            const logFile = path.resolve(projectRoot, 'chromedriver.log');
             runCommand('mvn', [
                 'clean', 'test', '-fae', '--no-transfer-progress',
                 `-Dwebdriver.chrome.logfile=${logFile}`,
                 '-Dwebdriver.chrome.verboseLogging=true'
             ], projectRoot, runId, (code) => {
                 const run = runStore.get(runId);
+                let logContent = '';
                 if (fs.existsSync(logFile)) {
-                    const chromeDriverLog = fs.readFileSync(logFile, 'utf8');
-                    appendRunLog(run, `\n=== ChromeDriver Verbose Log ===\n${chromeDriverLog}\n================================\n`);
+                    logContent = fs.readFileSync(logFile, 'utf8');
+                } else {
+                    try {
+                        const allFiles = getFiles(projectRoot);
+                        const foundLog = allFiles.find(f => f.endsWith('chromedriver.log'));
+                        if (foundLog) {
+                            logContent = fs.readFileSync(foundLog, 'utf8');
+                        }
+                    } catch (e) {
+                        console.error('[Runner] Error searching for chromedriver.log:', e.message);
+                    }
+                }
+                if (logContent) {
+                    appendRunLog(run, `\n=== ChromeDriver Verbose Log ===\n${logContent}\n================================\n`);
+                } else {
+                    appendRunLog(run, `\n[AAQUA] ChromeDriver log not found at ${logFile}\n`);
                 }
                 appendRunLog(run, `\n[AAQUA] Process exited with code ${code}\n`);
                 const suites = parseMavenResults(projectRoot);
