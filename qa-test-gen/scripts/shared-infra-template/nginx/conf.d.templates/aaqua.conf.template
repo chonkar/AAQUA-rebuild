@@ -34,5 +34,10 @@ location /aaqua/llm-api/ {
     proxy_set_header      Host          llm.lab.aaseya.com;
     proxy_set_header      Authorization "Bearer ${AAQUA_LLM_API_KEY}";
     proxy_set_header      Content-Type  "application/json";
-    proxy_read_timeout    120s;
+    # gpt-oss-20b is a reasoning model — it can go silent for minutes during
+    # internal chain-of-thought before emitting any output tokens. Read/send
+    # ceilings sit at 10 min so multi-endpoint flow generation and long API
+    # test-case batches finish instead of 504ing at nginx.
+    proxy_read_timeout    600s;
+    proxy_send_timeout    600s;
 }
