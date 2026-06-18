@@ -72,22 +72,17 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
             ? `\nPREVIOUS CONTEXT (Use this to understand the domain/project context if relevant):\n${requirementHistory.map((req, i) => `${i + 1}. ${req}`).join('\n')}\n`
             : '';
 
-        const prompt = `
+        const getPrompt = (batchDesc) => {
+            return `
       You are a Senior QA Test Architect.
       ${historyText}
-      Generate comprehensive FUNCTIONAL test cases for the following NEW requirement. You MUST generate AT LEAST 6 to 8 functional test cases. Ensure they are STRICTLY functional test cases without automation specifics:
+      Generate 6 comprehensive, distinct FUNCTIONAL test cases focusing ONLY on: ${batchDesc}.
+      Target the following requirement:
       "${sanitizedRequirement}"
 
-      Cover relevant scenarios from these Test Types to ensure good coverage:
-      1. Positive Scenarios (Happy Path)
-      2. Negative Scenarios (Invalid inputs, error handling)
-      3. Boundary Value Analysis or Edge Cases
-      4. Navigation or Field Validation
-      5. Cancel / Discard / Back actions
+      Ensure they are STRICTLY functional test cases without automation specifics.
 
-      MANDATORY COVERAGE: Whenever the requirement involves any form, screen, list, or multi-step workflow, you MUST include dedicated test case(s) for EACH of: (a) Cancel/Discard/Back, (b) Read-only / non-editable field validation, and (c) Navigation between screens. Do not omit these.
-
-       CRITICAL: Output the JSON array of objects wrapped in a markdown \`\`\`json code block. Do NOT include any conversational introduction, explanation, or internal reasoning. Start your response directly with the \`\`\`json code block.
+      CRITICAL: Output the JSON array of objects wrapped in a markdown \`\`\`json code block. Do NOT include any conversational introduction, explanation, or internal reasoning. Start your response directly with the \`\`\`json code block.
 
       Each object must have exactly these fields:
       - id (string, e.g., "FT_001")
@@ -103,7 +98,23 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
       - testType (string: one of "Positive", "Negative", "Boundary", "Edge", "Security", "Navigation", "Field Validation", "Cancel")
 
       Make the test data realistic. Write steps in plain, detailed language so anyone reviewing them for the FIRST TIME understands exactly what to do and what to expect.
-    `;
+            `;
+        };
+
+        const batches = [
+            {
+                name: "Positive Scenarios / Happy Path",
+                prompt: getPrompt("Positive Scenarios / Happy Path")
+            },
+            {
+                name: "Negative Scenarios / Boundary Value Analysis / Edge Cases",
+                prompt: getPrompt("Negative Scenarios / Boundary Value Analysis / Edge Cases")
+            },
+            {
+                name: "Workflow Navigation / Field Validation / Cancel Actions / Security Controls",
+                prompt: getPrompt("Workflow Navigation, Field Validation (including read-only / non-editable fields), Cancel/Discard/Back actions, and Security/Access Control Scenarios")
+            }
+        ];
 
         const cancellationPromise = new Promise((_, reject) => {
             if (signal) {
@@ -111,20 +122,39 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
             }
         });
 
-        const result = await Promise.race([
-            model.generateContent(prompt),
-            cancellationPromise
-        ]);
+        // Run queries in parallel
+        const results = await Promise.all(
+            batches.map(async (b) => {
+                try {
+                    const result = await Promise.race([
+                        model.generateContent(b.prompt),
+                        cancellationPromise
+                    ]);
+                    const response = await result.response;
+                    const text = response.text();
+                    return extractTestCases(text);
+                } catch (err) {
+                    if (err.name === 'AbortError') throw err;
+                    console.error(`[AI Batch Error] Failed to generate ${b.name}:`, err);
+                    return [];
+                }
+            })
+        );
 
-        const response = await result.response;
-        const text = response.text();
+        // Flatten all generated test cases
+        let combinedCases = results.flat();
 
-        const cases = extractTestCases(text);
-        if (cases.length === 0) {
-            console.error("Failed to parse AI response:", text);
-            throw new Error("AI response was not valid JSON. Please try again.");
+        if (combinedCases.length === 0) {
+            throw new Error("AI failed to generate any valid test cases. Please try again.");
         }
-        return cases;
+
+        // Re-index all test cases sequentially to ensure order and avoid ID duplicates
+        combinedCases = combinedCases.map((tc, idx) => ({
+            ...tc,
+            id: `FT_${String(idx + 1).padStart(3, '0')}`
+        }));
+
+        return combinedCases;
 
     } catch (error) {
         if (error.name === 'AbortError') {
