@@ -16,6 +16,62 @@ const isValidJSON = (str) => {
     }
 };
 
+// Robust helper to extract a JSON array or objects from the LLM text
+export function extractTestData(text) {
+    if (!text || typeof text !== 'string') return [];
+    let s = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    
+    // 1. Try to find and parse the outer array first
+    const firstArr = s.indexOf('[');
+    const lastArr = s.lastIndexOf(']');
+    if (firstArr !== -1 && lastArr !== -1 && lastArr > firstArr) {
+        try {
+            const arr = JSON.parse(s.slice(firstArr, lastArr + 1));
+            if (Array.isArray(arr)) return arr;
+        } catch { /* fallback to salvage */ }
+    }
+
+    // 2. If it is a single valid JSON object, parse it
+    const firstObj = s.indexOf('{');
+    const lastObj = s.lastIndexOf('}');
+    if (firstObj !== -1 && lastObj !== -1 && lastObj > firstObj) {
+        try {
+            const obj = JSON.parse(s.slice(firstObj, lastObj + 1));
+            if (obj && typeof obj === 'object') {
+                const keys = Object.keys(obj);
+                // Wrapper detection: if single key and it contains an array, return that array
+                if (keys.length === 1 && Array.isArray(obj[keys[0]])) {
+                    return obj[keys[0]];
+                }
+                return [obj];
+            }
+        } catch { /* fallback to salvage */ }
+    }
+
+    // 3. Salvage parser: scan for balanced top-level {...} objects
+    const objects = [];
+    let depth = 0, start = -1, inStr = false, esc = false;
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (inStr) {
+            if (esc) esc = false;
+            else if (ch === '\\') esc = true;
+            else if (ch === '"') inStr = false;
+            continue;
+        }
+        if (ch === '"') inStr = true;
+        else if (ch === '{') { if (depth === 0) start = i; depth++; }
+        else if (ch === '}') {
+            depth--;
+            if (depth === 0 && start !== -1) {
+                try { objects.push(JSON.parse(s.slice(start, i + 1))); } catch { /* skip */ }
+                start = -1;
+            }
+        }
+    }
+    return objects;
+}
+
 // Process data to replace Faker placeholders and track stats
 const processHybridData = (data) => {
     let fakerCount = 0;
@@ -124,23 +180,12 @@ export const generateTestData = async (input, mode = 'prompt', count = 5) => {
         const response = await result.response;
         let text = response.text();
 
-        // Robust cleanup: find the exact JSON array using regex
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-            text = jsonMatch[0];
-        } else {
-            text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        const rawData = extractTestData(text);
+
+        if (rawData.length === 0) {
+            console.error("AI failed to generate valid JSON data. Raw text was:", text);
+            throw new Error("AI failed to generate any valid test data. Please try lowering the Count and trying again.");
         }
-
-        if (!isValidJSON(text)) {
-            let parseError = "Syntax Error";
-            try { JSON.parse(text); } catch (e) { parseError = e.message; }
-
-            console.error("AI failed to generate valid JSON:", parseError, text);
-            throw new Error(`The AI output exceeded the maximum response size limit and was abruptly cut off mid-data! (${parseError}). Try lowering the Count to 1 or 2.`);
-        }
-
-        let rawData = JSON.parse(text);
 
         // Post-process with Faker and return { data, stats }
         return processHybridData(rawData);

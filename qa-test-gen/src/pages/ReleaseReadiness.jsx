@@ -479,6 +479,43 @@ const ReleaseReadiness = () => {
       )}
 
       <style>{`
+        :root, .release-readiness-dashboard {
+          --rr-blue-text: #60a5fa;
+          --rr-amber-text: #fbbf24;
+          --rr-green-text: #34d399;
+          --rr-purple-text: #c084fc;
+          --rr-red-text: #f87171;
+ 
+          --rr-green-high-text: #6ee7b7;
+          --rr-amber-med-text: #fcd34d;
+          --rr-red-low-text: #fca5a5;
+        }
+ 
+        [data-theme='light'] .release-readiness-dashboard,
+        [data-theme='light'] {
+          --rr-blue-text: #1d4ed8;
+          --rr-amber-text: #b45309;
+          --rr-green-text: #047857;
+          --rr-purple-text: #6d28d9;
+          --rr-red-text: #b91c1c;
+ 
+          --rr-green-high-text: #047857;
+          --rr-amber-med-text: #b45309;
+          --rr-red-low-text: #b91c1c;
+        }
+ 
+        [data-theme='light'] .glass-panel {
+          background: rgba(255, 255, 255, 0.6);
+          box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+        }
+        [data-theme='light'] .summary-chip {
+          background: rgba(0, 0, 0, 0.03);
+          border-color: rgba(0, 0, 0, 0.08);
+        }
+        [data-theme='light'] .summary-chip .chip-label {
+          color: var(--text-secondary);
+        }
+
         .release-readiness-dashboard {
           max-width: 1200px;
           margin: 0 auto;
@@ -547,7 +584,7 @@ const ReleaseReadiness = () => {
 
         .radial-bg {
           fill: none;
-          stroke: rgba(255, 255, 255, 0.05);
+          stroke: var(--border-color);
           stroke-width: 8;
         }
 
@@ -613,9 +650,9 @@ const ReleaseReadiness = () => {
           border-radius: 4px;
         }
 
-        .conf-badge.high { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.3); }
-        .conf-badge.medium { background: rgba(245, 158, 11, 0.15); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.3); }
-        .conf-badge.low { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .conf-badge.high { background: rgba(16, 185, 129, 0.15); color: var(--rr-green-high-text); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .conf-badge.medium { background: rgba(245, 158, 11, 0.15); color: var(--rr-amber-med-text); border: 1px solid rgba(245, 158, 11, 0.3); }
+        .conf-badge.low { background: rgba(239, 68, 68, 0.15); color: var(--rr-red-low-text); border: 1px solid rgba(239, 68, 68, 0.3); }
 
         .summary-text {
           font-size: 1rem;
@@ -688,11 +725,11 @@ const ReleaseReadiness = () => {
           justify-content: center;
         }
 
-        .pillar-icon-wrapper.blue { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
-        .pillar-icon-wrapper.amber { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
-        .pillar-icon-wrapper.green { background: rgba(16, 185, 129, 0.15); color: #34d399; }
-        .pillar-icon-wrapper.purple { background: rgba(167, 139, 250, 0.15); color: #c084fc; }
-        .pillar-icon-wrapper.red { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+        .pillar-icon-wrapper.blue { background: rgba(59, 130, 246, 0.15); color: var(--rr-blue-text); }
+        .pillar-icon-wrapper.amber { background: rgba(245, 158, 11, 0.15); color: var(--rr-amber-text); }
+        .pillar-icon-wrapper.green { background: rgba(16, 185, 129, 0.15); color: var(--rr-green-text); }
+        .pillar-icon-wrapper.purple { background: rgba(167, 139, 250, 0.15); color: var(--rr-purple-text); }
+        .pillar-icon-wrapper.red { background: rgba(239, 68, 68, 0.15); color: var(--rr-red-text); }
 
         .pillar-header h4 {
           font-size: 1rem;
@@ -708,7 +745,7 @@ const ReleaseReadiness = () => {
 
         .progress-bar-bg {
           height: 6px;
-          background: rgba(255, 255, 255, 0.05);
+          background: var(--bg-tertiary);
           border-radius: 3px;
           overflow: hidden;
           margin-bottom: 0.75rem;
@@ -745,7 +782,7 @@ const ReleaseReadiness = () => {
 
         .no-data-text {
           font-size: 0.8rem;
-          color: var(--text-muted);
+          color: var(--text-secondary);
           line-height: 1.5;
         }
 
@@ -795,9 +832,9 @@ const ReleaseReadiness = () => {
           color: var(--text-muted);
         }
 
-        .text-red { color: #f87171 !important; }
-        .text-green { color: #34d399 !important; }
-        .text-amber { color: #fbbf24 !important; }
+        .text-red { color: var(--rr-red-text) !important; }
+        .text-green { color: var(--rr-green-text) !important; }
+        .text-amber { color: var(--rr-amber-text) !important; }
 
         .loading-state, .no-project-selected {
           min-height: 350px;

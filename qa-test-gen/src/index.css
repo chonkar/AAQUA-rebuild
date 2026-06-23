@@ -59,7 +59,7 @@
   /* Near Black */
   --text-secondary: #4b5563;
   /* Dark Gray */
-  --text-muted: #9ca3af;
+  --text-muted: #6b7280;
 
   --border-color: #e5e7eb;
   --border-focus: #7c3aed;
@@ -124,6 +124,12 @@ body {
   outline: none;
   gap: 0.5rem;
 }
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 
 .btn-primary {
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));

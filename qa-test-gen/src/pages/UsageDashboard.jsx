@@ -438,6 +438,34 @@ const UsageDashboard = () => {
             </div>
 
             <style>{`
+                /* Light Theme Overrides */
+                [data-theme='light'] .glass-panel {
+                    background: rgba(255, 255, 255, 0.6);
+                    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+                }
+                [data-theme='light'] .search-input {
+                    background: rgba(255, 255, 255, 0.8);
+                }
+                [data-theme='light'] .top-user-item {
+                    background: rgba(0, 0, 0, 0.02);
+                }
+                [data-theme='light'] .action-badge {
+                    background: rgba(0, 0, 0, 0.03);
+                }
+                [data-theme='light'] .action-badge.get .action-method { color: #1d4ed8; }
+                [data-theme='light'] .action-badge.post .action-method { color: #047857; }
+                [data-theme='light'] .action-badge.put .action-method { color: #b45309; }
+                [data-theme='light'] .action-badge.delete .action-method { color: #b91c1c; }
+                [data-theme='light'] .grid-line {
+                    stroke: rgba(0, 0, 0, 0.06);
+                }
+                [data-theme='light'] .log-row:hover {
+                    background: rgba(0, 0, 0, 0.02);
+                }
+                [data-theme='light'] .card-icon-wrapper.purple { background: rgba(139, 92, 246, 0.1); color: #7c3aed; }
+                [data-theme='light'] .card-icon-wrapper.blue { background: rgba(59, 130, 246, 0.1); color: #2563eb; }
+                [data-theme='light'] .card-icon-wrapper.green { background: rgba(16, 185, 129, 0.1); color: #059669; }
+
                 .usage-dashboard-page {
                     max-width: 1200px;
                     margin: 0 auto;
@@ -939,7 +967,7 @@ const UsageDashboard = () => {
                 }
 
                 .no-data-text {
-                    color: var(--text-muted);
+                    color: var(--text-secondary);
                     font-size: 0.85rem;
                 }
 

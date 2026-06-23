@@ -163,6 +163,7 @@ const TestRunner = () => {
     const [scheduleTime, setScheduleTime] = useState('');
     const [scheduleDate, setScheduleDate] = useState(new Date().toISOString().split('T')[0]); // default today
     const [isScheduled, setIsScheduled] = useState(false);
+    const [isBrowsing, setIsBrowsing] = useState(false);
     const pollRef = useRef(null);
     const scheduleTimerRef = useRef(null);
 
@@ -514,9 +515,10 @@ const TestRunner = () => {
                                     style={{ flex: 1 }}
                                 />
                                 <button 
-                                    className="btn" 
-                                    style={{ padding: '0.5rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}
+                                    className="btn btn-secondary" 
+                                    style={{ padding: '0.5rem 1rem', borderRadius: 'var(--radius-md)' }}
                                     onClick={async () => {
+                                        setIsBrowsing(true);
                                         try {
                                             const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
                                             const res = await fetch(`${baseUrl}/api/browse-folder`);
@@ -529,11 +531,13 @@ const TestRunner = () => {
                                         } catch (err) {
                                             console.error("Browse folder error:", err);
                                             alert("Folder browsing failed. If you are on a remote server, please type the path manually or upload a ZIP file.");
+                                        } finally {
+                                            setIsBrowsing(false);
                                         }
                                     }}
-                                    disabled={isRunning || isScheduled}
+                                    disabled={isRunning || isScheduled || isBrowsing}
                                 >
-                                    Browse
+                                    {isBrowsing ? 'Browsing...' : 'Browse'}
                                 </button>
                             </div>
                         </>
@@ -546,7 +550,7 @@ const TestRunner = () => {
                                         className="btn btn-secondary" 
                                         onClick={() => document.getElementById('tr-zip-file-input').click()}
                                         disabled={isRunning || isScheduled}
-                                        style={{ padding: '0.5rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
+                                        style={{ padding: '0.5rem 1rem', borderRadius: 'var(--radius-md)' }}
                                     >
                                         Choose ZIP File
                                     </button>
@@ -854,6 +858,83 @@ const TestRunner = () => {
             )}
 
             <style>{`
+        :root, .tr-page {
+          --tr-schedule-text: #93c5fd;
+          --tr-schedule-bg: rgba(59,130,246,0.12);
+          --tr-schedule-border: rgba(59,130,246,0.35);
+          --tr-schedule-hover: rgba(59,130,246,0.22);
+          
+          --tr-cancel-text: #fca5a5;
+          --tr-cancel-bg: rgba(239,68,68,0.1);
+          --tr-cancel-border: rgba(239,68,68,0.35);
+          --tr-cancel-hover: rgba(239,68,68,0.2);
+
+          --tr-banner-strong: #bfdbfe;
+
+          --tr-heal-text: #fbbf24;
+          --tr-heal-bg: rgba(245,158,11,0.15);
+          --tr-heal-border: rgba(245,158,11,0.4);
+          --tr-heal-hover: rgba(245,158,11,0.25);
+
+          --tr-heal-pending-bg: rgba(156,163,175,0.15);
+          --tr-heal-pending-text: var(--text-muted);
+
+          --tr-heal-healing-bg: rgba(59,130,246,0.12);
+          --tr-heal-healing-text: #93c5fd;
+
+          --tr-heal-success-bg: rgba(16,185,129,0.12);
+          --tr-heal-success-text: var(--success);
+
+          --tr-heal-error-bg: rgba(239,68,68,0.1);
+          --tr-heal-error-text: var(--error);
+
+          --tr-heal-warning-bg: rgba(245,158,11,0.12);
+          --tr-heal-warning-text: #fbbf24;
+
+          --tr-locator-text: #a78bfa;
+          --tr-strategy-text: #818cf8;
+          --tr-strategy-bg: rgba(99,102,241,0.15);
+        }
+
+        [data-theme='light'] .tr-page,
+        [data-theme='light'] {
+          --tr-schedule-text: #1d4ed8;
+          --tr-schedule-bg: rgba(37,99,235,0.08);
+          --tr-schedule-border: rgba(37,99,235,0.25);
+          --tr-schedule-hover: rgba(37,99,235,0.15);
+          
+          --tr-cancel-text: #b91c1c;
+          --tr-cancel-bg: rgba(220,38,38,0.06);
+          --tr-cancel-border: rgba(220,38,38,0.2);
+          --tr-cancel-hover: rgba(220,38,38,0.12);
+
+          --tr-banner-strong: #1e3a8a;
+
+          --tr-heal-text: #b45309;
+          --tr-heal-bg: rgba(217,119,6,0.08);
+          --tr-heal-border: rgba(217,119,6,0.25);
+          --tr-heal-hover: rgba(217,119,6,0.15);
+
+          --tr-heal-pending-bg: rgba(107,114,128,0.1);
+          --tr-heal-pending-text: var(--text-secondary);
+
+          --tr-heal-healing-bg: rgba(37,99,235,0.08);
+          --tr-heal-healing-text: #1d4ed8;
+
+          --tr-heal-success-bg: rgba(16,185,129,0.08);
+          --tr-heal-success-text: #047857;
+
+          --tr-heal-error-bg: rgba(220,38,38,0.06);
+          --tr-heal-error-text: #b91c1c;
+
+          --tr-heal-warning-bg: rgba(217,119,6,0.08);
+          --tr-heal-warning-text: #b45309;
+
+          --tr-locator-text: #6d28d9;
+          --tr-strategy-text: #4f46e5;
+          --tr-strategy-bg: rgba(79,70,229,0.08);
+        }
+
         .tr-page { padding: 1rem; }
         .tr-header { margin-bottom: 2rem; }
         .tr-header h1 {
@@ -874,9 +955,9 @@ const TestRunner = () => {
           padding: 0.5rem 0.75rem; font-size: 0.9rem;
         }
         .tr-schedule-btn {
-          background: rgba(59,130,246,0.12);
-          color: #93c5fd;
-          border: 1px solid rgba(59,130,246,0.35);
+          background: var(--tr-schedule-bg);
+          color: var(--tr-schedule-text);
+          border: 1px solid var(--tr-schedule-border);
           border-radius: var(--radius-md);
           padding: 0.55rem 1rem;
           font-size: 0.85rem; font-weight: 600;
@@ -884,29 +965,29 @@ const TestRunner = () => {
           transition: all 0.2s;
         }
         .tr-schedule-btn:hover:not(:disabled) {
-          background: rgba(59,130,246,0.22);
-          border-color: rgba(59,130,246,0.6);
+          background: var(--tr-schedule-hover);
+          border-color: var(--tr-schedule-text);
         }
         .tr-schedule-btn:disabled { opacity: 0.4; cursor: not-allowed; }
         .tr-cancel-schedule-btn {
-          background: rgba(239,68,68,0.1);
-          color: #fca5a5;
-          border: 1px solid rgba(239,68,68,0.35);
+          background: var(--tr-cancel-bg);
+          color: var(--tr-cancel-text);
+          border: 1px solid var(--tr-cancel-border);
           border-radius: var(--radius-md);
           padding: 0.55rem 0.9rem;
           font-size: 0.85rem; font-weight: 600;
           cursor: pointer; transition: all 0.2s;
         }
-        .tr-cancel-schedule-btn:hover { background: rgba(239,68,68,0.2); }
+        .tr-cancel-schedule-btn:hover { background: var(--tr-cancel-hover); }
         .tr-schedule-banner {
           display: flex; align-items: center; gap: 0.75rem;
           margin-top: 0.75rem; padding: 0.85rem 1rem;
-          background: rgba(59,130,246,0.08);
-          border: 1px solid rgba(59,130,246,0.3);
+          background: var(--tr-schedule-bg);
+          border: 1px solid var(--tr-schedule-border);
           border-radius: var(--radius-md);
-          color: #93c5fd; font-size: 0.9rem;
+          color: var(--tr-schedule-text); font-size: 0.9rem;
         }
-        .tr-schedule-banner strong { color: #bfdbfe; }
+        .tr-schedule-banner strong { color: var(--tr-banner-strong); }
 
         /* Input Panel */
         .tr-input-panel { margin-bottom: 1.5rem; }
@@ -1148,7 +1229,7 @@ const TestRunner = () => {
         }
         .ah-title {
           display: flex; align-items: center; gap: 0.6rem;
-          font-size: 1rem; font-weight: 700; color: #fbbf24;
+          font-size: 1rem; font-weight: 700; color: var(--tr-heal-text);
         }
         .ah-count-badge {
           font-size: 0.75rem; font-weight: 500; color: var(--text-secondary);
@@ -1163,14 +1244,14 @@ const TestRunner = () => {
         }
         .ah-select-all:hover { border-color: var(--border-focus); color: var(--text-primary); }
         .ah-heal-btn {
-          background: rgba(245,158,11,0.15); color: #fbbf24;
-          border: 1px solid rgba(245,158,11,0.4); border-radius: var(--radius-md);
+          background: var(--tr-heal-bg); color: var(--tr-heal-text);
+          border: 1px solid var(--tr-heal-border); border-radius: var(--radius-md);
           padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 600;
           display: flex; align-items: center; gap: 0.4rem; transition: all 0.2s;
         }
-        .ah-heal-btn:hover:not(:disabled) { background: rgba(245,158,11,0.25); }
+        .ah-heal-btn:hover:not(:disabled) { background: var(--tr-heal-hover); }
         .ah-heal-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
+ 
         /* URL row */
         .ah-url-row {
           display: flex; align-items: center; gap: 0.75rem;
@@ -1182,7 +1263,7 @@ const TestRunner = () => {
           display: flex; align-items: center; gap: 0.4rem;
           font-size: 0.8rem; color: var(--text-secondary); cursor: pointer; white-space: nowrap;
         }
-
+ 
         /* Candidates table */
         .ah-table { display: flex; flex-direction: column; gap: 0.5rem; }
         .ah-row {
@@ -1194,20 +1275,20 @@ const TestRunner = () => {
         .ah-test-name { font-size: 0.88rem; font-weight: 600; color: var(--text-primary); }
         .ah-exception { font-size: 0.75rem; color: var(--error); font-family: monospace; }
         .ah-per-url { width: 200px; padding: 0.4rem 0.6rem; font-size: 0.8rem; }
-
+ 
         /* Status badges */
         .ah-status-badge {
           font-size: 0.75rem; font-weight: 600; padding: 3px 10px;
           border-radius: 10px; white-space: nowrap; align-self: center;
         }
-        .ah-status-pending { background: rgba(156,163,175,0.15); color: var(--text-muted); }
-        .ah-status-healing { background: rgba(59,130,246,0.12); color: #93c5fd; }
-        .ah-status-suggestions-ready { background: rgba(16,185,129,0.12); color: var(--success); }
-        .ah-status-healed { background: rgba(16,185,129,0.15); color: var(--success); }
-        .ah-status-no-suggestion { background: rgba(239,68,68,0.1); color: var(--error); }
-        .ah-status-conflict { background: rgba(245,158,11,0.12); color: #fbbf24; }
-        .ah-status-failing { background: rgba(245,158,11,0.12); color: #fbbf24; }
-
+        .ah-status-pending { background: var(--tr-heal-pending-bg); color: var(--tr-heal-pending-text); }
+        .ah-status-healing { background: var(--tr-heal-healing-bg); color: var(--tr-heal-healing-text); }
+        .ah-status-suggestions-ready { background: var(--tr-heal-success-bg); color: var(--tr-heal-success-text); }
+        .ah-status-healed { background: var(--tr-heal-success-bg); color: var(--tr-heal-success-text); }
+        .ah-status-no-suggestion { background: var(--tr-heal-error-bg); color: var(--tr-heal-error-text); }
+        .ah-status-conflict { background: var(--tr-heal-warning-bg); color: var(--tr-heal-warning-text); }
+        .ah-status-failing { background: var(--tr-heal-warning-bg); color: var(--tr-heal-warning-text); }
+ 
         /* Suggestions list */
         .ah-suggestions { width: 100%; margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
         .ah-suggestion-row {
@@ -1223,9 +1304,9 @@ const TestRunner = () => {
           position: absolute; left: 0; top: 0; height: 100%;
           width: var(--conf, 0%); background: var(--success); border-radius: 3px;
         }
-        .ah-locator-code { font-family: monospace; font-size: 0.78rem; color: #a78bfa; flex: 1; min-width: 100px; word-break: break-all; }
+        .ah-locator-code { font-family: monospace; font-size: 0.78rem; color: var(--tr-locator-text); flex: 1; min-width: 100px; word-break: break-all; }
         .ah-strategy-tag {
-          font-size: 0.68rem; background: rgba(99,102,241,0.15); color: #818cf8;
+          font-size: 0.68rem; background: var(--tr-strategy-bg); color: var(--tr-strategy-text);
           padding: 1px 6px; border-radius: 6px; font-weight: 600;
         }
         .ah-conf-pct { font-size: 0.75rem; color: var(--text-muted); min-width: 34px; text-align: right; }
@@ -1254,7 +1335,7 @@ const TestRunner = () => {
         .ah-sum-item { font-size: 0.82rem; font-weight: 500; }
         .ah-sum-item.green { color: var(--success); }
         .ah-sum-item.red { color: var(--error); }
-        .ah-sum-item.orange { color: #fbbf24; }
+        .ah-sum-item.orange { color: var(--tr-heal-text); }
       `}</style>
 
         </div>
