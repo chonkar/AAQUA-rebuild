@@ -3,7 +3,7 @@ import { LocalLLM as GoogleGenerativeAI } from "../utils/llmClient";
 
 const API_KEY = import.meta.env.VITE_LLM_API_KEY;
 const LLM_ENDPOINT = import.meta.env.VITE_LLM_ENDPOINT;
-const MODEL_NAME = import.meta.env.VITE_LLM_MODEL || "gpt-oss-20b";
+const MODEL_NAME = import.meta.env.VITE_LLM_MODEL || "gemma-4";
 
 export const generateTestPlan = async (clientName, projectName, requirement, signal) => {
     if (!API_KEY) {

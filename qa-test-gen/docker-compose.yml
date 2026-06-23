@@ -28,7 +28,7 @@ services:
       ZAP_API_URL: http://aaqua-zap:8080
       ZAP_API_KEY: ""
       VITE_LLM_ENDPOINT: https://llm.lab.aaseya.com/v1
-      VITE_LLM_MODEL: gpt-oss-20b
+      VITE_LLM_MODEL: gemma-4
       KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-https://aaqua.aaseya.com:8443/auth/realms/aaseya-platform}
       # Optional: backend JWKS fetch URL. Defaults to ${KEYCLOAK_REALM_URL}/protocol/openid-connect/certs.
       # Set this to a docker-internal URL (e.g. http://shared-keycloak:8080/auth/realms/aaseya-platform/protocol/openid-connect/certs)

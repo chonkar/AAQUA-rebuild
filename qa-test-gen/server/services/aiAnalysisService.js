@@ -5,7 +5,7 @@ dotenv.config();
 
 const LLM_API_KEY = process.env.VITE_LLM_API_KEY;
 const LLM_ENDPOINT = process.env.VITE_LLM_ENDPOINT;
-const LLM_MODEL = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
+const LLM_MODEL = process.env.VITE_LLM_MODEL || 'gemma-4';
 /**
  * Analyze vulnerabilities using Local LLM
  * Processes in batches to minimize API calls

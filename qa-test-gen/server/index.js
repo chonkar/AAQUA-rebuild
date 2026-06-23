@@ -183,7 +183,7 @@ app.post('/api/convert', upload.single('projectZip'), async (req, res) => {
         // 3. Initialize AI (Using Local LLM)
         const genAI = new GoogleGenerativeAI(apiKey, process.env.VITE_LLM_ENDPOINT);
         const model = genAI.getGenerativeModel({ 
-            model: process.env.VITE_LLM_MODEL || "gpt-oss-20b",
+            model: process.env.VITE_LLM_MODEL || "gemma-4",
             generationConfig: { temperature: 0.2 }
         });
 
@@ -1612,7 +1612,7 @@ app.post('/api/analyze-localization', async (req, res) => {
 
     try {
         const endpoint = process.env.VITE_LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
-        const llmModel = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
+        const llmModel = process.env.VITE_LLM_MODEL || 'gemma-4';
         const genAI = new GoogleGenerativeAI(apiKey, endpoint);
         const model = genAI.getGenerativeModel({
             model: llmModel,
@@ -1929,7 +1929,7 @@ app.post('/api/performance-insights', async (req, res) => {
     try {
         const genAI = new GoogleGenerativeAI(apiKey, process.env.VITE_LLM_ENDPOINT);
         const model = genAI.getGenerativeModel({
-            model: process.env.VITE_LLM_MODEL || 'gpt-oss-20b',
+            model: process.env.VITE_LLM_MODEL || 'gemma-4',
             generationConfig: { temperature: 0.2, reasoningEffort: 'low', timeoutMs: 120000 },
         });
         const opps = (Array.isArray(opportunities) && opportunities.length)
@@ -2017,7 +2017,7 @@ app.post('/api/analyze-accessibility', async (req, res) => {
                 const genAI = new GoogleGenerativeAI(authKey, process.env.VITE_LLM_ENDPOINT);
                 // Switch to configured local model
                 const model = genAI.getGenerativeModel({ 
-                    model: process.env.VITE_LLM_MODEL || "gpt-oss-20b",
+                    model: process.env.VITE_LLM_MODEL || "gemma-4",
                     generationConfig: { temperature: 0.2 }
                 });
 
@@ -3313,7 +3313,7 @@ Return ONLY valid JSON — no explanation, no markdown:
 
         const apiKey = process.env.VITE_LLM_API_KEY;
         const endpoint = process.env.VITE_LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
-        const llmModel = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
+        const llmModel = process.env.VITE_LLM_MODEL || 'gemma-4';
         const genAI = new GoogleGenerativeAI(apiKey, endpoint);
         const model = genAI.getGenerativeModel({ 
             model: llmModel,
@@ -3406,7 +3406,7 @@ Suggest 5 alternative locators. Return ONLY valid JSON:
 
                 const apiKey = process.env.VITE_LLM_API_KEY;
                 const endpoint = process.env.VITE_LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
-                const llmModel = process.env.VITE_LLM_MODEL || 'gpt-oss-20b';
+                const llmModel = process.env.VITE_LLM_MODEL || 'gemma-4';
                 const genAI = new GoogleGenerativeAI(apiKey, endpoint);
                 const model = genAI.getGenerativeModel({ 
                     model: llmModel,

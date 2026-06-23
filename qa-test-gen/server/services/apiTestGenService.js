@@ -153,7 +153,7 @@ export async function generateApiTestCases(endpoints, options = {}, apiKey) {
 
     const genAI = new GoogleGenerativeAI(apiKey, process.env.VITE_LLM_ENDPOINT);
     const model = genAI.getGenerativeModel({
-        model: process.env.VITE_LLM_MODEL || 'gpt-oss-20b',
+        model: process.env.VITE_LLM_MODEL || 'gemma-4',
         // High ceiling, not a throttle: gpt-oss is a reasoning model that spends
         // ~1-2k tokens reasoning before the answer. A low cap truncated the JSON
         // (empty / "unterminated string"); the model still stops early when done.
@@ -177,7 +177,7 @@ export async function generateApiTestCases(endpoints, options = {}, apiKey) {
             const parsed = extractJson(raw);
             let cases = Array.isArray(parsed.cases) ? parsed.cases : [];
 
-            // Backfill: small/local models (e.g. gpt-oss-20b) routinely drop
+            // Backfill: small/local models (e.g. gemma-4) routinely drop
             // 'negative' or 'auth' even when the prompt's skip rules don't allow
             // it, leaving users with only positive + schema for an endpoint that
             // clearly has invalidatable inputs. Re-prompt ONCE for any requested

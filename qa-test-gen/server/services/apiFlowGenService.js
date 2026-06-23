@@ -147,7 +147,7 @@ export async function generateFlows(endpoints, options = {}, apiKey) {
 
     const genAI = new GoogleGenerativeAI(apiKey, process.env.VITE_LLM_ENDPOINT);
     const model = genAI.getGenerativeModel({
-        model: process.env.VITE_LLM_MODEL || 'gpt-oss-20b',
+        model: process.env.VITE_LLM_MODEL || 'gemma-4',
         // reasoningEffort:'medium' bounds gpt-oss's reasoning so it doesn't spend the
         // whole budget thinking and return empty content (finish_reason=length).
         generationConfig: { temperature: 0.2, maxOutputTokens: 8192, reasoningEffort: 'medium' },
