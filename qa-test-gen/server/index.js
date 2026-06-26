@@ -1460,6 +1460,26 @@ mvn test
     writeProjectFile(path.join(outputPath, 'README.md'), readme);
 }
 
+const sanitizeCookies = (cookies) => {
+    if (!Array.isArray(cookies)) return [];
+    return cookies.map(cookie => {
+        const sanitized = { ...cookie };
+        if (sanitized.sameSite) {
+            const val = sanitized.sameSite.toLowerCase();
+            if (val === 'strict') {
+                sanitized.sameSite = 'Strict';
+            } else if (val === 'lax') {
+                sanitized.sameSite = 'Lax';
+            } else if (val === 'none' || val === 'no_restriction') {
+                sanitized.sameSite = 'None';
+            } else {
+                delete sanitized.sameSite;
+            }
+        }
+        return sanitized;
+    });
+};
+
 // Launch Interactive Browser
 app.post('/api/browser/launch', async (req, res) => {
     let { url } = req.body;
@@ -1498,8 +1518,9 @@ app.post('/api/browser/launch', async (req, res) => {
 
         // Inject cookies if provided (for starting in an authenticated session state)
         if (cookies && Array.isArray(cookies) && cookies.length > 0) {
-            console.log(`Injecting ${cookies.length} cookies into active browser context...`);
-            await activeContext.addCookies(cookies);
+            const sanitized = sanitizeCookies(cookies);
+            console.log(`Injecting ${sanitized.length} cookies into active browser context...`);
+            await activeContext.addCookies(sanitized);
         }
 
         activePage = await activeContext.newPage();
@@ -1607,8 +1628,9 @@ app.post('/api/scrape', async (req, res) => {
 
         // Add cookies if provided
         if (cookies && Array.isArray(cookies) && cookies.length > 0) {
-            console.log(`Injecting ${cookies.length} cookies...`);
-            await context.addCookies(cookies);
+            const sanitized = sanitizeCookies(cookies);
+            console.log(`Injecting ${sanitized.length} cookies...`);
+            await context.addCookies(sanitized);
         }
 
         page = await context.newPage();
