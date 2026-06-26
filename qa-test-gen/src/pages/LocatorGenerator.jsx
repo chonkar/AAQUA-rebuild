@@ -25,9 +25,6 @@ const LocatorGenerator = () => {
     // Interactive Mode State
     const [isBrowserOpen, setIsBrowserOpen] = useState(false);
 
-    // Alias useCookies to isInteractiveMode for the UI logic
-    const isInteractiveMode = useCookies;
-
     const handleLaunchBrowser = async () => {
         setIsGenerating(true);
         setStatusText("Launching Browser...");
@@ -248,24 +245,45 @@ const LocatorGenerator = () => {
                     )}
 
                     <div className="card-footer">
-                        {mode === 'url' && isInteractiveMode ? (
-                            <button
-                                className="btn btn-primary"
-                                onClick={handleLaunchBrowser}
-                                disabled={isGenerating || !urlInput.trim()}
-                            >
-                                {isGenerating ? (
-                                    <>
-                                        <Loader2 className="spin" size={18} />
-                                        Launching Browser...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Globe size={18} />
-                                        Launch Login Browser
-                                    </>
-                                )}
-                            </button>
+                        {mode === 'url' && useCookies ? (
+                            <div className="button-group" style={{ display: 'flex', gap: '1rem', width: '100%' }}>
+                                <button
+                                    className="btn btn-secondary"
+                                    onClick={handleLaunchBrowser}
+                                    disabled={isGenerating || !urlInput.trim()}
+                                    style={{ flex: 1 }}
+                                >
+                                    {isGenerating && statusText.includes('Browser') ? (
+                                        <>
+                                            <Loader2 className="spin" size={18} />
+                                            Launching...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Globe size={18} />
+                                            Launch Login Browser
+                                        </>
+                                    )}
+                                </button>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={handleGenerate}
+                                    disabled={isGenerating || !urlInput.trim()}
+                                    style={{ flex: 1 }}
+                                >
+                                    {isGenerating && !statusText.includes('Browser') ? (
+                                        <>
+                                            <Loader2 className="spin" size={18} />
+                                            {statusText || 'Scraping...'}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Search size={18} />
+                                            Generate Locators
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                         ) : (
                             <button
                                 className="btn btn-primary"
