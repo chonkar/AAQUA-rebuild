@@ -41,7 +41,13 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends openjdk-17-jdk maven && \
-    npx playwright install chromium chrome && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=backend-deps /app/node_modules ./node_modules
+COPY package.json package-lock.json ./
+
+RUN npx playwright install chromium chrome && \
     for path in "/opt/google/chrome/chrome" "/opt/google/chrome/google-chrome" "/usr/bin/google-chrome" "/usr/bin/google-chrome-stable"; do \
         if [ -f "$path" ] && [ ! -L "$path" ]; then \
             mv "$path" "${path}-original" && \
@@ -49,17 +55,12 @@ RUN apt-get update && \
             echo "exec ${path}-original --no-sandbox --disable-dev-shm-usage --headless=new \"\$@\"" >> "$path" && \
             chmod +x "$path"; \
         fi; \
-    done && \
-    rm -rf /var/lib/apt/lists/*
+    done
 
 ENV NODE_ENV=production \
     PORT=3001 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
-WORKDIR /app
-COPY --from=backend-deps /app/node_modules ./node_modules
-COPY package.json package-lock.json ./
 COPY server ./server
 RUN mkdir -p temp_uploads temp_extract temp_output
 
