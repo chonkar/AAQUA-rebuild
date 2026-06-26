@@ -32,8 +32,17 @@ import { securityRateLimiter } from './middleware/rateLimiter.js';
 import { generateWithRetry } from './utils/aiUtils.js';
 
 import express from 'express';
-import { chromium } from 'playwright';
+import { chromium, firefox, webkit } from 'playwright';
 import cors from 'cors';
+
+const getBrowserLauncher = (type) => {
+    switch (type?.toLowerCase()) {
+        case 'firefox': return firefox;
+        case 'webkit': return webkit;
+        case 'chromium':
+        default: return chromium;
+    }
+};
 
 const app = express();
 const PORT = 3001;
@@ -1472,8 +1481,10 @@ app.post('/api/browser/launch', async (req, res) => {
         // no display server). Local devs can opt out with HEADLESS=false in
         // .env to keep the historic headed-Chromium workflow for cookie/HTML
         // capture from the Setup Wizard.
+        const { browserType } = req.body;
         const launchHeadless = process.env.HEADLESS !== 'false';
-        activeBrowser = await chromium.launch({
+        const launcher = getBrowserLauncher(browserType);
+        activeBrowser = await launcher.launch({
             headless: launchHeadless,
         });
 
@@ -1528,7 +1539,7 @@ app.post('/api/browser/close', async (req, res) => {
 
 // Scrape endpoint (POST to accept body with cookies) - Headless Mode
 app.post('/api/scrape', async (req, res) => {
-    const { url, cookies } = req.body;
+    const { url, cookies, browserType } = req.body;
 
     if (!url) {
         return res.status(400).json({ error: 'URL parameter is required' });
@@ -1544,9 +1555,10 @@ app.post('/api/scrape', async (req, res) => {
     let page = null;
 
     try {
-        console.log(`Launching scraper for: ${targetUrl}`);
+        console.log(`Launching scraper for: ${targetUrl} (${browserType || 'chromium'})`);
 
-        browser = await chromium.launch({
+        const launcher = getBrowserLauncher(browserType);
+        browser = await launcher.launch({
             headless: true
         });
 

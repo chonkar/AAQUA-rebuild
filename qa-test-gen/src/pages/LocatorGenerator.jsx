@@ -24,6 +24,8 @@ const LocatorGenerator = () => {
 
     // Interactive Mode State
     const [isBrowserOpen, setIsBrowserOpen] = useState(false);
+    // Browser Type Selection (chromium, firefox, webkit)
+    const [browserType, setBrowserType] = useState('chromium');
 
     const handleLaunchBrowser = async () => {
         setIsGenerating(true);
@@ -33,7 +35,7 @@ const LocatorGenerator = () => {
             const response = await fetch(`${API_URL}/browser/launch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: urlInput, projectId: selectedProjectId || null })
+                body: JSON.stringify({ url: urlInput, browserType, projectId: selectedProjectId || null })
             });
 
             if (!response.ok) {
@@ -115,7 +117,7 @@ const LocatorGenerator = () => {
                     const response = await fetch(`${API_URL}/scrape`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: urlInput, cookies: useCookies ? cookies : [], projectId: selectedProjectId || null })
+                        body: JSON.stringify({ url: urlInput, cookies: useCookies ? cookies : [], browserType, projectId: selectedProjectId || null })
                     });
 
                     if (!response.ok) {
@@ -208,6 +210,32 @@ const LocatorGenerator = () => {
                                 disabled={isGenerating}
                             />
                             <UrlScopeWarning url={urlInput} />
+
+                            <div className="browser-select-section" style={{ margin: '1rem 0', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.75rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                    <span>Browser Type:</span>
+                                    <select
+                                        value={browserType}
+                                        onChange={(e) => setBrowserType(e.target.value)}
+                                        disabled={isGenerating}
+                                        style={{
+                                            background: 'var(--bg-secondary)',
+                                            border: '1px solid var(--border-color)',
+                                            color: 'var(--text-primary)',
+                                            padding: '0.5rem 1rem',
+                                            borderRadius: 'var(--radius-md)',
+                                            fontSize: '0.85rem',
+                                            outline: 'none',
+                                            cursor: 'pointer',
+                                            fontWeight: '600'
+                                        }}
+                                    >
+                                        <option value="chromium">Chromium (Chrome)</option>
+                                        <option value="firefox">Firefox</option>
+                                        <option value="webkit">WebKit (Safari)</option>
+                                    </select>
+                                </label>
+                            </div>
 
                             <div className="cookie-section">
                                 <label className="cookie-toggle">
