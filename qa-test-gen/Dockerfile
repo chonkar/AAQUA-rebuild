@@ -39,7 +39,7 @@ FROM mcr.microsoft.com/playwright:v1.58.0-jammy
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends openjdk-17-jdk maven && \
-    npx playwright install chrome && \
+    npx playwright install chromium chrome && \
     for path in "/opt/google/chrome/chrome" "/opt/google/chrome/google-chrome" "/usr/bin/google-chrome" "/usr/bin/google-chrome-stable"; do \
         if [ -f "$path" ] && [ ! -L "$path" ]; then \
             mv "$path" "${path}-original" && \
