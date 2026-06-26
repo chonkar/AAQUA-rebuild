@@ -31,6 +31,9 @@ const LocatorGenerator = () => {
     const [currentBrowserUrl, setCurrentBrowserUrl] = useState('');
     const [navUrlInput, setNavUrlInput] = useState('');
 
+    // Custom Extension connection state
+    const [isExtensionInstalled, setIsExtensionInstalled] = useState(false);
+
     const handleLaunchBrowser = async () => {
         setIsGenerating(true);
         setStatusText("Launching Browser...");
@@ -145,8 +148,45 @@ const LocatorGenerator = () => {
             setNavUrlInput('');
         }
     };
+    const handlePullCookies = () => {
+        if (!urlInput.trim()) {
+            setError("Please enter a URL first to retrieve session cookies.");
+            return;
+        }
+        window.postMessage({ source: 'aaqua-app', type: 'AAQUA_GET_COOKIES', url: urlInput }, '*');
+    };
+
     React.useEffect(() => {
         console.log("LocatorGenerator mounted");
+
+        const handleExtensionMessage = (e) => {
+            if (!e.data || e.data.source !== 'aaqua-extension') return;
+
+            if (e.data.type === 'AAQUA_EXTENSION_READY') {
+                setIsExtensionInstalled(true);
+            }
+
+            if (e.data.type === 'AAQUA_SET_COOKIES') {
+                if (e.data.cookies && e.data.cookies.length > 0) {
+                    setCookieInput(JSON.stringify(e.data.cookies, null, 2));
+                    setUseCookies(true);
+                    setError(null);
+                } else if (e.data.error) {
+                    setError(`Cookie Bridge: ${e.data.error}`);
+                } else {
+                    setError("No active session cookies found in your browser for this domain. Please open the page in another tab and log in first.");
+                }
+            }
+        };
+
+        window.addEventListener('message', handleExtensionMessage);
+        
+        // Ping extension to see if it is already loaded
+        window.postMessage({ source: 'aaqua-app', type: 'AAQUA_PING' }, '*');
+
+        return () => {
+            window.removeEventListener('message', handleExtensionMessage);
+        };
     }, []);
 
     const handleGenerate = async () => {
@@ -297,14 +337,44 @@ const LocatorGenerator = () => {
                             </div>
 
                             <div className="cookie-section">
-                                <label className="cookie-toggle">
-                                    <input
-                                        type="checkbox"
-                                        checked={useCookies}
-                                        onChange={(e) => setUseCookies(e.target.checked)}
-                                    />
-                                    <span>Use Session Cookies (Authenticated Scraping)</span>
-                                </label>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
+                                    <label className="cookie-toggle" style={{ margin: 0 }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={useCookies}
+                                            onChange={(e) => setUseCookies(e.target.checked)}
+                                        />
+                                        <span>Use Session Cookies (Authenticated Scraping)</span>
+                                    </label>
+
+                                    {isExtensionInstalled ? (
+                                        <button
+                                            type="button"
+                                            onClick={handlePullCookies}
+                                            disabled={isGenerating || !urlInput.trim()}
+                                            style={{
+                                                background: 'var(--accent-glow)',
+                                                border: '1px solid var(--accent-primary)',
+                                                color: 'var(--accent-primary)',
+                                                padding: '0.35rem 0.75rem',
+                                                borderRadius: 'var(--radius-md)',
+                                                fontSize: '0.75rem',
+                                                cursor: 'pointer',
+                                                fontWeight: '600',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.25rem',
+                                                marginLeft: 'auto'
+                                            }}
+                                        >
+                                            ⚡ Pull Active Browser Cookies
+                                        </button>
+                                    ) : (
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+                                            💡 Install AAQUA Extension to pull cookies
+                                        </span>
+                                    )}
+                                </div>
 
                                 {useCookies && (
                                     <div className="cookie-input-box animate-fade-in">

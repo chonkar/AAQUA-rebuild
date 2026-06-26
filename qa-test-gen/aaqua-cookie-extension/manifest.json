@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "AAQUA Cookie Bridge",
+  "version": "1.0.0",
+  "description": "Securely autofills session cookies directly into the AAQUA locator generator UI.",
+  "permissions": [
+    "cookies",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "http://localhost:5173/*",
+    "https://aaqua.aaseya.com/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:3000/*",
+        "http://localhost:5173/*",
+        "https://aaqua.aaseya.com/*"
+      ],
+      "js": ["contentScript.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
