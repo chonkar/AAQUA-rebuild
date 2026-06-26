@@ -1481,7 +1481,7 @@ app.post('/api/browser/launch', async (req, res) => {
         // no display server). Local devs can opt out with HEADLESS=false in
         // .env to keep the historic headed-Chromium workflow for cookie/HTML
         // capture from the Setup Wizard.
-        const { browserType } = req.body;
+        const { browserType, cookies } = req.body;
         const launchHeadless = process.env.HEADLESS !== 'false';
         const launcher = getBrowserLauncher(browserType);
         activeBrowser = await launcher.launch({
@@ -1491,6 +1491,12 @@ app.post('/api/browser/launch', async (req, res) => {
         activeContext = await activeBrowser.newContext({
             viewport: null // maximize viewport
         });
+
+        // Inject cookies if provided (for starting in an authenticated session state)
+        if (cookies && Array.isArray(cookies) && cookies.length > 0) {
+            console.log(`Injecting ${cookies.length} cookies into active browser context...`);
+            await activeContext.addCookies(cookies);
+        }
 
         activePage = await activeContext.newPage();
         await activePage.goto(url);
@@ -1537,6 +1543,30 @@ app.post('/api/browser/close', async (req, res) => {
     }
 });
 
+// Navigate Active Browser Page
+app.post('/api/browser/navigate', async (req, res) => {
+    let { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL required' });
+    if (!activePage) return res.status(400).json({ error: 'No active browser page found' });
+
+    if (!/^https?:\/\//i.test(url)) {
+        url = 'https://' + url;
+    }
+
+    try {
+        console.log(`Navigating active browser page to: ${url}`);
+        await activePage.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        try {
+            await activePage.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => { });
+        } catch {
+            // Ignore network idle timeout
+        }
+        res.json({ message: 'Navigated successfully', currentUrl: activePage.url() });
+    } catch (error) {
+        console.error('Navigation error:', error);
+        res.status(500).json({ error: 'Failed to navigate', details: error.message });
+    }
+});
 // Scrape endpoint (POST to accept body with cookies) - Headless Mode
 app.post('/api/scrape', async (req, res) => {
     const { url, cookies, browserType } = req.body;

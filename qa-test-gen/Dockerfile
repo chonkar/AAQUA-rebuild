@@ -47,7 +47,7 @@ WORKDIR /app
 COPY --from=backend-deps /app/node_modules ./node_modules
 COPY package.json package-lock.json ./
 
-RUN npx playwright install chromium chrome && \
+RUN npx playwright install chromium chrome firefox webkit && \
     for path in "/opt/google/chrome/chrome" "/opt/google/chrome/google-chrome" "/usr/bin/google-chrome" "/usr/bin/google-chrome-stable"; do \
         if [ -f "$path" ] && [ ! -L "$path" ]; then \
             mv "$path" "${path}-original" && \
