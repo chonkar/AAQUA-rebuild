@@ -53,6 +53,21 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 
+app.get('/api/debug/browsers', (req, res) => {
+    try {
+        const files = fs.existsSync('/ms-playwright') ? fs.readdirSync('/ms-playwright') : [];
+        const safeEnv = { ...process.env };
+        for (const key of Object.keys(safeEnv)) {
+            if (key.toLowerCase().includes('key') || key.toLowerCase().includes('password') || key.toLowerCase().includes('secret') || key.toLowerCase().includes('token')) {
+                safeEnv[key] = '[REDACTED]';
+            }
+        }
+        res.json({ files, env: safeEnv });
+    } catch (err) {
+        res.json({ error: err.message, env: {} });
+    }
+});
+
 // Configure Multer for temp uploads
 const upload = multer({ dest: 'temp_uploads/' });
 
