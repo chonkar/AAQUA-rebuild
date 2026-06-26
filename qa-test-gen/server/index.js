@@ -1484,9 +1484,13 @@ app.post('/api/browser/launch', async (req, res) => {
         const { browserType, cookies } = req.body;
         const launchHeadless = process.env.HEADLESS !== 'false';
         const launcher = getBrowserLauncher(browserType);
-        activeBrowser = await launcher.launch({
+        const launchOptions = {
             headless: launchHeadless,
-        });
+        };
+        if (browserType?.toLowerCase() === 'chromium' || !browserType) {
+            launchOptions.args = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox'];
+        }
+        activeBrowser = await launcher.launch(launchOptions);
 
         activeContext = await activeBrowser.newContext({
             viewport: null // maximize viewport
@@ -1588,9 +1592,13 @@ app.post('/api/scrape', async (req, res) => {
         console.log(`Launching scraper for: ${targetUrl} (${browserType || 'chromium'})`);
 
         const launcher = getBrowserLauncher(browserType);
-        browser = await launcher.launch({
+        const launchOptions = {
             headless: true
-        });
+        };
+        if (browserType?.toLowerCase() === 'chromium' || !browserType) {
+            launchOptions.args = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox'];
+        }
+        browser = await launcher.launch(launchOptions);
 
         context = await browser.newContext({
             viewport: { width: 1280, height: 800 },
@@ -3344,7 +3352,10 @@ app.post('/api/auto-heal', async (req, res) => {
     let browser;
     try {
         const { chromium } = require('playwright');
-        browser = await chromium.launch({ headless: true });
+        browser = await chromium.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox']
+        });
         const page = await browser.newPage();
         await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         const dom = await page.content();
@@ -3439,7 +3450,10 @@ app.post('/api/auto-heal-batch', async (req, res) => {
                 }
 
                 const { chromium } = require('playwright');
-                browser = await chromium.launch({ headless: true });
+                browser = await chromium.launch({
+                    headless: true,
+                    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox']
+                });
                 const page = await browser.newPage();
                 await page.goto(item.pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
                 const dom = (await page.content()).substring(0, 18000);
