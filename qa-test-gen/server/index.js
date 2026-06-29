@@ -1864,6 +1864,7 @@ Return ONLY a JSON array. Empty array [] if no issues.`;
                     // Empty/length-capped or aborted LLM call — count as a failure
                     // (don't mask it as "no issues") and keep going.
                     failedChunks++;
+                    job.lastError = chunkErr.message;
                     console.warn(`[Localization] Chunk ${i + 1} failed: ${chunkErr.message}`);
                 }
                 job.done = i + 1;
@@ -1875,7 +1876,7 @@ Return ONLY a JSON array. Empty array [] if no issues.`;
             // reporting an empty result that looks like a clean page.
             if (chunks.length > 0 && failedChunks === chunks.length) {
                 job.status = 'failed';
-                job.error = 'Localization analysis failed: the language model returned no usable output for the page (large pages can exhaust it). Please try again, or scan a smaller page.';
+                job.error = `Localization analysis failed: the language model returned no usable output. Detail: ${job.lastError || 'Unknown LLM Error'}`;
             } else {
                 job.status = 'completed';
                 // Persist a LocalizationResult for Release Readiness.
