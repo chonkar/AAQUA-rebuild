@@ -47,6 +47,29 @@ const getBrowserLauncher = (type) => {
 const app = express();
 const PORT = 3001;
 
+// Load Docker secrets into environment variables at startup
+const SECRETS_DIR = '/run/secrets';
+if (fs.existsSync(SECRETS_DIR)) {
+    try {
+        const files = fs.readdirSync(SECRETS_DIR);
+        for (const file of files) {
+            const secretPath = path.join(SECRETS_DIR, file);
+            if (fs.statSync(secretPath).isFile()) {
+                const val = fs.readFileSync(secretPath, 'utf8').trim();
+                if (file === 'llm_api_key') {
+                    process.env.VITE_LLM_API_KEY = val;
+                    console.log(`[Init] Loaded VITE_LLM_API_KEY from Docker secret ${file}`);
+                } else if (file === 'jira_token') {
+                    process.env.JIRA_TOKEN = val;
+                    console.log(`[Init] Loaded JIRA_TOKEN from Docker secret ${file}`);
+                }
+            }
+        }
+    } catch (err) {
+        console.error('[Init] Error loading Docker secrets:', err);
+    }
+}
+
 // Keep the server alive on stray async errors. A single hung/failed LLM call or
 // a late promise rejection must never take the whole backend down mid-session —
 // otherwise the next request hits a dead process and the dev proxy returns a
@@ -61,6 +84,14 @@ process.on('uncaughtException', (err) => {
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
+
+// Middleware to clean/resolve "server-injected" API keys sent by the production SPA build
+app.use((req, res, next) => {
+    if (req.headers['x-api-key'] === 'server-injected') {
+        req.headers['x-api-key'] = process.env.VITE_LLM_API_KEY || '';
+    }
+    next();
+});
 
 app.get('/api/debug/browsers', (req, res) => {
     try {
@@ -1692,9 +1723,9 @@ function salvageJsonArray(text) {
 // Localization Analysis Endpoint (Text-extraction + Chunked for large pages)
 app.post('/api/analyze-localization', async (req, res) => {
     const { html, targetLanguage } = req.body;
-    const apiKey = req.headers['x-api-key'];
+    const apiKey = req.headers['x-api-key'] || process.env.VITE_LLM_API_KEY;
 
-    if (!apiKey) return res.status(401).json({ error: 'API Key missing' });
+    if (!apiKey) return res.status(401).json({ error: 'API Key missing (send x-api-key or set VITE_LLM_API_KEY).' });
     if (!html || !targetLanguage) return res.status(400).json({ error: 'HTML and Target Language required' });
 
     try {
