@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from 'react-oidc-context';
-import { Globe, Play, Search, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
+import { Globe, Play, Search, AlertTriangle, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import { launchBrowser, capturePage, startLocalizationAnalysis, getLocalizationStatus } from '../services/localizationService';
 import { useProject } from '../context/ProjectContext';
 import { createApiClient } from '../utils/apiClient';
 import JiraDefectButton from '../components/features/JiraDefectButton';
 import UrlScopeWarning from '../components/common/UrlScopeWarning';
+
+const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
 // Heuristic scan phases — the backend runs synchronously with no progress
 // stream. Phases below mirror the actual work: capture DOM via the browser
@@ -31,6 +33,14 @@ const LocalizationTester = () => {
     const [chunkCount, setChunkCount] = useState(null);
     const [scannedUrl, setScannedUrl] = useState('');
 
+    // Interactive Mode State
+    const [browserType, setBrowserType] = useState('chromium');
+    const [useCookies, setUseCookies] = useState(false);
+    const [cookieInput, setCookieInput] = useState('');
+    const [currentBrowserUrl, setCurrentBrowserUrl] = useState('');
+    const [navUrlInput, setNavUrlInput] = useState('');
+    const [isExtensionInstalled, setIsExtensionInstalled] = useState(false);
+
     // Heuristic progress state — same pattern used in AccessibilityScanner.
     const [analyzeProgress, setAnalyzeProgress] = useState(0);
     const [analyzePhaseLabel, setAnalyzePhaseLabel] = useState('');
@@ -42,10 +52,38 @@ const LocalizationTester = () => {
     // leak across scans.
     const [jiraState, setJiraState] = useState({});
 
-    // Progress is now driven by REAL chunk completion from the polling loop in
-    // handleAnalyze (not a heuristic timer). Just clear the poll interval if the
-    // user navigates away mid-analysis.
-    useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+    // Listeners for Chrome Extension connection & cookie responses
+    useEffect(() => {
+        const handleExtensionMessage = (e) => {
+            if (!e.data || e.data.source !== 'aaqua-extension') return;
+
+            if (e.data.type === 'AAQUA_EXTENSION_READY') {
+                setIsExtensionInstalled(true);
+            }
+
+            if (e.data.type === 'AAQUA_SET_COOKIES') {
+                if (e.data.cookies && e.data.cookies.length > 0) {
+                    setCookieInput(JSON.stringify(e.data.cookies, null, 2));
+                    setUseCookies(true);
+                    setError(null);
+                } else if (e.data.error) {
+                    setError(`Cookie Bridge: ${e.data.error}`);
+                } else {
+                    setError("No active session cookies found in your browser for this domain. Please open the page in another tab and log in first.");
+                }
+            }
+        };
+
+        window.addEventListener('message', handleExtensionMessage);
+        
+        // Ping extension to see if it is already loaded
+        window.postMessage({ source: 'aaqua-app', type: 'AAQUA_PING' }, '*');
+
+        return () => {
+            window.removeEventListener('message', handleExtensionMessage);
+            if (pollRef.current) clearInterval(pollRef.current);
+        };
+    }, []);
 
     const languages = [
         'Arabic',
@@ -59,13 +97,78 @@ const LocalizationTester = () => {
     ];
 
     const handleLaunch = async () => {
+        setError(null);
+        setIsBrowserActive(false);
         try {
-            setError(null);
-            await launchBrowser(url);
+            let cookies = [];
+            if (useCookies && cookieInput.trim()) {
+                try {
+                    cookies = JSON.parse(cookieInput);
+                    if (!Array.isArray(cookies)) throw new Error("Cookies must be a JSON Array.");
+                } catch (e) {
+                    throw new Error("Invalid Cookie JSON format. Please paste a valid array of cookies.");
+                }
+            }
+
+            await launchBrowser(url, browserType, cookies, selectedProjectId || null);
             setIsBrowserActive(true);
+            setCurrentBrowserUrl(url);
         } catch (err) {
-            setError("Failed to launch browser. Ensure server is running.");
+            setError(err.message || "Failed to launch browser. Ensure server is running.");
         }
+    };
+
+    const handleNavigateBrowser = async () => {
+        setError(null);
+        try {
+            let target = navUrlInput.trim();
+            if (target.startsWith('/')) {
+                try {
+                    const base = new URL(url);
+                    target = `${base.protocol}//${base.host}${target}`;
+                } catch (e) {
+                    console.debug("Failed to resolve absolute path from base URL:", e);
+                }
+            } else if (!/^https?:\/\//i.test(target)) {
+                target = 'https://' + target;
+            }
+
+            const response = await fetch(`${API_URL}/browser/navigate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: target })
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(`Navigation failed: ${text}`);
+            }
+            const data = await response.json();
+            setCurrentBrowserUrl(data.currentUrl || target);
+            setNavUrlInput('');
+        } catch (e) {
+            setError(e.message);
+        }
+    };
+
+    const handleCloseBrowser = async () => {
+        try {
+            await fetch(`${API_URL}/browser/close`, { method: 'POST' });
+        } catch (e) {
+            console.error("Failed to close browser", e);
+        } finally {
+            setIsBrowserActive(false);
+            setCurrentBrowserUrl('');
+            setNavUrlInput('');
+        }
+    };
+
+    const handlePullCookies = () => {
+        if (!url.trim()) {
+            setError("Please enter a URL first to retrieve session cookies.");
+            return;
+        }
+        window.postMessage({ source: 'aaqua-app', type: 'AAQUA_GET_COOKIES', url }, '*');
     };
 
     const handleAnalyze = async () => {
@@ -83,6 +186,9 @@ const LocalizationTester = () => {
             // 1. Capture HTML (and the actual page URL).
             const capture = await capturePage();
             setScannedUrl(capture?.url || url);
+            if (capture?.url) {
+                setCurrentBrowserUrl(capture.url);
+            }
 
             const apiKey = import.meta.env.VITE_LLM_API_KEY;
             if (!apiKey) throw new Error("API Key missing");
@@ -182,6 +288,101 @@ const LocalizationTester = () => {
                         <UrlScopeWarning url={url} />
                     </div>
 
+                    <div className="browser-select-section" style={{ margin: '1rem 0', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.75rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                            <span>Browser Type:</span>
+                            <select
+                                value={browserType}
+                                onChange={(e) => setBrowserType(e.target.value)}
+                                disabled={isBrowserActive}
+                                style={{
+                                    background: 'var(--bg-secondary)',
+                                    border: '1px solid var(--border-color)',
+                                    color: 'var(--text-primary)',
+                                    padding: '0.5rem 1rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    fontSize: '0.85rem',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                    fontWeight: '600'
+                                }}
+                            >
+                                <option value="chromium">Chromium (Chrome)</option>
+                                <option value="firefox">Firefox</option>
+                                <option value="webkit">WebKit (Safari)</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div className="cookie-section" style={{ marginBottom: '1.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
+                            <label className="cookie-toggle" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={useCookies}
+                                    onChange={(e) => setUseCookies(e.target.checked)}
+                                />
+                                <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Use Session Cookies (Authenticated)</span>
+                            </label>
+
+                            {isExtensionInstalled ? (
+                                <button
+                                    type="button"
+                                    onClick={handlePullCookies}
+                                    disabled={!url.trim()}
+                                    style={{
+                                        background: 'var(--accent-glow)',
+                                        border: '1px solid var(--accent-primary)',
+                                        color: 'var(--accent-primary)',
+                                        padding: '0.35rem 0.75rem',
+                                        borderRadius: 'var(--radius-md)',
+                                        fontSize: '0.75rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '600',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.25rem',
+                                        marginLeft: 'auto'
+                                    }}
+                                >
+                                    ⚡ Pull Active Browser Cookies
+                                </button>
+                            ) : (
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+                                    💡 Install AAQUA Extension to pull cookies
+                                </span>
+                            )}
+                        </div>
+
+                        {useCookies && (
+                            <div className="cookie-input-box animate-fade-in" style={{ marginTop: '0.5rem' }}>
+                                <div className="cookie-help" style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                                    <AlertCircle size={14} style={{ flexShrink: 0, marginTop: '2px' }} />
+                                    <span>
+                                        <strong>How to get cookies:</strong> Use EditThisCookie to export as JSON, or copy from DevTools (Application &gt; Cookies).
+                                    </span>
+                                </div>
+                                <textarea
+                                    className="cookie-textarea"
+                                    placeholder='[{"name": "session_id", "value": "..."}]'
+                                    value={cookieInput}
+                                    onChange={(e) => setCookieInput(e.target.value)}
+                                    rows={5}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.5rem',
+                                        background: 'var(--bg-primary)',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)',
+                                        color: 'var(--text-primary)',
+                                        fontFamily: 'monospace',
+                                        fontSize: '0.85rem'
+                                    }}
+                                />
+                            </div>
+                        )}
+                    </div>
+
                     <div className="form-group">
                         <label style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.5rem', display: 'block' }}>Target Language</label>
                         <select
@@ -221,6 +422,61 @@ const LocalizationTester = () => {
                             Navigate manually in the opened browser window, then click Analyze.
                         </p>
                     </div>
+
+                    {isBrowserActive && (
+                        <div className="browser-modal animate-fade-in" style={{ textAlign: 'left', marginTop: '1.5rem', border: '1px solid var(--accent-primary)', padding: '1rem', borderRadius: 'var(--radius-md)', background: 'var(--bg-tertiary)' }}>
+                            <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 1rem 0', color: 'var(--success)' }}>
+                                <Globe size={18} /> Browser Session Active
+                            </h4>
+                            
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                                    Current Location:
+                                </label>
+                                <div style={{ display: 'flex', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.5rem', fontSize: '0.85rem', color: 'var(--text-primary)', wordBreak: 'break-all', fontFamily: 'monospace' }}>
+                                    {currentBrowserUrl || url}
+                                </div>
+                            </div>
+
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                                    Navigate Headless Session:
+                                </label>
+                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                    <input
+                                        type="text"
+                                        value={navUrlInput}
+                                        onChange={(e) => setNavUrlInput(e.target.value)}
+                                        placeholder="e.g. /dashboard or https://example.com/checkout"
+                                        style={{
+                                            flex: 1,
+                                            padding: '0.4rem 0.6rem',
+                                            background: 'var(--bg-primary)',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: 'var(--radius-md)',
+                                            color: 'var(--text-primary)',
+                                            fontSize: '0.85rem'
+                                        }}
+                                    />
+                                    <button
+                                        onClick={handleNavigateBrowser}
+                                        className="btn btn-secondary btn-sm"
+                                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                                    >
+                                        Go
+                                    </button>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleCloseBrowser}
+                                className="btn btn-danger btn-sm"
+                                style={{ width: '100%', padding: '0.5rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: '600' }}
+                            >
+                                Close Browser Session
+                            </button>
+                        </div>
+                    )}
 
                     {(isAnalyzing || analyzeProgress > 0) && (
                         <div className="lc-progress" role="progressbar" aria-valuenow={analyzeProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Localization analysis progress">

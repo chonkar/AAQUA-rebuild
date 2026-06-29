@@ -1,11 +1,11 @@
 // See testRunnerService.js for why this is relative + BASE_URL-prefixed.
 const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
-export const launchBrowser = async (url) => {
+export const launchBrowser = async (url, browserType = 'chromium', cookies = [], projectId = null) => {
     const response = await fetch(`${API_URL}/browser/launch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, browserType, cookies, projectId }),
     });
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
