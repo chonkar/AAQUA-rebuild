@@ -1539,7 +1539,7 @@ app.post('/api/browser/launch', async (req, res) => {
             headless: launchHeadless,
         };
         if (browserType?.toLowerCase() === 'chromium' || !browserType) {
-            launchOptions.args = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox'];
+            launchOptions.args = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--disable-gpu'];
         }
         activeBrowser = await launcher.launch(launchOptions);
 
@@ -1649,7 +1649,7 @@ app.post('/api/scrape', async (req, res) => {
             headless: true
         };
         if (browserType?.toLowerCase() === 'chromium' || !browserType) {
-            launchOptions.args = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox'];
+            launchOptions.args = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--disable-gpu'];
         }
         browser = await launcher.launch(launchOptions);
 
@@ -3413,7 +3413,7 @@ app.post('/api/auto-heal', async (req, res) => {
         const { chromium } = require('playwright');
         browser = await chromium.launch({
             headless: true,
-            args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox']
+            args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--disable-gpu']
         });
         const page = await browser.newPage();
         await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -3511,7 +3511,7 @@ app.post('/api/auto-heal-batch', async (req, res) => {
                 const { chromium } = require('playwright');
                 browser = await chromium.launch({
                     headless: true,
-                    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox']
+                    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--disable-gpu']
                 });
                 const page = await browser.newPage();
                 await page.goto(item.pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
