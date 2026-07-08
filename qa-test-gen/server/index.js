@@ -1544,7 +1544,8 @@ app.post('/api/browser/launch', async (req, res) => {
         activeBrowser = await launcher.launch(launchOptions);
 
         activeContext = await activeBrowser.newContext({
-            viewport: null // maximize viewport
+            viewport: null, // maximize viewport
+            ignoreHTTPSErrors: true
         });
 
         // Inject cookies if provided (for starting in an authenticated session state)
@@ -1654,7 +1655,8 @@ app.post('/api/scrape', async (req, res) => {
 
         context = await browser.newContext({
             viewport: { width: 1280, height: 800 },
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            ignoreHTTPSErrors: true
         });
 
         // Add cookies if provided
@@ -1667,7 +1669,7 @@ app.post('/api/scrape', async (req, res) => {
         page = await context.newPage();
 
         // Navigate and wait for content
-        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto(targetUrl, { waitUntil: 'load', timeout: 30000 });
 
         // Extra safety wait for dynamic content
         try {
@@ -1675,6 +1677,9 @@ app.post('/api/scrape', async (req, res) => {
         } catch {
             // Ignore network idle timeout, proceed with what we have
         }
+
+        // Additional wait for Single Page Applications (like React/OutSystems) to mount
+        await page.waitForTimeout(2000).catch(() => { });
 
         const html = await page.content();
         console.log(`Scraping successful, length: ${html.length}`);
