@@ -22,6 +22,20 @@ window.addEventListener('message', (event) => {
             }, '*');
         });
     }
+
+    if (event.data.type === 'AAQUA_GET_DOM') {
+        chrome.runtime.sendMessage({ action: 'getDOM', url: event.data.url }, (response) => {
+            window.postMessage({
+                source: 'aaqua-extension',
+                type: 'AAQUA_SET_DOM',
+                html: response?.html || null,
+                url: response?.url || null,
+                cookies: response?.cookies || [],
+                storage: response?.storage || null,
+                error: response?.error || null
+            }, '*');
+        });
+    }
 });
 
 // Run initial broadcast

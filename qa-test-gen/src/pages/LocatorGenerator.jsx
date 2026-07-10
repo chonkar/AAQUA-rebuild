@@ -118,12 +118,59 @@ const LocatorGenerator = () => {
             setNavUrlInput('');
         }
     };
+    const [capturedHtml, setCapturedHtml] = useState('');
+
     const handlePullCookies = () => {
         if (!urlInput.trim()) {
             setError("Please enter a URL first to retrieve session cookies.");
             return;
         }
         window.postMessage({ source: 'aaqua-app', type: 'AAQUA_GET_COOKIES', url: urlInput }, '*');
+    };
+
+    const handleCaptureDOM = () => {
+        if (!urlInput.trim()) {
+            setError("Please enter a URL first to target the browser tab.");
+            return;
+        }
+        setIsGenerating(true);
+        setStatusText("Capturing page DOM via extension...");
+        setError(null);
+        window.postMessage({ source: 'aaqua-app', type: 'AAQUA_GET_DOM', url: urlInput }, '*');
+    };
+
+    const triggerGenerateWithCapturedHtml = async (html, url, cookies, storage) => {
+        setIsGenerating(true);
+        setError(null);
+        setLocators(null);
+        setStatusText('Analyzing captured page DOM...');
+
+        try {
+            const payload = {
+                url: url,
+                cookies: storage 
+                    ? { cookies, localStorage: storage.localStorage, sessionStorage: storage.sessionStorage }
+                    : cookies,
+                html: html
+            };
+
+            const scrapeRes = await fetch(`${API_URL}/scrape`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!scrapeRes.ok) throw new Error("Failed to process captured DOM");
+            const scrapeData = await scrapeRes.json();
+            
+            const result = await generateLocators(scrapeData.html);
+            setLocators(result);
+        } catch (err) {
+            console.error(err);
+            setError(err.message || "Failed to generate locators from captured page");
+        } finally {
+            setIsGenerating(false);
+            setStatusText('');
+        }
     };
 
     React.useEffect(() => {
@@ -152,6 +199,34 @@ const LocatorGenerator = () => {
                     setError(`Cookie Bridge: ${e.data.error}`);
                 } else {
                     setError("No active session cookies found in your browser for this domain. Please open the page in another tab and log in first.");
+                }
+            }
+
+            if (e.data.type === 'AAQUA_SET_DOM') {
+                setIsGenerating(false);
+                setStatusText('');
+                if (e.data.html) {
+                    setCapturedHtml(e.data.html);
+                    if (e.data.url) {
+                        setUrlInput(e.data.url);
+                    }
+                    if (e.data.cookies && e.data.cookies.length > 0) {
+                        const payload = e.data.storage
+                            ? {
+                                cookies: e.data.cookies,
+                                localStorage: e.data.storage.localStorage,
+                                sessionStorage: e.data.storage.sessionStorage
+                              }
+                            : e.data.cookies;
+                        setCookieInput(JSON.stringify(payload, null, 2));
+                        setUseCookies(true);
+                    }
+                    setError(null);
+                    triggerGenerateWithCapturedHtml(e.data.html, e.data.url, e.data.cookies, e.data.storage);
+                } else if (e.data.error) {
+                    setError(`DOM Capture Error: ${e.data.error}`);
+                } else {
+                    setError("Failed to capture tab content via extension. Please make sure the portal tab is open and you are logged in.");
                 }
             }
         };
@@ -392,12 +467,12 @@ const LocatorGenerator = () => {
                     )}
                     <div className="card-footer">
                         {mode === 'url' ? (
-                            <div className="button-group" style={{ display: 'flex', gap: '1rem', width: '100%' }}>
+                            <div className="button-group" style={{ display: 'flex', gap: '1rem', width: '100%', flexWrap: 'wrap' }}>
                                 <button
                                     className="btn btn-secondary"
                                     onClick={handleLaunchBrowser}
                                     disabled={isGenerating || !urlInput.trim() || isBrowserActive}
-                                    style={{ flex: 1 }}
+                                    style={{ flex: 1, minWidth: '200px' }}
                                 >
                                     {isGenerating && statusText.includes('Launching') ? (
                                         <>
@@ -411,13 +486,33 @@ const LocatorGenerator = () => {
                                         </>
                                     )}
                                 </button>
+                                {isExtensionInstalled && (
+                                    <button
+                                        className="btn btn-secondary"
+                                        onClick={handleCaptureDOM}
+                                        disabled={isGenerating || !urlInput.trim()}
+                                        style={{ flex: 1, minWidth: '200px', backgroundColor: '#0ea5e9', color: '#fff', borderColor: '#0ea5e9' }}
+                                    >
+                                        {isGenerating && statusText.includes('Capturing') ? (
+                                            <>
+                                                <Loader2 className="spin" size={18} />
+                                                Capturing...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Copy size={18} />
+                                                Capture Page via Extension
+                                            </>
+                                        )}
+                                    </button>
+                                )}
                                 <button
                                     className="btn btn-primary"
                                     onClick={handleGenerate}
-                                    disabled={isGenerating || (!isBrowserActive && !urlInput.trim())}
-                                    style={{ flex: 1 }}
+                                    disabled={isGenerating || (!isBrowserActive && !urlInput.trim() && !capturedHtml)}
+                                    style={{ flex: 1, minWidth: '200px' }}
                                 >
-                                    {isGenerating && !statusText.includes('Launching') ? (
+                                    {isGenerating && !statusText.includes('Launching') && !statusText.includes('Capturing') ? (
                                         <>
                                             <Loader2 className="spin" size={18} />
                                             {statusText || 'Scraping...'}

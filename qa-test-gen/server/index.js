@@ -1670,10 +1670,19 @@ app.post('/api/browser/navigate', async (req, res) => {
 });
 // Scrape endpoint (POST to accept body with cookies) - Headless Mode
 app.post('/api/scrape', async (req, res) => {
-    const { url, cookies, browserType } = req.body;
+    const { url, cookies, browserType, html } = req.body;
 
     if (!url) {
         return res.status(400).json({ error: 'URL parameter is required' });
+    }
+
+    if (html) {
+        console.log(`[Scraper] Received direct HTML payload of size ${html.length} chars. Skipping Playwright.`);
+        return res.json({
+            html,
+            cookies: cookies || [],
+            url
+        });
     }
 
     let targetUrl = url;
