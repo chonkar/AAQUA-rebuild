@@ -1681,7 +1681,25 @@ app.post('/api/scrape', async (req, res) => {
         // Additional wait for Single Page Applications (like React/OutSystems) to mount
         await page.waitForTimeout(2000).catch(() => { });
 
-        const html = await page.content();
+        // Retrieve HTML content with retries to handle any active client-side navigations or redirects
+        let html = '';
+        let retries = 5;
+        while (retries > 0) {
+            try {
+                html = await page.content();
+                break;
+            } catch (err) {
+                const msg = err.message.toLowerCase();
+                if (msg.includes('navigating') || msg.includes('navigation') || msg.includes('closed') || msg.includes('detached')) {
+                    console.warn(`[Scraper] page.content failed, retrying in 500ms... (${retries - 1} retries left): ${err.message}`);
+                    await page.waitForTimeout(500).catch(() => { });
+                    retries--;
+                    if (retries === 0) throw err;
+                } else {
+                    throw err;
+                }
+            }
+        }
         console.log(`Scraping successful, length: ${html.length}`);
 
         res.json({ html });
