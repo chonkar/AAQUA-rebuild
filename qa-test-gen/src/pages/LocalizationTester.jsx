@@ -85,6 +85,12 @@ const LocalizationTester = () => {
         };
     }, []);
 
+    useEffect(() => {
+        if (selectedProject?.target_url) {
+            setUrl(selectedProject.target_url);
+        }
+    }, [selectedProject?.id, selectedProject?.target_url]);
+
     const languages = [
         'Arabic',
         'Dutch',

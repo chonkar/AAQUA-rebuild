@@ -23,7 +23,7 @@ const LocatorGenerator = () => {
     const [copiedIndex, setCopiedIndex] = useState(null);
 
     // Interactive Mode State
-    const [isBrowserOpen, setIsBrowserOpen] = useState(false);
+    const [isBrowserActive, setIsBrowserActive] = useState(false);
     // Browser Type Selection (chromium, firefox, webkit)
     const [browserType, setBrowserType] = useState('chromium');
 
@@ -59,38 +59,8 @@ const LocatorGenerator = () => {
                 const text = await response.text();
                 throw new Error(`Launch failed: ${text}`);
             }
-            setIsBrowserOpen(true);
+            setIsBrowserActive(true);
             setCurrentBrowserUrl(urlInput);
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setIsGenerating(false);
-            setStatusText('');
-        }
-    };
-
-    const handleCaptureAndGenerate = async () => {
-        setIsGenerating(true);
-        setStatusText("Capturing Session & Generating Locators...");
-        // Keep modal open for multiple captures
-
-        try {
-            // 1. Capture HTML & Cookies
-            const captureRes = await fetch(`${API_URL}/browser/capture`);
-            if (!captureRes.ok) throw new Error("Failed to capture browser session");
-
-            const { html, cookies, url } = await captureRes.json();
-
-            // 2. Update state with captured data
-            setCookieInput(JSON.stringify(cookies, null, 2));
-            if (url) {
-                setCurrentBrowserUrl(url);
-            }
-
-            // 3. Generate Locators
-            const data = await generateLocators(html);
-            setLocators(data);
-
         } catch (e) {
             setError(e.message);
         } finally {
@@ -143,7 +113,7 @@ const LocatorGenerator = () => {
         } catch (e) {
             console.error("Failed to close browser", e);
         } finally {
-            setIsBrowserOpen(false);
+            setIsBrowserActive(false);
             setCurrentBrowserUrl('');
             setNavUrlInput('');
         }
@@ -168,7 +138,14 @@ const LocatorGenerator = () => {
 
             if (e.data.type === 'AAQUA_SET_COOKIES') {
                 if (e.data.cookies && e.data.cookies.length > 0) {
-                    setCookieInput(JSON.stringify(e.data.cookies, null, 2));
+                    const payload = e.data.storage
+                        ? {
+                            cookies: e.data.cookies,
+                            localStorage: e.data.storage.localStorage,
+                            sessionStorage: e.data.storage.sessionStorage
+                          }
+                        : e.data.cookies;
+                    setCookieInput(JSON.stringify(payload, null, 2));
                     setUseCookies(true);
                     setError(null);
                 } else if (e.data.error) {
@@ -193,45 +170,58 @@ const LocatorGenerator = () => {
         setIsGenerating(true);
         setError(null);
         setLocators(null);
-        setStatusText('Initializing...');
+        setStatusText(isBrowserActive ? 'Capturing Session & Generating Locators...' : 'Initializing...');
 
         try {
             let contentToAnalyze = htmlInput;
 
             if (mode === 'url') {
-                if (!urlInput.trim()) throw new Error("Please enter a valid URL.");
+                if (isBrowserActive) {
+                    // Capture dynamic DOM from active browser session
+                    const captureRes = await fetch(`${API_URL}/browser/capture`);
+                    if (!captureRes.ok) throw new Error("Failed to capture browser session");
 
-                let cookies = [];
-                if (useCookies && cookieInput.trim()) {
-                    try {
-                        cookies = JSON.parse(cookieInput);
-                        if (!Array.isArray(cookies)) throw new Error("Cookies must be a JSON Array.");
-                    } catch (e) {
-                        throw new Error("Invalid Cookie JSON format. Please paste a valid array of cookies.");
+                    const { html, cookies, url } = await captureRes.json();
+                    setCookieInput(JSON.stringify(cookies, null, 2));
+                    if (url) {
+                        setCurrentBrowserUrl(url);
                     }
-                }
+                    contentToAnalyze = html;
+                } else {
+                    if (!urlInput.trim()) throw new Error("Please enter a valid URL.");
 
-                setStatusText('Scraping Website (this may take a few seconds)...');
-                try {
-                    const response = await fetch(`${API_URL}/scrape`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: urlInput, cookies: useCookies ? cookies : [], browserType, projectId: selectedProjectId || null })
-                    });
-
-                    if (!response.ok) {
-                        const text = await response.text();
+                    let cookies = [];
+                    if (useCookies && cookieInput.trim()) {
                         try {
-                            const err = JSON.parse(text);
-                            throw new Error(err.details || err.error || "Failed to scrape URL.");
-                        } catch (parseErr) {
-                            throw new Error(`Backend Error (${response.status}): ${text.substring(0, 100)}...`);
+                            cookies = JSON.parse(cookieInput);
+                            if (!Array.isArray(cookies)) throw new Error("Cookies must be a JSON Array.");
+                        } catch (e) {
+                            throw new Error("Invalid Cookie JSON format. Please paste a valid array of cookies.");
                         }
                     }
-                    const data = await response.json();
-                    contentToAnalyze = data.html;
-                } catch (fetchErr) {
-                    throw new Error(`Scraping failed: ${fetchErr.message}. Make sure 'npm run server' is running.`);
+
+                    setStatusText('Scraping Website (this may take a few seconds)...');
+                    try {
+                        const response = await fetch(`${API_URL}/scrape`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url: urlInput, cookies: useCookies ? cookies : [], browserType, projectId: selectedProjectId || null })
+                        });
+
+                        if (!response.ok) {
+                            const text = await response.text();
+                            try {
+                                const err = JSON.parse(text);
+                                throw new Error(err.details || err.error || "Failed to scrape URL.");
+                            } catch (parseErr) {
+                                throw new Error(`Backend Error (${response.status}): ${text.substring(0, 100)}...`);
+                            }
+                        }
+                        const data = await response.json();
+                        contentToAnalyze = data.html;
+                    } catch (fetchErr) {
+                        throw new Error(`Scraping failed: ${fetchErr.message}. Make sure 'npm run server' is running.`);
+                    }
                 }
             } else {
                 if (!htmlInput.trim()) throw new Error("Please paste valid HTML content.");
@@ -400,17 +390,16 @@ const LocatorGenerator = () => {
                             </p>
                         </div>
                     )}
-
                     <div className="card-footer">
-                        {mode === 'url' && useCookies ? (
+                        {mode === 'url' ? (
                             <div className="button-group" style={{ display: 'flex', gap: '1rem', width: '100%' }}>
                                 <button
                                     className="btn btn-secondary"
                                     onClick={handleLaunchBrowser}
-                                    disabled={isGenerating || !urlInput.trim()}
+                                    disabled={isGenerating || !urlInput.trim() || isBrowserActive}
                                     style={{ flex: 1 }}
                                 >
-                                    {isGenerating && statusText.includes('Browser') ? (
+                                    {isGenerating && statusText.includes('Launching') ? (
                                         <>
                                             <Loader2 className="spin" size={18} />
                                             Launching...
@@ -418,17 +407,17 @@ const LocatorGenerator = () => {
                                     ) : (
                                         <>
                                             <Globe size={18} />
-                                            Launch Login Browser
+                                            {isBrowserActive ? 'Browser Active' : 'Launch Login Browser'}
                                         </>
                                     )}
                                 </button>
                                 <button
                                     className="btn btn-primary"
                                     onClick={handleGenerate}
-                                    disabled={isGenerating || !urlInput.trim()}
+                                    disabled={isGenerating || (!isBrowserActive && !urlInput.trim())}
                                     style={{ flex: 1 }}
                                 >
-                                    {isGenerating && !statusText.includes('Browser') ? (
+                                    {isGenerating && !statusText.includes('Launching') ? (
                                         <>
                                             <Loader2 className="spin" size={18} />
                                             {statusText || 'Scraping...'}
@@ -436,7 +425,7 @@ const LocatorGenerator = () => {
                                     ) : (
                                         <>
                                             <Search size={18} />
-                                            Generate Locators
+                                            {isBrowserActive ? 'Generate Locators (Browser Session)' : 'Generate Locators'}
                                         </>
                                     )}
                                 </button>
@@ -445,7 +434,7 @@ const LocatorGenerator = () => {
                             <button
                                 className="btn btn-primary"
                                 onClick={handleGenerate}
-                                disabled={isGenerating || (mode === 'html' ? !htmlInput.trim() : !urlInput.trim())}
+                                disabled={isGenerating || !htmlInput.trim()}
                             >
                                 {isGenerating ? (
                                     <>
@@ -463,91 +452,66 @@ const LocatorGenerator = () => {
                     </div>
                 </div>
 
-                {isBrowserOpen && (
-                    <div className="browser-modal animate-fade-in" style={{ textAlign: 'left' }}>
-                        <div className="modal-content">
-                            <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                                <Globe className="text-success" size={20} /> Browser Session Active
-                            </h3>
-                            
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                                    Current Location:
-                                </label>
-                                <div style={{ display: 'flex', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.5rem 0.75rem', fontSize: '0.9rem', color: 'var(--text-primary)', wordBreak: 'break-all', fontFamily: 'monospace' }}>
-                                    {currentBrowserUrl || urlInput}
-                                </div>
+                {isBrowserActive && (
+                    <div className="browser-modal animate-fade-in" style={{ textAlign: 'left', marginTop: '1.5rem', border: '1px solid var(--accent-primary)', padding: '1rem', borderRadius: 'var(--radius-md)', background: 'var(--bg-tertiary)' }}>
+                        <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 1rem 0', color: 'var(--success)' }}>
+                            <Globe size={18} /> Browser Session Active
+                        </h4>
+                        
+                        <div style={{ marginBottom: '1rem' }}>
+                            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                                Current Location:
+                            </label>
+                            <div style={{ display: 'flex', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.5rem', fontSize: '0.85rem', color: 'var(--text-primary)', wordBreak: 'break-all', fontFamily: 'monospace' }}>
+                                {currentBrowserUrl || urlInput}
                             </div>
+                        </div>
 
-                            <div style={{ marginBottom: '1.5rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
-                                    Navigate Headless Session:
-                                </label>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    <input
-                                        type="text"
-                                        value={navUrlInput}
-                                        onChange={(e) => setNavUrlInput(e.target.value)}
-                                        placeholder="e.g. /dashboard or https://example.com/checkout"
-                                        disabled={isGenerating}
-                                        style={{
-                                            flex: 1,
-                                            padding: '0.5rem 0.75rem',
-                                            background: 'var(--bg-primary)',
-                                            border: '1px solid var(--border-color)',
-                                            borderRadius: 'var(--radius-md)',
-                                            color: 'var(--text-primary)',
-                                            fontSize: '0.9rem',
-                                            outline: 'none'
-                                        }}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' && navUrlInput.trim() && !isGenerating) {
-                                                handleNavigateBrowser();
-                                            }
-                                        }}
-                                    />
-                                    <button
-                                        className="btn btn-secondary"
-                                        onClick={handleNavigateBrowser}
-                                        disabled={isGenerating || !navUrlInput.trim()}
-                                        style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
-                                    >
-                                        {isGenerating && statusText.includes('Navigating') ? (
-                                            <Loader2 className="spin" size={14} />
-                                        ) : "Go"}
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="modal-steps" style={{ background: 'var(--bg-tertiary)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                                <p style={{ margin: '0.25rem 0' }}>1. Paste session cookies to start in an authenticated state.</p>
-                                <p style={{ margin: '0.25rem 0' }}>2. Enter paths (e.g., <code>/dashboard</code>) above to navigate headlessly.</p>
-                                <p style={{ margin: '0.25rem 0' }}>3. Click <strong>"Capture Current Page"</strong> below to scrape HTML and generate locators.</p>
-                            </div>
-
-                            <div className="modal-actions" style={{ display: 'flex', gap: '1rem' }}>
+                        <div style={{ marginBottom: '1rem' }}>
+                            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                                Navigate Headless Session:
+                            </label>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <input
+                                    type="text"
+                                    value={navUrlInput}
+                                    onChange={(e) => setNavUrlInput(e.target.value)}
+                                    placeholder="e.g. /dashboard or https://example.com/checkout"
+                                    disabled={isGenerating}
+                                    style={{
+                                        flex: 1,
+                                        padding: '0.4rem 0.6rem',
+                                        background: 'var(--bg-primary)',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: '0.85rem'
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && navUrlInput.trim() && !isGenerating) {
+                                            handleNavigateBrowser();
+                                        }
+                                    }}
+                                />
                                 <button
-                                    className="btn btn-success"
-                                    onClick={handleCaptureAndGenerate}
-                                    style={{ flex: 1 }}
+                                    onClick={handleNavigateBrowser}
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
                                     disabled={isGenerating}
                                 >
-                                    {isGenerating && statusText.includes('Capturing') ? (
-                                        <>
-                                            <Loader2 className="spin" size={16} />
-                                            Capturing...
-                                        </>
-                                    ) : "Capture Current Page"}
-                                </button>
-                                <button
-                                    className="btn btn-secondary"
-                                    onClick={handleCloseBrowser}
-                                    disabled={isGenerating}
-                                >
-                                    Close Browser
+                                    Go
                                 </button>
                             </div>
                         </div>
+
+                        <button
+                            onClick={handleCloseBrowser}
+                            className="btn btn-danger btn-sm"
+                            style={{ width: '100%', padding: '0.5rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: '600' }}
+                            disabled={isGenerating}
+                        >
+                            Close Browser Session
+                        </button>
                     </div>
                 )}
             </div>

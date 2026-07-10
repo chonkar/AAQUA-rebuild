@@ -30,3 +30,16 @@ export const getPerformanceInsights = async (payload, apiKey) => {
     }
     return response.json();
 };
+
+export const launchBrowser = async (url, browserType = 'chromium', cookies = [], projectId = null) => {
+    const response = await fetch(`${API_URL}/browser/launch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, browserType, cookies, projectId }),
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.details || err.error || `Browser launch failed (HTTP ${response.status})`);
+    }
+    return response.json();
+};

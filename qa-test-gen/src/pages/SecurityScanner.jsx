@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, Play, Loader2, AlertTriangle, CheckCircle, XCircle, BarChart3, Shield, RefreshCw, Download, Clock, TrendingUp, Eye, BrainCircuit, Sparkles, ChevronDown, ChevronUp, StopCircle, Info } from 'lucide-react';
+import { ShieldCheck, Play, Loader2, AlertTriangle, CheckCircle, XCircle, BarChart3, Shield, RefreshCw, Download, Clock, TrendingUp, Eye, BrainCircuit, Sparkles, ChevronDown, ChevronUp, StopCircle, Info, Globe, AlertCircle } from 'lucide-react';
 import { useAuth } from 'react-oidc-context';
 import { createApiClient } from '../utils/apiClient';
 import { useProject } from '../context/ProjectContext';
@@ -37,6 +37,16 @@ const SecurityScanner = () => {
     const [error, setError] = useState('');
     const [zapHealth, setZapHealth] = useState(null);
     const pollRef = useRef(null);
+
+    // Interactive Mode State
+    const [url, setUrl] = useState('');
+    const [isBrowserActive, setIsBrowserActive] = useState(false);
+    const [browserType, setBrowserType] = useState('chromium');
+    const [useCookies, setUseCookies] = useState(false);
+    const [cookieInput, setCookieInput] = useState('');
+    const [currentBrowserUrl, setCurrentBrowserUrl] = useState('');
+    const [navUrlInput, setNavUrlInput] = useState('');
+    const [isExtensionInstalled, setIsExtensionInstalled] = useState(false);
 
     // Per-vulnerability JIRA logging state, keyed by vuln.id.
     // { status: 'idle'|'logging'|'logged'|'error', key?, url?, error? }
@@ -88,6 +98,7 @@ const SecurityScanner = () => {
         setDashboardData(null);
         setJiraState({});
         if (!project) return;
+        setUrl(project.target_url || '');
         try {
             const projRes = await fetch(`${PROJECTS_API}/${project.id}`, { headers: headers() });
             const projData = await projRes.json();
@@ -183,10 +194,14 @@ const SecurityScanner = () => {
         setJiraState({});
         scanLogCursorRef.current = 0;
         try {
-            const data = await api.post(`${API}/scan/start`, {
+            const requestPayload = {
                 project_id: selectedProject.id,
                 scan_type: scanType,
-            });
+            };
+            if (isBrowserActive && currentBrowserUrl) {
+                requestPayload.target_url = currentBrowserUrl;
+            }
+            const data = await api.post(`${API}/scan/start`, requestPayload);
             setActiveScan(data.scan);
             startPolling(data.scan.id);
         } catch (err) {
@@ -219,6 +234,100 @@ const SecurityScanner = () => {
         } catch (err) {
             setError(err.message);
         }
+    };
+
+    const launchBrowser = async (url, browserType = 'chromium', cookies = [], projectId = null) => {
+        const response = await fetch(`${API_PREFIX}/api/browser/launch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, browserType, cookies, projectId })
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.details || err.error || `Browser launch failed (HTTP ${response.status})`);
+        }
+        return response.json();
+    };
+
+    const handleLaunch = async () => {
+        setError(null);
+        setIsBrowserActive(false);
+        const urlToLaunch = (isBrowserActive && currentBrowserUrl) ? currentBrowserUrl : (selectedProject?.target_url || '');
+        if (!urlToLaunch) {
+            setError("No target URL configured for this project.");
+            return;
+        }
+        try {
+            let cookies = [];
+            if (useCookies && cookieInput.trim()) {
+                try {
+                    cookies = JSON.parse(cookieInput);
+                    if (!Array.isArray(cookies)) throw new Error("Cookies must be a JSON Array.");
+                } catch (e) {
+                    throw new Error("Invalid Cookie JSON format. Please paste a valid array of cookies.");
+                }
+            }
+
+            await launchBrowser(urlToLaunch, browserType, cookies, selectedProject?.id || null);
+            setIsBrowserActive(true);
+            setCurrentBrowserUrl(urlToLaunch);
+        } catch (err) {
+            setError(err.message || "Failed to launch browser. Ensure server is running.");
+        }
+    };
+
+    const handleNavigateBrowser = async () => {
+        setError(null);
+        try {
+            let target = navUrlInput.trim();
+            if (target.startsWith('/')) {
+                try {
+                    const base = new URL(currentBrowserUrl || selectedProject?.target_url || '');
+                    target = `${base.protocol}//${base.host}${target}`;
+                } catch (e) {
+                    console.debug("Failed to resolve absolute path from base URL:", e);
+                }
+            } else if (!/^https?:\/\//i.test(target)) {
+                target = 'https://' + target;
+            }
+
+            const response = await fetch(`${API_PREFIX}/api/browser/navigate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: target })
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(`Navigation failed: ${text}`);
+            }
+            const data = await response.json();
+            setCurrentBrowserUrl(data.currentUrl || target);
+            setNavUrlInput('');
+        } catch (e) {
+            setError(e.message);
+        }
+    };
+
+    const handleCloseBrowser = async () => {
+        try {
+            await fetch(`${API_PREFIX}/api/browser/close`, { method: 'POST' });
+        } catch (e) {
+            console.error("Failed to close browser", e);
+        } finally {
+            setIsBrowserActive(false);
+            setCurrentBrowserUrl('');
+            setNavUrlInput('');
+        }
+    };
+
+    const handlePullCookies = () => {
+        const urlToPull = selectedProject?.target_url || '';
+        if (!urlToPull) {
+            setError("No target URL configured for this project.");
+            return;
+        }
+        window.postMessage({ source: 'aaqua-app', type: 'AAQUA_GET_COOKIES', url: urlToPull }, '*');
     };
 
     const startPolling = (scanId) => {
@@ -315,6 +424,38 @@ const SecurityScanner = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Listeners for Chrome Extension connection & cookie responses
+    useEffect(() => {
+        const handleExtensionMessage = (e) => {
+            if (!e.data || e.data.source !== 'aaqua-extension') return;
+
+            if (e.data.type === 'AAQUA_EXTENSION_READY') {
+                setIsExtensionInstalled(true);
+            }
+
+            if (e.data.type === 'AAQUA_SET_COOKIES') {
+                if (e.data.cookies && e.data.cookies.length > 0) {
+                    setCookieInput(JSON.stringify(e.data.cookies, null, 2));
+                    setUseCookies(true);
+                    setError(null);
+                } else if (e.data.error) {
+                    setError(`Cookie Bridge: ${e.data.error}`);
+                } else {
+                    setError("No active session cookies found in your browser for this domain. Please open the page in another tab and log in first.");
+                }
+            }
+        };
+
+        window.addEventListener('message', handleExtensionMessage);
+        
+        // Ping extension to see if it is already loaded
+        window.postMessage({ source: 'aaqua-app', type: 'AAQUA_PING' }, '*');
+
+        return () => {
+            window.removeEventListener('message', handleExtensionMessage);
+        };
+    }, []);
+
     // Reload scan history + dashboard whenever the user picks a different
     // project in the global header. Re-keying on selectedProject?.id (not
     // the object reference) avoids spurious reloads on unrelated rerenders.
@@ -389,7 +530,195 @@ const SecurityScanner = () => {
                             </h3>
                             <p style={{ color: 'var(--text-muted)', marginTop: '4px' }}>Project Security Intelligence Hub</p>
                         </div>
-                        <div className="url-display" style={{ margin: 0 }}>{selectedProject.target_url}</div>
+                    </div>
+
+                    {/* Interactive Browser Launcher for Security Scanner */}
+                    <div className="browser-launcher-card" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '1.25rem', marginBottom: '1.5rem', marginTop: '1rem' }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label style={{ display: 'block', fontWeight: '600', marginBottom: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Target URL context</label>
+                            <div className="input-with-button" style={{ display: 'flex', gap: '0.5rem' }}>
+                                <input
+                                    type="text"
+                                    value={url || selectedProject?.target_url || ''}
+                                    onChange={(e) => setUrl(e.target.value)}
+                                    placeholder="https://example.com"
+                                    className="form-input"
+                                    disabled={scanLoading || isBrowserActive}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.7rem',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-md)',
+                                        background: 'var(--bg-primary)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: '0.9rem'
+                                    }}
+                                />
+                                <button
+                                    onClick={handleLaunch}
+                                    disabled={!(url || selectedProject?.target_url) || isBrowserActive || scanLoading}
+                                    className="btn btn-primary"
+                                    style={{ flexShrink: 0 }}
+                                >
+                                    <Play size={16} /> Launch Browser
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="browser-select-section" style={{ margin: '1rem 0', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.75rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                <span>Browser Type:</span>
+                                <select
+                                    value={browserType}
+                                    onChange={(e) => setBrowserType(e.target.value)}
+                                    disabled={isBrowserActive || scanLoading}
+                                    style={{
+                                        background: 'var(--bg-secondary)',
+                                        border: '1px solid var(--border-color)',
+                                        color: 'var(--text-primary)',
+                                        padding: '0.5rem 1rem',
+                                        borderRadius: 'var(--radius-md)',
+                                        fontSize: '0.85rem',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                        fontWeight: '600'
+                                    }}
+                                >
+                                    <option value="chromium">Chromium (Chrome)</option>
+                                    <option value="firefox">Firefox</option>
+                                    <option value="webkit">WebKit (Safari)</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <div className="cookie-section" style={{ marginBottom: '1rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
+                                <label className="cookie-toggle" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={useCookies}
+                                        onChange={(e) => setUseCookies(e.target.checked)}
+                                        disabled={isBrowserActive || scanLoading}
+                                    />
+                                    <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Use Session Cookies (Authenticated)</span>
+                                </label>
+
+                                {isExtensionInstalled ? (
+                                    <button
+                                        type="button"
+                                        onClick={handlePullCookies}
+                                        disabled={!(url || selectedProject?.target_url) || isBrowserActive || scanLoading}
+                                        style={{
+                                            background: 'var(--accent-glow)',
+                                            border: '1px solid var(--accent-primary)',
+                                            color: 'var(--accent-primary)',
+                                            padding: '0.35rem 0.75rem',
+                                            borderRadius: 'var(--radius-md)',
+                                            fontSize: '0.75rem',
+                                            cursor: 'pointer',
+                                            fontWeight: '600',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.25rem',
+                                            marginLeft: 'auto'
+                                        }}
+                                    >
+                                        ⚡ Pull Active Browser Cookies
+                                    </button>
+                                ) : (
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+                                        💡 Install AAQUA Extension to pull cookies
+                                    </span>
+                                )}
+                            </div>
+
+                            {useCookies && (
+                                <div className="cookie-input-box animate-fade-in" style={{ marginTop: '0.5rem' }}>
+                                    <div className="cookie-help" style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                                        <AlertCircle size={14} style={{ flexShrink: 0, marginTop: '2px' }} />
+                                        <span>
+                                            <strong>How to get cookies:</strong> Use EditThisCookie to export as JSON, or copy from DevTools (Application &gt; Cookies).
+                                        </span>
+                                    </div>
+                                    <textarea
+                                        className="cookie-textarea"
+                                        placeholder='[{"name": "session_id", "value": "..."}]'
+                                        value={cookieInput}
+                                        onChange={(e) => setCookieInput(e.target.value)}
+                                        rows={5}
+                                        disabled={isBrowserActive || scanLoading}
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.5rem',
+                                            background: 'var(--bg-primary)',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: 'var(--radius-md)',
+                                            color: 'var(--text-primary)',
+                                            fontFamily: 'monospace',
+                                            fontSize: '0.85rem'
+                                        }}
+                                    />
+                                </div>
+                            )}
+                        </div>
+
+                        {isBrowserActive && (
+                            <div className="browser-modal animate-fade-in" style={{ textAlign: 'left', marginTop: '1rem', border: '1px solid var(--accent-primary)', padding: '1rem', borderRadius: 'var(--radius-md)', background: 'var(--bg-tertiary)' }}>
+                                <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 1rem 0', color: 'var(--success)', fontSize: '0.95rem' }}>
+                                    <Globe size={18} /> Browser Session Active
+                                </h4>
+                                
+                                <div style={{ marginBottom: '1rem' }}>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                                        Current Location:
+                                    </label>
+                                    <div style={{ display: 'flex', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.5rem', fontSize: '0.85rem', color: 'var(--text-primary)', wordBreak: 'break-all', fontFamily: 'monospace' }}>
+                                        {currentBrowserUrl || url || selectedProject?.target_url}
+                                    </div>
+                                </div>
+
+                                <div style={{ marginBottom: '1rem' }}>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                                        Navigate Headless Session:
+                                    </label>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <input
+                                            type="text"
+                                            value={navUrlInput}
+                                            onChange={(e) => setNavUrlInput(e.target.value)}
+                                            placeholder="e.g. /dashboard or https://example.com/checkout"
+                                            disabled={scanLoading}
+                                            style={{
+                                                flex: 1,
+                                                padding: '0.4rem 0.6rem',
+                                                background: 'var(--bg-primary)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: 'var(--radius-md)',
+                                                color: 'var(--text-primary)',
+                                                fontSize: '0.85rem'
+                                            }}
+                                        />
+                                        <button
+                                            onClick={handleNavigateBrowser}
+                                            className="btn btn-secondary btn-sm"
+                                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                                            disabled={scanLoading}
+                                        >
+                                            Go
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={handleCloseBrowser}
+                                    className="btn btn-danger btn-sm"
+                                    style={{ width: '100%', padding: '0.5rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: '600' }}
+                                    disabled={scanLoading}
+                                >
+                                    Close Browser Session
+                                </button>
+                            </div>
+                        )}
                     </div>
 
                     {/* Scan Controls */}
@@ -412,7 +741,7 @@ const SecurityScanner = () => {
                                 ))}
                             </div>
                             <button className="btn btn-primary" onClick={startScan} disabled={scanLoading || zapHealth?.status !== 'ok'}>
-                                {scanLoading ? <><Loader2 className="spin" size={18} /> Scanning...</> : <><Play size={18} /> Trigger Scan</>}
+                                {scanLoading ? <><Loader2 className="spin" size={18} /> Scanning...</> : <><Play size={18} /> {isBrowserActive ? 'Trigger Scan (Browser Session)' : 'Trigger Scan'}</>}
                             </button>
                         </div>
 
@@ -1437,6 +1766,7 @@ function renderStyles() {
 
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
+        .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.6rem; }
     `}</style>
     );
 }

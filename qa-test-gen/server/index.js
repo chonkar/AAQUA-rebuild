@@ -1548,11 +1548,49 @@ app.post('/api/browser/launch', async (req, res) => {
             ignoreHTTPSErrors: true
         });
 
-        // Inject cookies if provided (for starting in an authenticated session state)
-        if (cookies && Array.isArray(cookies) && cookies.length > 0) {
-            const sanitized = sanitizeCookies(cookies);
+        // Listen for new pages/tabs to keep activePage reference updated
+        activeContext.on('page', (newPage) => {
+            console.log(`[Browser] New page/tab tracked: ${newPage.url()}`);
+            activePage = newPage;
+        });
+
+        // Inject cookies/storage if provided (for starting in an authenticated session state)
+        let cookiesToInject = [];
+        let localStorageToInject = null;
+        let sessionStorageToInject = null;
+
+        if (cookies) {
+            if (Array.isArray(cookies)) {
+                cookiesToInject = cookies;
+            } else if (typeof cookies === 'object') {
+                cookiesToInject = cookies.cookies || [];
+                localStorageToInject = cookies.localStorage || null;
+                sessionStorageToInject = cookies.sessionStorage || null;
+            }
+        }
+
+        if (cookiesToInject.length > 0) {
+            const sanitized = sanitizeCookies(cookiesToInject);
             console.log(`Injecting ${sanitized.length} cookies into active browser context...`);
             await activeContext.addCookies(sanitized);
+        }
+
+        if (localStorageToInject || sessionStorageToInject) {
+            console.log("Adding init script to inject localStorage/sessionStorage into active browser context...");
+            /* eslint-disable no-undef */
+            await activeContext.addInitScript((data) => {
+                if (data.localStorage) {
+                    for (const [key, value] of Object.entries(data.localStorage)) {
+                        window.localStorage.setItem(key, value);
+                    }
+                }
+                if (data.sessionStorage) {
+                    for (const [key, value] of Object.entries(data.sessionStorage)) {
+                        window.sessionStorage.setItem(key, value);
+                    }
+                }
+            }, { localStorage: localStorageToInject, sessionStorage: sessionStorageToInject });
+            /* eslint-enable no-undef */
         }
 
         activePage = await activeContext.newPage();
@@ -1567,14 +1605,20 @@ app.post('/api/browser/launch', async (req, res) => {
 
 // Capture Cookies & HTML from Interactive Browser
 app.get('/api/browser/capture', async (req, res) => {
-    if (!activeContext || !activePage) {
+    if (!activeContext) {
         return res.status(400).json({ error: 'No active browser session found' });
     }
 
     try {
+        const pages = activeContext.pages();
+        const pageToUse = pages.length > 0 ? pages[pages.length - 1] : activePage;
+        if (!pageToUse) {
+            return res.status(400).json({ error: 'No active browser page found' });
+        }
+
         const cookies = await activeContext.cookies();
-        const html = await activePage.content();
-        const url = activePage.url();
+        const html = await pageToUse.content();
+        const url = pageToUse.url();
 
         console.log(`Captured ${cookies.length} cookies, HTML, and url=${url}`);
 
@@ -1659,11 +1703,43 @@ app.post('/api/scrape', async (req, res) => {
             ignoreHTTPSErrors: true
         });
 
-        // Add cookies if provided
-        if (cookies && Array.isArray(cookies) && cookies.length > 0) {
-            const sanitized = sanitizeCookies(cookies);
+        // Add cookies/storage if provided
+        let cookiesToInjectScraper = [];
+        let localStorageToInjectScraper = null;
+        let sessionStorageToInjectScraper = null;
+
+        if (cookies) {
+            if (Array.isArray(cookies)) {
+                cookiesToInjectScraper = cookies;
+            } else if (typeof cookies === 'object') {
+                cookiesToInjectScraper = cookies.cookies || [];
+                localStorageToInjectScraper = cookies.localStorage || null;
+                sessionStorageToInjectScraper = cookies.sessionStorage || null;
+            }
+        }
+
+        if (cookiesToInjectScraper.length > 0) {
+            const sanitized = sanitizeCookies(cookiesToInjectScraper);
             console.log(`Injecting ${sanitized.length} cookies...`);
             await context.addCookies(sanitized);
+        }
+
+        if (localStorageToInjectScraper || sessionStorageToInjectScraper) {
+            console.log("Adding init script to inject localStorage/sessionStorage...");
+            /* eslint-disable no-undef */
+            await context.addInitScript((data) => {
+                if (data.localStorage) {
+                    for (const [key, value] of Object.entries(data.localStorage)) {
+                        window.localStorage.setItem(key, value);
+                    }
+                }
+                if (data.sessionStorage) {
+                    for (const [key, value] of Object.entries(data.sessionStorage)) {
+                        window.sessionStorage.setItem(key, value);
+                    }
+                }
+            }, { localStorage: localStorageToInjectScraper, sessionStorage: sessionStorageToInjectScraper });
+            /* eslint-enable no-undef */
         }
 
         page = await context.newPage();
@@ -1678,8 +1754,28 @@ app.post('/api/scrape', async (req, res) => {
             // Ignore network idle timeout, proceed with what we have
         }
 
+        try {
+            await page.waitForSelector('button, input, textarea, select, a, [role="button"]', { timeout: 10000 });
+        } catch {
+            console.warn('[Scraper] Timeout waiting for interactive elements, returning current DOM state');
+        }
+
+        // Wait for OutSystems client-side loading indicator ("Just a moment") to disappear
+        try {
+            await page.waitForSelector('text="Just a moment"', { state: 'detached', timeout: 15000 });
+        } catch {
+            // Ignore timeout
+        }
+
+        // Wait for generic spinners or loaders to disappear
+        try {
+            await page.waitForSelector('.loading-spinner, .loading-icon, .feedback-message--loading', { state: 'detached', timeout: 10000 });
+        } catch {
+            // Ignore timeout
+        }
+
         // Additional wait for Single Page Applications (like React/OutSystems) to mount
-        await page.waitForTimeout(2000).catch(() => { });
+        await page.waitForTimeout(4000).catch(() => { });
 
         // Retrieve HTML content with retries to handle any active client-side navigations or redirects
         let html = '';

@@ -17,6 +17,7 @@ window.addEventListener('message', (event) => {
                 source: 'aaqua-extension',
                 type: 'AAQUA_SET_COOKIES',
                 cookies: response?.cookies || [],
+                storage: response?.storage || null,
                 error: response?.error || null
             }, '*');
         });
