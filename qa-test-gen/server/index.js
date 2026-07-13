@@ -3074,7 +3074,7 @@ app.post('/api/run-tests-git', async (req, res) => {
                 urlObj.username = encodeURIComponent(username);
                 urlObj.password = encodeURIComponent(password);
                 cloneUrl = urlObj.toString();
-            } catch (urlErr) {
+            } catch {
                 // Fallback basic replacement if URL is not absolute
                 if (gitUrl.startsWith('https://')) {
                     cloneUrl = gitUrl.replace('https://', `https://${encodeURIComponent(username)}:${encodeURIComponent(password)}@`);
@@ -3162,7 +3162,6 @@ app.post('/api/run-tests-git', async (req, res) => {
 
 // Helper: execute the framework tests asynchronously
 function executeRunnerFramework(framework, projectRoot, runId, runHeaded) {
-    const run = runStore.get(runId);
     if (framework === 'maven') {
         // Delete old report directories to prevent stale live dashboard
         for (const d of [path.join(projectRoot, 'target', 'surefire-reports'), path.join(projectRoot, 'target', 'failsafe-reports')]) {

@@ -145,7 +145,7 @@ const TestRunner = () => {
     const [runMode, setRunMode] = useState('path'); // 'path' | 'zip' | 'git'
     const [zipFile, setZipFile] = useState(null);
     const [gitUrl, setGitUrl] = useState('');
-    const [gitBranch, setGitBranch] = useState('main');
+    const [gitBranch, setGitBranch] = useState('');
     const [gitUsername, setGitUsername] = useState('');
     const [gitPassword, setGitPassword] = useState('');
     const [runId, setRunId] = useState(null);
@@ -601,7 +601,7 @@ const TestRunner = () => {
                             <input
                                 type="text"
                                 className="input-field"
-                                placeholder="Branch (e.g. main)"
+                                placeholder="Branch (default)"
                                 value={gitBranch}
                                 onChange={(e) => setGitBranch(e.target.value)}
                                 disabled={isRunning || isScheduled}

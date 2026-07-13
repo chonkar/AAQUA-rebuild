@@ -87,7 +87,7 @@ const improveLocatorsWithAI = async (htmlContent, weakLocators) => {
           "css": "<improved stable css selector>",
           "xpath": "<improved stable xpath>",
           "playwright": "<improved modern Playwright code snippet, e.g. page.getByRole('button', { name: 'Submit' }) or page.locator('#id')>",
-          "selenium": "<improved Selenium locator statement, e.g. By.id('id') or By.cssSelector('[data-testid=\"test\"]')>",
+          "selenium": "<improved Selenium locator statement, e.g. By.id('id') or By.cssSelector('[data-testid="test"]')>",
           "confidence": <number between 0.7 and 0.95>,
           "reason": "<explanation of improvement>",
           "source": "AI"

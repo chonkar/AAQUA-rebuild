@@ -1,4 +1,4 @@
-const getPlaywrightLocatorStr = (tagName, id, css, xpath, label) => {
+const getPlaywrightLocatorStr = (tagName, id, css, xpath, _label) => {
     if (id) return `page.locator('#${id}')`;
     if (css && !css.includes(' > ')) return `page.locator('${css}')`;
     if (xpath) return `page.locator('xpath=${xpath}')`;
