@@ -35,6 +35,19 @@ export const runTestsZip = async (zipFile, isHeadless = true, projectId = null) 
     return response.json(); // { runId, framework }
 };
 
+export const runTestsGit = async (gitUrl, branch, username, password, isHeadless = true, projectId = null) => {
+    const response = await fetch(`${API_URL}/run-tests-git`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gitUrl, branch, username, password, isHeadless, projectId }),
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(err.error || 'Failed to start test run from GitLab');
+    }
+    return response.json(); // { runId, framework }
+};
+
 
 export const getRunStatus = async (runId, since = 0) => {
     const q = since ? `?since=${since}` : '';

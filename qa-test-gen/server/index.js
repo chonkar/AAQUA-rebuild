@@ -3030,54 +3030,7 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
         res.json({ runId, framework });
 
         // Run tests asynchronously
-        if (framework === 'maven') {
-            // Delete old report directories to prevent stale live dashboard
-            for (const d of [path.join(projectRoot, 'target', 'surefire-reports'), path.join(projectRoot, 'target', 'failsafe-reports')]) {
-                if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
-            }
-            runCommand('mvn', ['clean', 'test', '-fae', '--no-transfer-progress'], projectRoot, runId, (code) => {
-                const run = runStore.get(runId);
-                appendRunLog(run, `\n[AAQUA] Process exited with code ${code}\n`);
-                const suites = parseMavenResults(projectRoot);
-                run.results = { suites, summary: buildSummary(suites) };
-                run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name, classname: t.classname })));
-                run.status = 'completed';
-                persistRunLogs(runId, run);
-                persistRunToReadiness(run.projectId, run.results.summary);
-            });
-        } else if (framework === 'playwright') {
-            // Install deps first
-            runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
-                const run2 = runStore.get(runId);
-                appendRunLog(run2, `[AAQUA] Dependencies installed. Running Playwright (${runHeaded ? 'headed' : 'headless'})...\n`);
-                const reportFile = path.join(projectRoot, `aaqua-pw-${runId}.json`);
-                const pwArgs = ['test', '--reporter=line,json', '--output=playwright-results'];
-                if (runHeaded) pwArgs.push('--headed');
-                const pw = playwrightSpawn(projectRoot, pwArgs);
-                runCommand(pw.cmd, pw.args, projectRoot, runId, (code) => {
-                    const run3 = runStore.get(runId);
-                    appendRunLog(run3, `\n[AAQUA] Process exited with code ${code}${describeExitCode(code)}\n`);
-                    const suites = readPlaywrightSuites(reportFile, run3.logs.join(''));
-                    run3.results = { suites, summary: buildSummary(suites) };
-                    run3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
-                    run3.status = 'completed';
-                    persistRunLogs(runId, run3);
-                    persistRunToReadiness(run3.projectId, run3.results.summary);
-                    try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
-                }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, pw.options);
-            });
-        } else if (framework === 'cypress') {
-            runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
-                runCommand('npx', ['cypress', 'run', '--reporter', 'json'], projectRoot, runId, (code) => {
-                    const run3 = runStore.get(runId);
-                    appendRunLog(run3, `\n[AAQUA] Cypress exited with code ${code}\n`);
-                    run3.results = { suites: [], summary: { total: 0, passed: 0, failed: 0, skipped: 0, duration: '—' } };
-                    run3.status = 'completed';
-                    persistRunLogs(runId, run3);
-                    persistRunToReadiness(run3.projectId, run3.results.summary);
-                });
-            });
-        }
+        executeRunnerFramework(framework, projectRoot, runId, runHeaded);
 
     } catch (e) {
         console.error('Run tests error:', e);
@@ -3086,6 +3039,184 @@ app.post('/api/run-tests', runnerUpload.single('projectZip'), async (req, res) =
         if (!res.headersSent) res.status(500).json({ error: e.message });
     }
 });
+
+// POST /api/run-tests-git — Clone Git repo and run tests
+app.post('/api/run-tests-git', async (req, res) => {
+    const { gitUrl, branch, username, password, isHeadless, projectId } = req.body;
+    if (!gitUrl) return res.status(400).json({ error: 'Git URL is required' });
+
+    const runHeaded = isHeadless === false || isHeadless === 'false';
+    const runId = crypto.randomBytes(6).toString('hex');
+    const extractDir = path.join('temp_runner', runId);
+
+    runStore.set(runId, {
+        status: 'cloning',
+        logs: [],
+        results: null,
+        framework: null,
+        projectPath: extractDir,
+        failedTests: [],
+        liveResults: [],
+        exitCode: null,
+        error: null,
+        projectId,
+    });
+
+    try {
+        fs.mkdirSync(extractDir, { recursive: true });
+        const run = runStore.get(runId);
+        
+        // Construct authenticated Git URL if credentials are provided
+        let cloneUrl = gitUrl;
+        if (username && password) {
+            try {
+                const urlObj = new URL(gitUrl);
+                urlObj.username = encodeURIComponent(username);
+                urlObj.password = encodeURIComponent(password);
+                cloneUrl = urlObj.toString();
+            } catch (urlErr) {
+                // Fallback basic replacement if URL is not absolute
+                if (gitUrl.startsWith('https://')) {
+                    cloneUrl = gitUrl.replace('https://', `https://${encodeURIComponent(username)}:${encodeURIComponent(password)}@`);
+                }
+            }
+        }
+
+        res.json({ runId, framework: 'detecting' });
+
+        // Clone repo asynchronously in background
+        appendRunLog(run, `[AAQUA] Cloning Git repository: ${gitUrl} (Branch: ${branch || 'main'})...\n`);
+        
+        const gitBranchArgs = branch ? ['-b', branch] : [];
+        const cloneArgs = ['clone', '--depth', '1', ...gitBranchArgs, cloneUrl, extractDir];
+        
+        // Hide credentials from output logs
+        const safeCmdArgs = ['clone', '--depth', '1', ...gitBranchArgs, gitUrl, extractDir];
+        console.log(`[Runner ${runId}] Running: git ${safeCmdArgs.join(' ')}`);
+
+        // Spawn cloning process
+        const child = spawn('git', cloneArgs, { shell: true });
+        
+        child.stdout.on('data', (data) => {
+            let line = data.toString();
+            if (password) {
+                line = line.replace(new RegExp(escapeRegExp(password), 'g'), '••••••••');
+            }
+            appendRunLog(run, line);
+        });
+        child.stderr.on('data', (data) => {
+            let line = data.toString();
+            if (password) {
+                line = line.replace(new RegExp(escapeRegExp(password), 'g'), '••••••••');
+            }
+            appendRunLog(run, line);
+        });
+        
+        child.on('close', async (code) => {
+            if (code !== 0) {
+                run.status = 'error';
+                run.error = `Git clone failed with exit code ${code}`;
+                appendRunLog(run, `\n[AAQUA] Git clone failed with exit code ${code}\n`);
+                persistRunLogs(runId, run);
+                return;
+            }
+
+            appendRunLog(run, `[AAQUA] Clone successful. Detecting framework...\n`);
+
+            try {
+                const framework = detectFramework(extractDir);
+                const projectRoot = findProjectRoot(extractDir, framework);
+                run.framework = framework;
+                run.projectRoot = projectRoot;
+
+                if (framework === 'unknown') {
+                    run.status = 'error';
+                    run.error = 'Could not detect framework. Ensure pom.xml, playwright.config.*, or cypress.config.* is present.';
+                    appendRunLog(run, `\n[AAQUA] Error: ${run.error}\n`);
+                    persistRunLogs(runId, run);
+                    return;
+                }
+
+                run.status = 'running';
+                appendRunLog(run, `[AAQUA] Detected framework: ${framework.toUpperCase()}\n`);
+                appendRunLog(run, `[AAQUA] Starting test execution...\n`);
+
+                // Start framework execution
+                executeRunnerFramework(framework, projectRoot, runId, runHeaded);
+
+            } catch (err) {
+                run.status = 'error';
+                run.error = err.message;
+                appendRunLog(run, `\n[AAQUA] Framework detection/execution failed: ${err.message}\n`);
+                persistRunLogs(runId, run);
+            }
+        });
+
+    } catch (e) {
+        console.error('Run tests Git error:', e);
+        const run = runStore.get(runId);
+        if (run) { run.status = 'error'; run.error = e.message; }
+        if (!res.headersSent) res.status(500).json({ error: e.message });
+    }
+});
+
+// Helper: execute the framework tests asynchronously
+function executeRunnerFramework(framework, projectRoot, runId, runHeaded) {
+    const run = runStore.get(runId);
+    if (framework === 'maven') {
+        // Delete old report directories to prevent stale live dashboard
+        for (const d of [path.join(projectRoot, 'target', 'surefire-reports'), path.join(projectRoot, 'target', 'failsafe-reports')]) {
+            if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
+        }
+        runCommand('mvn', ['clean', 'test', '-fae', '--no-transfer-progress'], projectRoot, runId, (code) => {
+            const run = runStore.get(runId);
+            appendRunLog(run, `\n[AAQUA] Process exited with code ${code}\n`);
+            const suites = parseMavenResults(projectRoot);
+            run.results = { suites, summary: buildSummary(suites) };
+            run.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name, classname: t.classname })));
+            run.status = 'completed';
+            persistRunLogs(runId, run);
+            persistRunToReadiness(run.projectId, run.results.summary);
+        });
+    } else if (framework === 'playwright') {
+        // Install deps first
+        runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
+            const run2 = runStore.get(runId);
+            appendRunLog(run2, `[AAQUA] Dependencies installed. Running Playwright (${runHeaded ? 'headed' : 'headless'})...\n`);
+            const reportFile = path.join(projectRoot, `aaqua-pw-${runId}.json`);
+            const pwArgs = ['test', '--reporter=line,json', '--output=playwright-results'];
+            if (runHeaded) pwArgs.push('--headed');
+            const pw = playwrightSpawn(projectRoot, pwArgs);
+            runCommand(pw.cmd, pw.args, projectRoot, runId, (code) => {
+                const run3 = runStore.get(runId);
+                appendRunLog(run3, `\n[AAQUA] Process exited with code ${code}${describeExitCode(code)}\n`);
+                const suites = readPlaywrightSuites(reportFile, run3.logs.join(''));
+                run3.results = { suites, summary: buildSummary(suites) };
+                run3.failedTests = suites.flatMap(s => s.tests.filter(t => t.status === 'FAILED').map(t => ({ suite: s.name, name: t.name })));
+                run3.status = 'completed';
+                persistRunLogs(runId, run3);
+                persistRunToReadiness(run3.projectId, run3.results.summary);
+                try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
+            }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, pw.options);
+        });
+    } else if (framework === 'cypress') {
+        runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
+            runCommand('npx', ['cypress', 'run', '--reporter', 'json'], projectRoot, runId, (code) => {
+                const run3 = runStore.get(runId);
+                appendRunLog(run3, `\n[AAQUA] Cypress exited with code ${code}\n`);
+                run3.results = { suites: [], summary: { total: 0, passed: 0, failed: 0, skipped: 0, duration: '—' } };
+                run3.status = 'completed';
+                persistRunLogs(runId, run3);
+                persistRunToReadiness(run3.projectId, run3.results.summary);
+            });
+        });
+    }
+}
+
+function escapeRegExp(string) {
+    if (!string) return '';
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 // GET /api/heal-debug — Inspect all runs and healable detection (temporary debug route)
 app.get('/api/heal-debug', (req, res) => {
@@ -3528,19 +3659,24 @@ const batchStore = new Map();
 
 // ── POST /api/auto-heal — Analyse one test, return locator suggestions ──
 app.post('/api/auto-heal', async (req, res) => {
-    const { testName, classname, errorMessage, stackTrace, pageUrl } = req.body;
-    if (!pageUrl) return res.status(400).json({ error: 'pageUrl is required' });
+    const { testName, classname, errorMessage, stackTrace, pageUrl, dom: uploadedDom } = req.body;
+    if (!pageUrl && !uploadedDom) return res.status(400).json({ error: 'Either pageUrl or dom is required' });
 
     let browser;
     try {
-        const { chromium } = require('playwright');
-        browser = await chromium.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--disable-gpu']
-        });
-        const page = await browser.newPage();
-        await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        const dom = await page.content();
+        let dom = '';
+        if (uploadedDom) {
+            dom = uploadedDom;
+        } else {
+            const { chromium } = require('playwright');
+            browser = await chromium.launch({
+                headless: true,
+                args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--disable-gpu']
+            });
+            const page = await browser.newPage();
+            await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            dom = await page.content();
+        }
         const domTruncated = dom.substring(0, 18000); // keep under token limit
 
         const failedLocatorInfo = extractLocator(errorMessage, stackTrace);
@@ -3604,6 +3740,7 @@ app.post('/api/auto-heal-batch', async (req, res) => {
         testName: t.testName,
         classname: t.classname,
         pageUrl: t.pageUrl,
+        dom: t.dom, // store the uploaded DOM if provided
         errorMessage: t.errorMessage,
         stackTrace: t.stackTrace,
         status: 'pending',
@@ -3624,21 +3761,27 @@ app.post('/api/auto-heal-batch', async (req, res) => {
             item.status = 'healing';
             let browser;
             try {
-                if (!item.pageUrl) {
-                    item.status = 'conflict';
-                    item.reason = 'No page URL provided';
-                    batch.processed++;
-                    continue;
-                }
+                let dom = '';
+                if (item.dom) {
+                    dom = item.dom;
+                } else {
+                    if (!item.pageUrl) {
+                        item.status = 'conflict';
+                        item.reason = 'No page URL or DOM provided';
+                        batch.processed++;
+                        continue;
+                    }
 
-                const { chromium } = require('playwright');
-                browser = await chromium.launch({
-                    headless: true,
-                    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--disable-gpu']
-                });
-                const page = await browser.newPage();
-                await page.goto(item.pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-                const dom = (await page.content()).substring(0, 18000);
+                    const { chromium } = require('playwright');
+                    browser = await chromium.launch({
+                        headless: true,
+                        args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--disable-gpu']
+                    });
+                    const page = await browser.newPage();
+                    await page.goto(item.pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                    dom = await page.content();
+                }
+                const domTruncated = dom.substring(0, 18000);
 
                 const failedLocatorInfo = extractLocator(item.errorMessage, item.stackTrace);
                 const locatorDesc = failedLocatorInfo
@@ -3652,7 +3795,7 @@ Error: ${item.errorMessage || '(none)'}
 Test: ${item.classname || ''}.${item.testName || ''}
 
 Current page DOM (truncated):
-${dom}
+${domTruncated}
 
 Suggest 5 alternative locators. Return ONLY valid JSON:
 { "suggestions": [ { "strategy": "xpath|css|id|name", "locator": "...", "confidence": 0-100, "description": "why this works" } ] }`;

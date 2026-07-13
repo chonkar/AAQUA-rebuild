@@ -643,6 +643,8 @@ const LocatorGenerator = () => {
                                     <th>Element</th>
                                     <th>Type</th>
                                     <th>Source</th>
+                                    <th>Playwright</th>
+                                    <th>Selenium</th>
                                     <th>ID</th>
                                     <th>CSS Selector</th>
                                     <th>XPath</th>
@@ -659,6 +661,18 @@ const LocatorGenerator = () => {
                                             <span className={`badge-source ${loc.source?.toLowerCase() === 'ai' ? 'ai' : 'code'}`}>
                                                 {loc.source || 'Code'}
                                             </span>
+                                        </td>
+                                        <td className="monospace code-cell">
+                                            <div className="copy-wrapper highlight-playwright" onClick={() => handleCopy(loc.playwright, `${idx}-pw`)} title="Click to copy Playwright locator">
+                                                {loc.playwright}
+                                                {copiedIndex === `${idx}-pw` && <span className="copied-tooltip">Copied!</span>}
+                                            </div>
+                                        </td>
+                                        <td className="monospace code-cell">
+                                            <div className="copy-wrapper highlight-selenium" onClick={() => handleCopy(loc.selenium, `${idx}-sel`)} title="Click to copy Selenium locator">
+                                                {loc.selenium}
+                                                {copiedIndex === `${idx}-sel` && <span className="copied-tooltip">Copied!</span>}
+                                            </div>
                                         </td>
                                         <td className="monospace">
                                             {loc.id ? (
@@ -968,6 +982,22 @@ const LocatorGenerator = () => {
                     text-transform: uppercase;
                 }
                 .monospace { font-family: monospace; font-size: 0.85rem; color: var(--text-muted); }
+                .code-cell {
+                    max-width: 200px;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .code-cell:hover {
+                    white-space: normal;
+                    word-break: break-all;
+                }
+                .highlight-playwright {
+                    color: #c084fc !important; /* soft purple */
+                }
+                .highlight-selenium {
+                    color: #60a5fa !important; /* soft blue */
+                }
                 .text-muted { color: var(--text-secondary); opacity: 0.5; }
 
                 .copy-wrapper {

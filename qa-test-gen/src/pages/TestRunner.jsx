@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Clock, FolderOpen, ChevronDown, ChevronRight, Terminal, BarChart3, Download, CalendarClock, Wrench, Upload } from 'lucide-react';
-import { runTestsLocal, runTestsZip, getRunStatus, retryFailedTests, getRuntimeInfo } from '../services/testRunnerService';
+import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Clock, FolderOpen, ChevronDown, ChevronRight, Terminal, BarChart3, Download, CalendarClock, Wrench, Upload, GitBranch } from 'lucide-react';
+import { runTestsLocal, runTestsZip, runTestsGit, getRunStatus, retryFailedTests, getRuntimeInfo } from '../services/testRunnerService';
 import { startBatchHeal, getBatchHealStatus, applyHeal } from '../services/autoHealService';
 import { useProject } from '../context/ProjectContext';
 
@@ -142,8 +142,12 @@ const LiveConsole = ({ logs, isRunning }) => {
 const TestRunner = () => {
     const { selectedProjectId } = useProject();
     const [projectPath, setProjectPath] = useState('');
-    const [runMode, setRunMode] = useState('path'); // 'path' | 'zip'
+    const [runMode, setRunMode] = useState('path'); // 'path' | 'zip' | 'git'
     const [zipFile, setZipFile] = useState(null);
+    const [gitUrl, setGitUrl] = useState('');
+    const [gitBranch, setGitBranch] = useState('main');
+    const [gitUsername, setGitUsername] = useState('');
+    const [gitPassword, setGitPassword] = useState('');
     const [runId, setRunId] = useState(null);
     const [retrySourceRunId, setRetrySourceRunId] = useState(null);
     const [headed, setHeaded] = useState(() => {
@@ -258,14 +262,17 @@ const TestRunner = () => {
     const handleRun = async () => {
         if (runMode === 'path' && !projectPath.trim()) return;
         if (runMode === 'zip' && !zipFile) return;
+        if (runMode === 'git' && !gitUrl.trim()) return;
         setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
         logCursorRef.current = 0;
         try {
             let data;
             if (runMode === 'path') {
                 data = await runTestsLocal(projectPath.trim(), !headed, selectedProjectId || null);
-            } else {
+            } else if (runMode === 'zip') {
                 data = await runTestsZip(zipFile, !headed, selectedProjectId || null);
+            } else {
+                data = await runTestsGit(gitUrl.trim(), gitBranch.trim(), gitUsername.trim(), gitPassword.trim(), !headed, selectedProjectId || null);
             }
             if (data.error) { setStatus('error'); setError(data.error); setHasRun(true); return; }
             setRunId(data.runId);
@@ -497,10 +504,18 @@ const TestRunner = () => {
                         <Upload size={16} />
                         <span>Upload ZIP File</span>
                     </button>
+                    <button
+                        className={`tr-mode-tab ${runMode === 'git' ? 'active' : ''}`}
+                        onClick={() => setRunMode('git')}
+                        disabled={isRunning || isScheduled}
+                    >
+                        <GitBranch size={16} />
+                        <span>Run from Git/GitLab</span>
+                    </button>
                 </div>
 
                 <div className="tr-input-row">
-                    {runMode === 'path' ? (
+                    {runMode === 'path' && (
                         <>
                             <FolderOpen size={20} style={{ color: 'var(--accent-secondary)', flexShrink: 0 }} />
                             <div style={{ display: 'flex', flex: 1, gap: '0.5rem' }}>
@@ -541,8 +556,9 @@ const TestRunner = () => {
                                 </button>
                             </div>
                         </>
-                    ) : (
-                        <div className="tr-zip-upload-zone">
+                    )}
+                    {runMode === 'zip' && (
+                        <div className="tr-zip-upload-zone" style={{ flex: 1 }}>
                             <Upload size={20} style={{ color: 'var(--accent-secondary)', flexShrink: 0 }} />
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1 }}>
                                 <div className="tr-file-input-wrapper">
@@ -569,6 +585,30 @@ const TestRunner = () => {
                             </div>
                         </div>
                     )}
+                    {runMode === 'git' && (
+                        <div className="tr-git-input-zone" style={{ display: 'flex', gap: '0.75rem', flex: 1, alignItems: 'center' }}>
+                            <GitBranch size={20} style={{ color: 'var(--accent-secondary)', flexShrink: 0 }} />
+                            <input
+                                type="text"
+                                className="input-field"
+                                placeholder="Git Repository URL (e.g. https://git.lab.aaseya.com/...)"
+                                value={gitUrl}
+                                onChange={(e) => setGitUrl(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && !isRunning && handleRun()}
+                                disabled={isRunning || isScheduled}
+                                style={{ flex: 3 }}
+                            />
+                            <input
+                                type="text"
+                                className="input-field"
+                                placeholder="Branch (e.g. main)"
+                                value={gitBranch}
+                                onChange={(e) => setGitBranch(e.target.value)}
+                                disabled={isRunning || isScheduled}
+                                style={{ flex: 1 }}
+                            />
+                        </div>
+                    )}
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem', cursor: hasDisplayServer ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', opacity: hasDisplayServer ? 1 : 0.5 }} title={!hasDisplayServer ? "No display server detected on host. Headed mode is disabled." : ""}>
                         <input
                             type="checkbox"
@@ -581,7 +621,7 @@ const TestRunner = () => {
                     <button 
                         className="btn btn-primary" 
                         onClick={handleRun} 
-                        disabled={isRunning || isScheduled || (runMode === 'path' ? !projectPath.trim() : !zipFile)}
+                        disabled={isRunning || isScheduled || (runMode === 'path' ? !projectPath.trim() : runMode === 'zip' ? !zipFile : !gitUrl.trim())}
                     >
                         <Play size={18} />{isRunning ? 'Running...' : 'Run Tests'}
                     </button>
@@ -589,6 +629,33 @@ const TestRunner = () => {
                         <RotateCcw size={18} />Re-Run Failed
                     </button>
                 </div>
+
+                {runMode === 'git' && (
+                    <div className="tr-git-credentials-row animate-fade-in" style={{ display: 'flex', gap: '1rem', marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '0.25rem' }}>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>GitLab Username (optional)</span>
+                            <input
+                                type="text"
+                                className="input-field"
+                                placeholder="Enter GitLab Username"
+                                value={gitUsername}
+                                onChange={(e) => setGitUsername(e.target.value)}
+                                disabled={isRunning || isScheduled}
+                            />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '0.25rem' }}>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>GitLab Password / Access Token (optional)</span>
+                            <input
+                                type="password"
+                                className="input-field"
+                                placeholder="••••••••"
+                                value={gitPassword}
+                                onChange={(e) => setGitPassword(e.target.value)}
+                                disabled={isRunning || isScheduled}
+                            />
+                        </div>
+                    </div>
+                )}
 
                 {/* Scheduler Row */}
                 {runMode === 'path' ? (

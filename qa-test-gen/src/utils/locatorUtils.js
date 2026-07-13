@@ -1,10 +1,30 @@
+const getPlaywrightLocatorStr = (tagName, id, css, xpath, label) => {
+    if (id) return `page.locator('#${id}')`;
+    if (css && !css.includes(' > ')) return `page.locator('${css}')`;
+    if (xpath) return `page.locator('xpath=${xpath}')`;
+    return `page.locator('${css}')`;
+};
+
+const getSeleniumLocatorStr = (tagName, id, css, xpath) => {
+    if (id) return `By.id("${id}")`;
+    if (css && !css.includes(' > ')) {
+        if (css.includes('[name="')) {
+            const nameMatch = css.match(/name="([^"]+)"/);
+            if (nameMatch) return `By.name("${nameMatch[1]}")`;
+        }
+        return `By.cssSelector("${css}")`;
+    }
+    if (xpath) return `By.xpath("${xpath}")`;
+    return `By.cssSelector("${css}")`;
+};
+
 export const generateBoilerplateLocators = (htmlString) => {
     const parser = new DOMParser();
     const doc = parser.parseFromString(htmlString, 'text/html');
     const locators = [];
 
-    // Simple robust query for interactive elements
-    const elements = doc.querySelectorAll('button, input, textarea, select, a, [role="button"]');
+    // Expanded query for interactive elements, including OutSystems and general clickables
+    const elements = doc.querySelectorAll('button, input, textarea, select, a, [role="button"], [data-button], [data-link], [data-input], .cursorpointer, .clickable, .OSInteractive, [onclick]');
 
     elements.forEach((el, index) => {
         let confidence = 0.5;
@@ -68,6 +88,8 @@ export const generateBoilerplateLocators = (htmlString) => {
             id: id || null,
             css,
             xpath,
+            playwright: getPlaywrightLocatorStr(tagName, id, css, xpath, label),
+            selenium: getSeleniumLocatorStr(tagName, id, css, xpath),
             confidence,
             reason,
             snippet: el.outerHTML.slice(0, 400),

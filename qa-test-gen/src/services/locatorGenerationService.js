@@ -51,7 +51,9 @@ const improveLocatorsWithAI = async (htmlContent, weakLocators) => {
         type: l.type,
         snippet: l.snippet,
         current_css: l.css,
-        current_xpath: l.xpath
+        current_xpath: l.xpath,
+        current_playwright: l.playwright,
+        current_selenium: l.selenium
     }));
 
     const prompt = `
@@ -84,6 +86,8 @@ const improveLocatorsWithAI = async (htmlContent, weakLocators) => {
           "type": "<type from input>",
           "css": "<improved stable css selector>",
           "xpath": "<improved stable xpath>",
+          "playwright": "<improved modern Playwright code snippet, e.g. page.getByRole('button', { name: 'Submit' }) or page.locator('#id')>",
+          "selenium": "<improved Selenium locator statement, e.g. By.id('id') or By.cssSelector('[data-testid=\"test\"]')>",
           "confidence": <number between 0.7 and 0.95>,
           "reason": "<explanation of improvement>",
           "source": "AI"
@@ -101,7 +105,13 @@ const improveLocatorsWithAI = async (htmlContent, weakLocators) => {
     try {
         const aiLocators = JSON.parse(text);
         if (!Array.isArray(aiLocators)) throw new Error("AI response not an array");
-        return aiLocators.map(l => ({ ...l, source: 'AI' }));
+        return aiLocators.map(l => ({ 
+            ...l, 
+            source: 'AI',
+            // Ensure default values exist if AI fails to return the code strings
+            playwright: l.playwright || `page.locator('${l.css || l.xpath}')`,
+            selenium: l.selenium || `By.cssSelector('${l.css}')`
+        }));
     } catch (e) {
         console.error("Failed to parse AI response", text);
         throw e;
