@@ -48,7 +48,7 @@ export function extractTestCases(text) {
     return objects;
 }
 
-export const generateTestCases = async (requirement, requirementHistory = [], signal) => {
+export const generateTestCases = async (requirement, requirementHistory = [], businessRules = '', regressionContext = '', techDetails = '', signal) => {
     if (!API_KEY) {
         throw new Error("API Key is missing. Please check your .env file.");
     }
@@ -72,10 +72,25 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
             ? `\nPREVIOUS CONTEXT (Use this to understand the domain/project context if relevant):\n${requirementHistory.map((req, i) => `${i + 1}. ${req}`).join('\n')}\n`
             : '';
 
+        const rulesText = businessRules?.trim()
+            ? `\nBUSINESS RULES & CONSTRAINTS TO ENFORCE (You MUST create specific test cases to verify these rules):\n${businessRules.trim()}\n`
+            : '';
+
+        const regressionText = regressionContext?.trim()
+            ? `\nEXISTING FEATURES & REGRESSION CONTEXT (You MUST generate regression test cases verifying that this existing functionality is not broken):\n${regressionContext.trim()}\n`
+            : '';
+
+        const techText = techDetails?.trim()
+            ? `\nAPPLICATION BEHAVIOR & TECHNICAL DETAILS:\n${techDetails.trim()}\n`
+            : '';
+
         const getPrompt = (batchDesc) => {
             return `
       You are a Senior QA Test Architect.
       ${historyText}
+      ${rulesText}
+      ${regressionText}
+      ${techText}
       Generate 6 comprehensive, distinct FUNCTIONAL test cases focusing ONLY on: ${batchDesc}.
       Target the following requirement:
       "${sanitizedRequirement}"
@@ -95,7 +110,7 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
       - expectedResult (string: the precise, observable outcome — what the user should see or what the system should do)
       - priority (string: "P1-Critical", "P2-High", "P3-Medium", "P4-Low")
       - platform (string: "Web", "Mobile", "Both")
-      - testType (string: one of "Positive", "Negative", "Boundary", "Edge", "Security", "Navigation", "Field Validation", "Cancel")
+      - testType (string: one of "Positive", "Negative", "Boundary", "Edge", "Security", "Navigation", "Field Validation", "Cancel", "Regression")
 
       Make the test data realistic. Write steps in plain, detailed language so anyone reviewing them for the FIRST TIME understands exactly what to do and what to expect.
             `;
@@ -104,15 +119,19 @@ export const generateTestCases = async (requirement, requirementHistory = [], si
         const batches = [
             {
                 name: "Positive Scenarios / Happy Path",
-                prompt: getPrompt("Positive Scenarios / Happy Path")
+                prompt: getPrompt("Positive Scenarios / Happy Path (Verify core functionality when all business rules are met)")
             },
             {
-                name: "Negative Scenarios / Boundary Value Analysis / Edge Cases",
-                prompt: getPrompt("Negative Scenarios / Boundary Value Analysis / Edge Cases")
+                name: "Negative Scenarios / Field Validation / Access Controls",
+                prompt: getPrompt("Negative Scenarios, Field Validation (including read-only / non-editable fields), Access Control Violations, and Input Validation Error Handling (XSS, SQLi, privilege escalation)")
             },
             {
-                name: "Workflow Navigation / Field Validation / Cancel Actions / Security Controls",
-                prompt: getPrompt("Workflow Navigation, Field Validation (including read-only / non-editable fields), Cancel/Discard/Back actions, and Security/Access Control Scenarios")
+                name: "Boundary Values / Edge Cases",
+                prompt: getPrompt("Boundary Values and Edge Cases (Empty inputs, special characters, max/min limits, null values, timeouts, and parallel edits)")
+            },
+            {
+                name: "Regression Scenarios / System Integration",
+                prompt: getPrompt("Regression Scenarios and System Integration (Verify that the existing system features and dependencies remain fully functional and are not broken by the new changes)")
             }
         ];
 

@@ -30,7 +30,7 @@ const TestGenerator = () => {
         }
     };
 
-    const handleGenerate = async (requirement) => {
+    const handleGenerate = async (requirement, businessRules = '', regressionContext = '', techDetails = '') => {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
         abortControllerRef.current = controller;
@@ -40,7 +40,7 @@ const TestGenerator = () => {
         setGenSeconds(null);
         const startedAt = performance.now();
         try {
-            const results = await generateTestCases(requirement, requirementHistory, controller.signal);
+            const results = await generateTestCases(requirement, requirementHistory, businessRules, regressionContext, techDetails, controller.signal);
             setTestCases(prev => {
                 let maxNum = 0;
                 prev.forEach(tc => {
