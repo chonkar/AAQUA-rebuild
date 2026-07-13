@@ -140,7 +140,7 @@ const LiveConsole = ({ logs, isRunning }) => {
 // ─── MAIN PAGE ───
 // ═══════════════════════════════════════════
 const TestRunner = () => {
-    const { selectedProjectId } = useProject();
+    const { selectedProjectId, selectedProject } = useProject();
     const [projectPath, setProjectPath] = useState('');
     const [runMode, setRunMode] = useState('path'); // 'path' | 'zip' | 'git'
     const [zipFile, setZipFile] = useState(null);
@@ -174,9 +174,8 @@ const TestRunner = () => {
     // ── Auto-Heal state (isolated — no effect on existing run/retry flow) ──
     const [healCandidates, setHealCandidates] = useState([]); // healable tests from results
     const [selectedHeals, setSelectedHeals] = useState({});   // { testKey: true/false }
-    const [sharedPageUrl, setSharedPageUrl] = useState('');
-    const [perTestUrls, setPerTestUrls] = useState({});       // { testKey: url }
-    const [usePerTestUrls, setUsePerTestUrls] = useState(false);
+    const [extensionReady, setExtensionReady] = useState(false);
+    const [pendingHealTests, setPendingHealTests] = useState(null);
     const [batchId, setBatchId] = useState(null);
     const [batchProgress, setBatchProgress] = useState(null); // { total, processed, results }
     const [batchDone, setBatchDone] = useState(false);
@@ -329,16 +328,7 @@ const TestRunner = () => {
     // ── Batch heal polling ──
     const stopBatchPoll = () => { if (batchPollRef.current) { clearInterval(batchPollRef.current); batchPollRef.current = null; } };
 
-    const handleHealSelected = async () => {
-        const selected = healCandidates.filter(c => selectedHeals[c.key]);
-        if (selected.length === 0) return;
-        const tests = selected.map(c => ({
-            testName: c.name,
-            classname: c.classname,
-            errorMessage: c.errorMessage,
-            stackTrace: c.stackTrace,
-            pageUrl: usePerTestUrls ? (perTestUrls[c.key] || sharedPageUrl) : sharedPageUrl,
-        }));
+    const executeBatchHeal = useCallback(async (tests) => {
         try {
             const { batchId: bid } = await startBatchHeal(runId, tests);
             setBatchId(bid);
@@ -356,7 +346,67 @@ const TestRunner = () => {
                 } catch (e) { console.error('Batch poll error:', e); }
             }, 2000);
         } catch (e) { alert(`Failed to start batch heal: ${e.message}`); }
+    }, [runId]);
+
+    const handleHealSelected = async () => {
+        const selected = healCandidates.filter(c => selectedHeals[c.key]);
+        if (selected.length === 0) return;
+
+        const targetUrl = selectedProject?.target_url || '';
+        if (!targetUrl) {
+            alert("No target URL configured for this project. Please select a project with a target URL.");
+            return;
+        }
+
+        const tests = selected.map(c => ({
+            testName: c.name,
+            classname: c.classname,
+            errorMessage: c.errorMessage,
+            stackTrace: c.stackTrace,
+            pageUrl: targetUrl
+        }));
+
+        if (extensionReady) {
+            setPendingHealTests(tests);
+            window.postMessage({ source: 'aaqua-app', type: 'AAQUA_GET_DOM', url: targetUrl }, '*');
+        } else {
+            alert("AAQUA Extension not detected. Please install and enable the AAQUA Chrome extension to capture the DOM for auto-healing.");
+        }
     };
+
+    useEffect(() => {
+        const handleExtensionMsg = (e) => {
+            if (!e.data || e.data.source !== 'aaqua-extension') return;
+
+            if (e.data.type === 'AAQUA_EXTENSION_READY') {
+                setExtensionReady(true);
+            }
+
+            if (e.data.type === 'AAQUA_SET_DOM') {
+                if (e.data.html && pendingHealTests) {
+                    const testsWithDom = pendingHealTests.map(t => ({
+                        ...t,
+                        dom: e.data.html
+                    }));
+                    executeBatchHeal(testsWithDom);
+                    setPendingHealTests(null);
+                } else if (e.data.error) {
+                    alert(`Failed to capture DOM: ${e.data.error}`);
+                    setPendingHealTests(null);
+                } else {
+                    alert("Extension failed to capture DOM. Make sure the portal tab is open.");
+                    setPendingHealTests(null);
+                }
+            }
+        };
+
+        window.addEventListener('message', handleExtensionMsg);
+        window.postMessage({ source: 'aaqua-app', type: 'AAQUA_PING' }, '*');
+
+        return () => {
+            window.removeEventListener('message', handleExtensionMsg);
+        };
+    }, [pendingHealTests, executeBatchHeal]);
 
     const handleApplyHeal = async (candidate, suggestion) => {
         const key = candidate.key;
@@ -753,10 +803,15 @@ const TestRunner = () => {
             {healCandidates.length > 0 && status === 'completed' && (
                 <div className="ah-panel animate-fade-in">
                     <div className="ah-panel-header">
-                        <div className="ah-title">
+                        <div className="ah-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                             <Wrench size={18} />
                             <span>Auto-Heal Candidates</span>
                             <span className="ah-count-badge">{healCandidates.length} of {summary?.failed || 0} failures healable</span>
+                            {extensionReady ? (
+                                <span className="ah-extension-badge success" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold' }}>⚡ Extension Active</span>
+                            ) : (
+                                <span className="ah-extension-badge warning" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold' }}>⚠️ Install Extension to Auto-Heal</span>
+                            )}
                         </div>
                         <div className="ah-header-actions">
                             <button className="ah-select-all" onClick={() => {
@@ -769,28 +824,11 @@ const TestRunner = () => {
                             <button
                                 className="btn ah-heal-btn"
                                 onClick={handleHealSelected}
-                                disabled={!Object.values(selectedHeals).some(Boolean) || !!batchId || !sharedPageUrl.trim()}
+                                disabled={!Object.values(selectedHeals).some(Boolean) || !!batchId}
                             >
                                 <Wrench size={15} /> Heal Selected
                             </button>
                         </div>
-                    </div>
-
-                    {/* Shared URL input */}
-                    <div className="ah-url-row">
-                        <Clock size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                        <span className="ah-url-label">Page URL:</span>
-                        <input
-                            type="url"
-                            className="input-field ah-url-input"
-                            placeholder="https://your-app.com/page-under-test"
-                            value={sharedPageUrl}
-                            onChange={e => setSharedPageUrl(e.target.value)}
-                        />
-                        <label className="ah-per-test-toggle">
-                            <input type="checkbox" checked={usePerTestUrls} onChange={e => setUsePerTestUrls(e.target.checked)} />
-                            Different pages
-                        </label>
                     </div>
 
                     {/* Candidates table */}
@@ -810,15 +848,7 @@ const TestRunner = () => {
                                         <span className="ah-test-name">{c.name}</span>
                                         <span className="ah-exception">{c.errorMessage?.split(':')[0] || 'Element not found'}</span>
                                     </div>
-                                    {usePerTestUrls && (
-                                        <input
-                                            type="url"
-                                            className="input-field ah-per-url"
-                                            placeholder={sharedPageUrl || 'https://...'}
-                                            value={perTestUrls[c.key] || ''}
-                                            onChange={e => setPerTestUrls(prev => ({ ...prev, [c.key]: e.target.value }))}
-                                        />
-                                    )}
+                                    {/* DOM is automatically captured via AAQUA extension */}
                                     {/* Batch status badge */}
                                     {batchItem && (
                                         <span className={`ah-status-badge ah-status-${batchItem.status}`}>
