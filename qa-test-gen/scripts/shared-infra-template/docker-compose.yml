@@ -1,7 +1,8 @@
-# Shared infrastructure tier on host aaqua.aaseya.com (:8443 public TLS).
+# Shared infrastructure tier — IP-based deployment on :443 with self-signed TLS.
+# Public URL: https://8.231.124.161/ (SPA at /aaqua/, Keycloak at /auth/).
 # - postgres-17:    multi-tenant cluster, INTERNAL ONLY (5443 = tooling only)
 # - keycloak:       multi-realm IAM, INTERNAL ONLY (reached via shared-nginx)
-# - nginx:          public edge on :80 (later :443), routes path-prefix per tenant
+# - nginx:          public edge on :80 (redirect to https) + :443 (self-signed TLS)
 #
 # Bring up:    docker compose up -d
 # Tear down:   docker compose down       (-v also wipes Postgres + Keycloak data)
@@ -53,8 +54,10 @@ services:
       # frontchannel endpoints (login page, logout). Keep KC_PUBLIC_BASE_URL
       # (full URL) separate — that one's used by render-realm.sh, not by Keycloak.
       # Non-default port goes in KC_HOSTNAME_PORT, not KC_HOSTNAME.
-      KC_HOSTNAME: ${KC_HOSTNAME:-aaqua.aaseya.com}
-      KC_HOSTNAME_PORT: ${KC_HOSTNAME_PORT:-8443}
+      KC_HOSTNAME: ${KC_HOSTNAME:-8.231.124.161}
+      # KC_HOSTNAME_PORT deliberately UNSET — serving on standard 443. Set only for
+      # non-default ports (e.g. `KC_HOSTNAME_PORT=8443`). See CLAUDE.md gotcha #2.
+      # KC_HOSTNAME_PORT: ${KC_HOSTNAME_PORT:-8443}
       # KC_PROXY_HEADERS replaces the deprecated KC_PROXY=edge (gone in Keycloak 26).
       KC_PROXY_HEADERS: xforwarded
       # STRICT=true enforces hostname match on frontchannel URLs (login, logout); STRICT_BACKCHANNEL=false
@@ -82,7 +85,7 @@ services:
     container_name: shared-nginx
     ports:
       - "80:80"
-      # - "443:443"           # uncomment when TLS lands (out-of-scope here)
+      - "443:443"
     environment:
       NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx/tenants.d
     volumes:
