@@ -3,6 +3,7 @@ import { QueryTypes } from 'sequelize';
 import crypto from 'crypto';
 import UserActivity from '../server/models/UserActivity.js'; // Ensure UserActivity is registered
 
+
 async function backfill() {
     try {
         console.log("Syncing database schema to ensure 'name' column is created...");
