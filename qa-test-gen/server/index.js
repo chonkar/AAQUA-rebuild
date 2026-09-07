@@ -19,6 +19,7 @@ import governanceRoutes from './routes/governanceRoutes.js';
 import jiraRoutes from './routes/jiraRoutes.js';
 import readinessRoutes from './routes/readinessRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import eventRoutes from './routes/eventRoutes.js';
 import { calculateAndSaveReadiness } from './services/readinessService.js';
 import { parseSpec } from './services/apiSpecService.js';
 import { generateApiTestCases } from './services/apiTestGenService.js';
@@ -3637,6 +3638,13 @@ app.use('/api/security/governance', securityRateLimiter, governanceRoutes);
 app.use('/api/jira', securityRateLimiter, jiraRoutes);
 app.use('/api/readiness', securityRateLimiter, readinessRoutes);
 app.use('/api/admin/usage', securityRateLimiter, adminRoutes);
+
+// ─── Job progress stream (SSE) ────────────
+// No `authenticateToken` here: the browser EventSource API cannot set an
+// Authorization header, so the route verifies a token from ?access_token=
+// itself via the shared `verifyToken` core. Also no rate limiter — a long-
+// lived stream per job is the expected usage pattern.
+app.use('/api/events', eventRoutes);
 
 // ZAP health check (no auth required)
 app.get('/api/security/zap/health', async (req, res) => {
