@@ -38,6 +38,29 @@ test('proxies prompt upstream with stream:true and relays token chunks', async (
   expect(JSON.parse(upstreamCall[1].body).stream).toBe(true)
 })
 
+test('reasoningEffort is forwarded upstream as reasoning_effort', async () => {
+  fetch.mockClear()
+  await request(makeApp()).post('/api/llm/generate')
+    .send({ prompt: 'hi', reasoningEffort: 'low' }).expect(200)
+  const body = JSON.parse(fetch.mock.calls[0][1].body)
+  expect(body.reasoning_effort).toBe('low')
+})
+
+test('omitting reasoningEffort leaves reasoning_effort out of the upstream body', async () => {
+  fetch.mockClear()
+  await request(makeApp()).post('/api/llm/generate').send({ prompt: 'hi' }).expect(200)
+  const body = JSON.parse(fetch.mock.calls[0][1].body)
+  expect(body).not.toHaveProperty('reasoning_effort')
+})
+
+test('an invalid reasoningEffort is a 400 and never reaches upstream', async () => {
+  fetch.mockClear()
+  const res = await request(makeApp()).post('/api/llm/generate')
+    .send({ prompt: 'hi', reasoningEffort: 'extreme' }).expect(400)
+  expect(res.body.error).toMatch(/reasoningEffort must be one of/)
+  expect(fetch).not.toHaveBeenCalled()
+})
+
 test('missing prompt is a 400', async () => {
   await request(makeApp()).post('/api/llm/generate').send({}).expect(400)
 })

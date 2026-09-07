@@ -15,6 +15,10 @@ const LLM_ENDPOINT = process.env.VITE_LLM_ENDPOINT || process.env.LLM_ENDPOINT |
 const LLM_MODEL = process.env.VITE_LLM_MODEL || process.env.LLM_MODEL || 'gemma-4';
 const API_KEY = process.env.VITE_LLM_API_KEY || process.env.LLM_API_KEY;
 
+// gpt-oss and friends accept only these three levels; anything else is a
+// client bug worth surfacing as a 400 rather than forwarding upstream.
+const VALID_REASONING_EFFORTS = ['low', 'medium', 'high'];
+
 const MIN_MAX_TOKENS = 1;
 const MAX_MAX_TOKENS = 32000;
 const DEFAULT_MAX_TOKENS = 12000;
@@ -34,12 +38,18 @@ function clampMaxTokens(value) {
  * verbatim. Keeps the LLM API key server-side only.
  */
 router.post('/generate', authenticateToken, async (req, res) => {
-    const { prompt, maxTokens, temperature } = req.body ?? {};
+    const { prompt, maxTokens, temperature, reasoningEffort } = req.body ?? {};
     if (!prompt || typeof prompt !== 'string' || prompt.trim() === '') {
         return res.status(400).json({ error: 'prompt is required' });
     }
     if (temperature !== undefined && !Number.isFinite(temperature)) {
         return res.status(400).json({ error: 'temperature must be a finite number' });
+    }
+    if (reasoningEffort !== undefined && reasoningEffort !== null
+        && !VALID_REASONING_EFFORTS.includes(reasoningEffort)) {
+        return res.status(400).json({
+            error: `reasoningEffort must be one of ${VALID_REASONING_EFFORTS.join(', ')}`,
+        });
     }
 
     const clampedMaxTokens = clampMaxTokens(maxTokens ?? DEFAULT_MAX_TOKENS);
@@ -57,6 +67,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
                 messages: [{ role: 'user', content: prompt }],
                 max_tokens: clampedMaxTokens,
                 ...(temperature !== undefined && { temperature }),
+                ...(reasoningEffort && { reasoning_effort: reasoningEffort }),
                 stream: true,
             }),
         });

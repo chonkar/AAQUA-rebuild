@@ -56,6 +56,17 @@ test('parses frames split across chunk boundaries (mid-JSON split) and reports t
   expect(full).toBe('Hello world')
 })
 
+test('reasoningEffort and the other generation params are sent in the POST body', async () => {
+  const doneFrame = 'data: [DONE]\n\n'
+  const fetchMock = fetchReturning([doneFrame])
+  global.fetch = fetchMock
+
+  await streamLLM({ prompt: 'hi', maxTokens: 4321, temperature: 0.2, reasoningEffort: 'low' })
+
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+  expect(body).toMatchObject({ prompt: 'hi', maxTokens: 4321, temperature: 0.2, reasoningEffort: 'low' })
+})
+
 test('a stream that ends without [DONE] throws "ended unexpectedly"', async () => {
   const frame1 = 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'
   global.fetch = fetchReturning([frame1]) // no [DONE] frame

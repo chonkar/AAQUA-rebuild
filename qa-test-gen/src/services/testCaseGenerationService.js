@@ -4,9 +4,13 @@ import { streamLLM } from '../utils/llmStream.js';
 // Kept in sync with the values the (now removed) browser-side LocalLLM client
 // used for this tool: src/utils/llmClient.js defaulted to max_tokens 12000 /
 // temperature 0.2, so the streaming proxy is given the same budget rather than
-// falling back to its own defaults.
+// falling back to its own defaults. `reasoning_effort: 'low'` came from the
+// same call site and matters just as much: gpt-oss is a reasoning model and
+// without the cap it can burn all 12000 tokens on internal reasoning and
+// return empty content (finish_reason='length') for every batch.
 const MAX_TOKENS = 12000;
 const TEMPERATURE = 0.2;
+const REASONING_EFFORT = 'low';
 
 // Parse the model's JSON array of test cases, tolerant of markdown fences,
 // surrounding prose, and — importantly — a TRUNCATED response. Local models can
@@ -175,6 +179,7 @@ export const generateTestCases = async ({
                     prompt: b.prompt,
                     maxTokens: MAX_TOKENS,
                     temperature: TEMPERATURE,
+                    reasoningEffort: REASONING_EFFORT,
                     signal,
                     onToken: (token, full) => {
                         partials[i] = full;

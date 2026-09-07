@@ -25,6 +25,11 @@ import { getAccessToken, API_BASE } from './apiClient.js'
  * @param {string} opts.prompt - The user prompt to send.
  * @param {number} [opts.maxTokens] - Upper bound on generated tokens.
  * @param {number} [opts.temperature] - Sampling temperature.
+ * @param {'low'|'medium'|'high'} [opts.reasoningEffort] - Reasoning budget for
+ *   reasoning models (gpt-oss). Without it such a model can spend the whole
+ *   token budget thinking and return empty content, so callers that want an
+ *   answer rather than a deliberation should pass 'low'. Forwarded by the
+ *   proxy as the upstream `reasoning_effort` field; omitted when undefined.
  * @param {(token: string, full: string) => void} [opts.onToken] - Called with
  *   each incremental token and the accumulated text so far.
  * @param {AbortSignal} [opts.signal] - Optional abort signal to cancel the request.
@@ -32,7 +37,7 @@ import { getAccessToken, API_BASE } from './apiClient.js'
  * @throws {Error} If not authenticated, the request fails, the upstream
  *   relays an error frame, or the stream ends without a `[DONE]` frame.
  */
-export async function streamLLM({ prompt, maxTokens, temperature, onToken, signal }) {
+export async function streamLLM({ prompt, maxTokens, temperature, reasoningEffort, onToken, signal }) {
   const accessToken = getAccessToken()
   if (!accessToken) {
     throw new Error('Not authenticated — please sign in again')
@@ -41,7 +46,7 @@ export async function streamLLM({ prompt, maxTokens, temperature, onToken, signa
   const res = await fetch(`${API_BASE}/llm/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ prompt, maxTokens, temperature }),
+    body: JSON.stringify({ prompt, maxTokens, temperature, reasoningEffort }),
     signal,
   })
   if (!res.ok) throw new Error(`LLM request failed: ${res.status}`)
