@@ -454,7 +454,7 @@ The shared wizard every tool adopts: **Input → Configure → Generate → Revi
   steps={[
     { key: 'input',     label: 'Input',     content: <.../>, canAdvance: bool },
     { key: 'configure', label: 'Configure', content: <.../>, canAdvance: bool },   // optional step
-    { key: 'generate',  label: 'Generate',  content: <.../>, autoAdvanceWhen: bool },
+    { key: 'generate',  label: 'Generate',  content: <.../>, autoAdvanceWhen: bool },   // reserved — caller-implemented via effect + onStepChange; the frame does not consume it
     { key: 'review',    label: 'Review',    content: <.../> },
     { key: 'export',    label: 'Export',    content: <.../> },
   ]}

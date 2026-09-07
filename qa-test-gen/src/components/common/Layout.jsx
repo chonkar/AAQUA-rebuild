@@ -69,7 +69,10 @@ const Layout = ({ children, theme, toggleTheme }) => {
           )}
           <BrandMark />
           <Box sx={{ display: { xs: 'none', sm: 'flex' }, flexDirection: 'column', lineHeight: 1.1, mr: 1 }}>
-            <Typography component="h1" sx={{ fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.1 }}>
+            {/* Not an h1: each page's ToolWorkflow (or page heading) owns the
+                sole document h1 for correct outline/accessibility; the brand
+                mark here is chrome, not page content. */}
+            <Typography component="div" sx={{ fontSize: '1.4rem', fontWeight: 700, lineHeight: 1.1 }}>
               AAQUA
             </Typography>
             <Typography
