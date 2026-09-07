@@ -19,32 +19,59 @@ function emit(job) {
     });
 }
 
+const TERMINAL_STATUSES = new Set(['completed', 'failed']);
+
+// Contract split: createJob/getJob are called directly from request handlers
+// that need to surface a 5xx on DB failure, so they throw normally. The three
+// mutators below are typically invoked from detached background runners (no
+// caller waiting to turn a rejection into a response) — an unhandled
+// rejection there would crash the process, which violates the app-wide "DB
+// failure is non-fatal" invariant. They catch, warn, and resolve null instead.
+
 export async function createJob({ type, ownerId = null, payload = null }) {
     return Job.create({ type, owner_id: ownerId, payload });
 }
 
 export async function updateProgress(id, { progress, phase }) {
-    const job = await Job.findByPk(id);
-    if (!job) return null;
-    await job.update({ status: 'running', progress, ...(phase !== undefined && { phase }) });
-    emit(job);
-    return job;
+    try {
+        const job = await Job.findByPk(id);
+        if (!job) return null;
+        if (TERMINAL_STATUSES.has(job.status)) return job; // first terminal state wins; no re-emit
+        await job.update({ status: 'running', progress, ...(phase !== undefined && { phase }) });
+        emit(job);
+        return job;
+    } catch (err) {
+        console.warn(`[jobStore] updateProgress failed for job ${id}:`, err.message);
+        return null;
+    }
 }
 
 export async function completeJob(id, result) {
-    const job = await Job.findByPk(id);
-    if (!job) return null;
-    await job.update({ status: 'completed', progress: 100, result });
-    emit(job);
-    return job;
+    try {
+        const job = await Job.findByPk(id);
+        if (!job) return null;
+        if (TERMINAL_STATUSES.has(job.status)) return job; // first terminal state wins; no re-emit
+        await job.update({ status: 'completed', progress: 100, result });
+        emit(job);
+        return job;
+    } catch (err) {
+        console.warn(`[jobStore] completeJob failed for job ${id}:`, err.message);
+        return null;
+    }
 }
 
 export async function failJob(id, err) {
-    const job = await Job.findByPk(id);
-    if (!job) return null;
-    await job.update({ status: 'failed', error: String(err?.message ?? err) });
-    emit(job);
-    return job;
+    try {
+        const job = await Job.findByPk(id);
+        if (!job) return null;
+        if (TERMINAL_STATUSES.has(job.status)) return job; // first terminal state wins; no re-emit
+        await job.update({ status: 'failed', error: String(err?.message ?? err) });
+        emit(job);
+        return job;
+    } catch (e) {
+        console.warn(`[jobStore] failJob failed for job ${id}:`, e.message);
+        return null;
+    }
 }
 
 export async function getJob(id) {

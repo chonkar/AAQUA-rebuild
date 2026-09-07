@@ -11,10 +11,12 @@ const Job = sequelize.define('jobs', {
         type: DataTypes.STRING,
         allowNull: false,
     },
+    // pending|running|completed|failed
     status: {
         type: DataTypes.STRING,
         allowNull: false,
         defaultValue: 'pending',
+        validate: { isIn: [['pending', 'running', 'completed', 'failed']] },
     },
     progress: {
         type: DataTypes.INTEGER,

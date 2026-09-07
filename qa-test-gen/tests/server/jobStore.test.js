@@ -1,10 +1,11 @@
 import { expect, test, vi, beforeEach } from 'vitest'
 
 const rows = new Map()
+let n = 0
 vi.mock('../../server/models/index.js', () => ({
   Job: {
     create: vi.fn(async (data) => {
-      const row = { id: 'job-1', status: 'pending', progress: 0, ...data,
+      const row = { id: `job-${++n}`, status: 'pending', progress: 0, ...data,
         update: vi.fn(async function (patch) { Object.assign(this, patch); rows.set(this.id, this); return this }) }
       rows.set(row.id, row)
       return row
@@ -14,13 +15,20 @@ vi.mock('../../server/models/index.js', () => ({
 }))
 
 import { createJob, updateProgress, completeJob, failJob, getJob, jobEvents } from '../../server/services/jobStore.js'
+import { Job } from '../../server/models/index.js'
 
-beforeEach(() => rows.clear())
+beforeEach(() => {
+  rows.clear()
+  n = 0
+  vi.clearAllMocks()
+})
 
 test('createJob returns a pending job and emits nothing yet', async () => {
+  const emitSpy = vi.spyOn(jobEvents, 'emit')
   const job = await createJob({ type: 'test-cases', ownerId: 'u1', payload: { req: 'x' } })
   expect(job.status).toBe('pending')
   expect(job.id).toBeTruthy()
+  expect(emitSpy).not.toHaveBeenCalled()
 })
 
 test('updateProgress persists and emits an event keyed by job id', async () => {
@@ -41,4 +49,22 @@ test('completeJob and failJob are terminal and emitted', async () => {
   const failed = await getJob(b.id)
   expect(failed.status).toBe('failed')
   expect(failed.error).toMatch('boom')
+})
+
+test('terminal-state guard: a late updateProgress after completeJob is a no-op', async () => {
+  const job = await createJob({ type: 't' })
+  await completeJob(job.id, { items: [1] })
+  const seen = []
+  jobEvents.on(`job:${job.id}`, (e) => seen.push(e))
+  const result = await updateProgress(job.id, { progress: 40, phase: 'late tick' })
+  expect(result.status).toBe('completed')
+  expect((await getJob(job.id)).status).toBe('completed')
+  expect(seen).toHaveLength(0)
+})
+
+test('updateProgress resolves null instead of rejecting when the DB call fails', async () => {
+  const job = await createJob({ type: 't' })
+  Job.findByPk.mockRejectedValueOnce(new Error('connection terminated'))
+  const result = await updateProgress(job.id, { progress: 10 })
+  expect(result).toBeNull()
 })
