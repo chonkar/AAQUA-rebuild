@@ -10,6 +10,10 @@ import { subscribeToJob } from '../../utils/sseClient.js'
  *   (phase label + determinate progress bar).
  * - LLM-stream mode: pass `streamText` (the caller's own accumulated
  *   streamed text) to render a live monospace output pane.
+ *
+ * `onRetry` is expected to start a new job; the component resets when
+ * `jobId` changes (progress, phase, and any prior error are cleared so a
+ * retry never shows stale state from the failed attempt).
  */
 export default function GenerationProgress({ jobId, streamText, onDone, onRetry }) {
   const [progress, setProgress] = useState(0)
@@ -53,9 +57,14 @@ export default function GenerationProgress({ jobId, streamText, onDone, onRetry 
     })
   }, [jobId])
 
+  // Auto-scroll only when already near the bottom, so a user who has
+  // scrolled up to read earlier output isn't yanked back down on every
+  // new streamed chunk.
   useEffect(() => {
     const el = streamRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    if (nearBottom) el.scrollTop = el.scrollHeight
   }, [streamText])
 
   if (error) {
@@ -76,10 +85,11 @@ export default function GenerationProgress({ jobId, streamText, onDone, onRetry 
     <Box>
       {jobId && (
         <>
-          <Typography variant="body2" sx={{ mb: 1 }}>{phase}</Typography>
+          <Typography variant="body2" aria-live="polite" sx={{ mb: 1 }}>{phase}</Typography>
           <LinearProgress
             variant="determinate"
             value={progress}
+            aria-label="Generation progress"
             sx={{ mb: 2, height: 8, borderRadius: 4 }}
           />
         </>
@@ -100,6 +110,7 @@ export default function GenerationProgress({ jobId, streamText, onDone, onRetry 
           {streamText}
           <Box
             component="span"
+            aria-hidden="true"
             sx={{ animation: 'blink 1s step-end infinite', '@keyframes blink': { '50%': { opacity: 0 } } }}
           >
             ▌

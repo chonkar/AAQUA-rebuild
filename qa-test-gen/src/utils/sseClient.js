@@ -21,7 +21,6 @@ import { getAccessToken, API_BASE } from './apiClient.js'
  * response, `readyState === CLOSED`). Only the latter is reported to the
  * caller via `onError` — a transient reconnect is not a user-facing failure.
  *
-
  * If no access token is available (e.g. the user is logged out), no
  * connection is attempted — `onError` fires asynchronously (via
  * queueMicrotask, so it never runs before the caller gets the unsubscribe
