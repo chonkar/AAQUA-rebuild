@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { Sparkles, ShieldCheck, Sun, Moon, LogIn, LogOut, User as UserIcon, Plus, X, Loader2, Link2 } from 'lucide-react';
 import { useAuth } from 'react-oidc-context';
-import { useTheme } from '../../hooks/useTheme';
 import { useProject } from '../../context/ProjectContext';
 
-const Header = () => {
-  const { theme, toggleTheme } = useTheme();
+// theme/toggleTheme are owned by App.jsx (via the useTheme hook) and threaded
+// down through Layout, rather than called here directly, so the MUI
+// ThemeProvider (also wired in App.jsx from the same state) stays in sync
+// with this toggle instead of holding an independent, out-of-sync copy.
+const Header = ({ theme, toggleTheme }) => {
   const auth = useAuth();
   const email = auth.user?.profile?.email;
   const token = auth.user?.access_token || '';
