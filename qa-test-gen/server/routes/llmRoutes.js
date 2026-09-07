@@ -1,5 +1,8 @@
+import dotenv from 'dotenv';
 import { Router } from 'express';
 import { authenticateToken } from '../middleware/auth.js';
+
+dotenv.config();
 
 const router = Router();
 
@@ -34,6 +37,9 @@ router.post('/generate', authenticateToken, async (req, res) => {
     const { prompt, maxTokens, temperature } = req.body ?? {};
     if (!prompt || typeof prompt !== 'string' || prompt.trim() === '') {
         return res.status(400).json({ error: 'prompt is required' });
+    }
+    if (temperature !== undefined && !Number.isFinite(temperature)) {
+        return res.status(400).json({ error: 'temperature must be a finite number' });
     }
 
     const clampedMaxTokens = clampMaxTokens(maxTokens ?? DEFAULT_MAX_TOKENS);
@@ -70,23 +76,29 @@ router.post('/generate', authenticateToken, async (req, res) => {
     });
 
     const reader = upstream.body.getReader();
-    const decoder = new TextDecoder();
 
-    // Registered before the read loop (not after — the loop blocks until the
-    // stream ends, so a post-loop listener would be dead code on disconnect).
-    req.on('close', () => {
-        reader.cancel().catch(() => {});
+    // `req.on('close')` looks like the right disconnect hook but is dead code
+    // here: per Node 16+ semantics it fires once the request MESSAGE finishes
+    // arriving — which happens while we're still awaiting the upstream fetch,
+    // long before this listener is even attached — and it never fires again
+    // on a later socket abort. `res.on('close')` is what actually fires when
+    // the client goes away mid-response (abort, navigation, tab close), so
+    // that's the one that can cancel the upstream reader.
+    res.on('close', () => {
+        if (!res.writableEnded) reader.cancel().catch(() => {});
     });
 
     try {
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            res.write(decoder.decode(value, { stream: true })); // relay OpenAI SSE chunks verbatim
+            res.write(value); // relay OpenAI SSE bytes verbatim — no decode/re-encode needed
         }
     } catch {
-        // Reader aborted (client disconnect) or upstream socket error — nothing
-        // more to relay.
+        // Upstream stream broke mid-flight (network error, upstream crash).
+        // Tell the client explicitly rather than just closing — a silent
+        // res.end() here is indistinguishable from a clean [DONE] finish.
+        res.write('data: {"error":"upstream stream terminated"}\n\n');
     } finally {
         res.end();
     }
