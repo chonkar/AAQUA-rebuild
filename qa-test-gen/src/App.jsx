@@ -10,6 +10,7 @@ import ProtectedRoute from './auth/ProtectedRoute';
 import AuthCallback from './auth/AuthCallback';
 import Layout from './components/common/Layout';
 import RequireProject from './components/common/RequireProject';
+import { NotificationProvider } from './components/common/NotificationProvider';
 import Home from './pages/Home';
 import TestGenerator from './pages/TestGenerator';
 import TestPlanGenerator from './pages/TestPlanGenerator';
@@ -45,36 +46,38 @@ function App() {
   return (
     <ThemeProvider theme={getTheme(theme)}>
       <CssBaseline />
-      <AuthProvider {...oidcConfig}>
-        <ProjectProvider>
-          <ApiTestGenProvider>
-            <Router basename={import.meta.env.BASE_URL.replace(/\/$/, '') || undefined}>
-              <Layout theme={theme} toggleTheme={toggleTheme}>
-                <Routes>
-                  <Route path="/" element={authed(<ReleaseReadiness />)} />
-                  <Route path="/services" element={authed(<Home />)} />
-                  <Route path="/auth/callback" element={<AuthCallback />} />
-                  <Route path="/test-generator" element={scoped(<TestGenerator />)} />
-                  <Route path="/test-plan-generator" element={scoped(<TestPlanGenerator />)} />
-                  <Route path="/test-data-generator" element={scoped(<TestDataGenerator />)} />
-                  <Route path="/locator-generator" element={scoped(<LocatorGenerator />)} />
-                  <Route path="/test-converter" element={scoped(<TestConverter />)} />
-                  <Route path="/framework-generator" element={scoped(<FrameworkGenerator />)} />
-                  <Route path="/api-test-generator" element={scoped(<ApiTestGenerator />)} />
-                  <Route path="/test-runner" element={scoped(<TestRunner />)} />
-                  <Route path="/localization" element={scoped(<LocalizationTester />)} />
-                  <Route path="/accessibility-scanner" element={scoped(<AccessibilityScanner />)} />
-                  <Route path="/performance-scanner" element={scoped(<PerformanceScanner />)} />
-                  <Route path="/security-scanner" element={scopedAdmin(<SecurityScanner />)} />
-                  <Route path="/usage-dashboard" element={kavitaOnly(<UsageDashboard />)} />
-                  {/* Fallback */}
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-              </Layout>
-            </Router>
-          </ApiTestGenProvider>
-        </ProjectProvider>
-      </AuthProvider>
+      <NotificationProvider>
+        <AuthProvider {...oidcConfig}>
+          <ProjectProvider>
+            <ApiTestGenProvider>
+              <Router basename={import.meta.env.BASE_URL.replace(/\/$/, '') || undefined}>
+                <Layout theme={theme} toggleTheme={toggleTheme}>
+                  <Routes>
+                    <Route path="/" element={authed(<ReleaseReadiness />)} />
+                    <Route path="/services" element={authed(<Home />)} />
+                    <Route path="/auth/callback" element={<AuthCallback />} />
+                    <Route path="/test-generator" element={scoped(<TestGenerator />)} />
+                    <Route path="/test-plan-generator" element={scoped(<TestPlanGenerator />)} />
+                    <Route path="/test-data-generator" element={scoped(<TestDataGenerator />)} />
+                    <Route path="/locator-generator" element={scoped(<LocatorGenerator />)} />
+                    <Route path="/test-converter" element={scoped(<TestConverter />)} />
+                    <Route path="/framework-generator" element={scoped(<FrameworkGenerator />)} />
+                    <Route path="/api-test-generator" element={scoped(<ApiTestGenerator />)} />
+                    <Route path="/test-runner" element={scoped(<TestRunner />)} />
+                    <Route path="/localization" element={scoped(<LocalizationTester />)} />
+                    <Route path="/accessibility-scanner" element={scoped(<AccessibilityScanner />)} />
+                    <Route path="/performance-scanner" element={scoped(<PerformanceScanner />)} />
+                    <Route path="/security-scanner" element={scopedAdmin(<SecurityScanner />)} />
+                    <Route path="/usage-dashboard" element={kavitaOnly(<UsageDashboard />)} />
+                    {/* Fallback */}
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </Layout>
+              </Router>
+            </ApiTestGenProvider>
+          </ProjectProvider>
+        </AuthProvider>
+      </NotificationProvider>
     </ThemeProvider>
   );
 }
