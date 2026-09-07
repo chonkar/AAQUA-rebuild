@@ -16,6 +16,10 @@ export function getTheme(mode = 'dark') {
   return createTheme({
     palette: {
       mode,
+      // Light mode intentionally keeps the same primary accent (#6d28d9) as dark
+      // mode: index.css uses the lighter #7c3aed for light mode, but on MUI
+      // chrome (AppBar text, contained buttons) the darker shade holds contrast
+      // against white surfaces. #7c3aed stays available as primary.light.
       primary: { main: brand.accent, dark: '#5b21b6', light: brand.accentHover },
       background: dark
         ? { default: brand.bgDark, paper: brand.paperDark }

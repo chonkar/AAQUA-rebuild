@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from 'react-oidc-context';
 import { ThemeProvider } from '@mui/material/styles';
@@ -42,9 +42,12 @@ function App() {
   // MUI ThemeProvider and the legacy CSS-variable toggle (Header's button)
   // share the same state instead of drifting out of sync.
   const { theme, toggleTheme } = useTheme();
+  // Memoised so a re-render of App doesn't hand ThemeProvider a brand-new theme
+  // object (which would invalidate every emotion cache entry downstream).
+  const muiTheme = useMemo(() => getTheme(theme), [theme]);
 
   return (
-    <ThemeProvider theme={getTheme(theme)}>
+    <ThemeProvider theme={muiTheme}>
       <CssBaseline />
       <NotificationProvider>
         <AuthProvider {...oidcConfig}>

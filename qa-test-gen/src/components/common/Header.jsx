@@ -1,5 +1,25 @@
 import React, { useState } from 'react';
-import { Sparkles, ShieldCheck, Sun, Moon, LogIn, LogOut, User as UserIcon, Plus, X, Loader2, Link2 } from 'lucide-react';
+import {
+  Avatar,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  IconButton,
+  ListItemIcon,
+  Menu,
+  MenuItem,
+  Select,
+  TextField,
+  Tooltip,
+  Typography,
+} from '@mui/material';
+import { Sparkles, ShieldCheck, Sun, Moon, LogIn, LogOut, User as UserIcon, Plus, Link2 } from 'lucide-react';
 import { useAuth } from 'react-oidc-context';
 import { useProject } from '../../context/ProjectContext';
 
@@ -7,7 +27,9 @@ import { useProject } from '../../context/ProjectContext';
 // down through Layout, rather than called here directly, so the MUI
 // ThemeProvider (also wired in App.jsx from the same state) stays in sync
 // with this toggle instead of holding an independent, out-of-sync copy.
-const Header = ({ theme, toggleTheme }) => {
+// Defaults keep isolated renders (tests, storybook-style previews) from
+// crashing when the props aren't supplied.
+const Header = ({ theme = 'dark', toggleTheme = () => {} }) => {
   const auth = useAuth();
   const email = auth.user?.profile?.email;
   const token = auth.user?.access_token || '';
@@ -27,6 +49,9 @@ const Header = ({ theme, toggleTheme }) => {
   const [jiraEmail, setJiraEmail] = useState('');
   const [jiraToken, setJiraToken] = useState('');
   const [jiraProjectKey, setJiraProjectKey] = useState('');
+
+  // User menu anchor (replaces the always-expanded email + Sign Out pill).
+  const [userMenuAnchor, setUserMenuAnchor] = useState(null);
 
   // Read config on open
   const openJiraModal = () => {
@@ -114,7 +139,7 @@ const Header = ({ theme, toggleTheme }) => {
       }
 
       const data = await res.json();
-      
+
       // Refresh global projects list
       if (refreshProjects) {
         await refreshProjects();
@@ -138,621 +163,254 @@ const Header = ({ theme, toggleTheme }) => {
     }
   };
 
+  // Guard against an out-of-range Select value (MUI warns when `value` has no
+  // matching MenuItem — e.g. before ProjectContext has finished loading).
+  const projectValue = projects.some((p) => String(p.id) === String(selectedProjectId))
+    ? selectedProjectId
+    : '';
+
   return (
-    <header className="app-header">
-      <div className="container-fluid header-content">
-        <div className="logo-section">
-          <div className="logo-icon" style={{ background: 'none', boxShadow: 'none', padding: 0 }}>
-            <svg className="logo-icon-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ width: '38px', height: '38px', display: 'block' }}>
-              <defs>
-                <linearGradient id="logo-grad-1" x1="0%" y1="100%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="var(--logo-gradient-1-start)" />
-                  <stop offset="100%" stopColor="var(--logo-gradient-1-end)" />
-                </linearGradient>
-                <linearGradient id="logo-grad-2" x1="0%" y1="100%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="var(--logo-gradient-2-start)" />
-                  <stop offset="100%" stopColor="var(--logo-gradient-2-end)" />
-                </linearGradient>
-              </defs>
-              <path d="M25 80 L48 24 C49.5 20.5, 51.5 20.5, 53 24 L76 80 L62 80 L50.5 53 L39 80 Z" fill="url(#logo-grad-1)" />
-              <path d="M43 80 L50.5 61 L58 80 L51.5 80 L50.5 77 L49.5 80 Z" fill="url(#logo-grad-2)" opacity="0.85" />
-            </svg>
-          </div>
-          <div className="brand-text-container" style={{ display: 'flex', flexDirection: 'column', lineHeight: '1.1' }}>
-            <h1 className="app-title" style={{ fontSize: '1.4rem', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>
-              AAQUA
-            </h1>
-            <span className="brand-subtitle" style={{ fontSize: '0.625rem', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: '2px' }}>
-              AASEYA AI Quality Assurance
-            </span>
-          </div>
-
-          <div className="project-selector-wrapper" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginLeft: '0.75rem' }}>
-            <select
-              className="project-select-dropdown"
-              value={selectedProjectId}
-              onChange={(e) => setSelectedProjectId(e.target.value)}
-              title="Active Bound Project Context"
-            >
-              {projects.length === 0 ? (
-                <option value="">No Projects Found</option>
-              ) : (
-                projects.map(p => (
-                  <option key={p.id} value={p.id} style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>
+    <>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexGrow: 1, minWidth: 0 }}>
+        <Tooltip title="Active Bound Project Context">
+          <Select
+            size="small"
+            displayEmpty
+            value={projectValue}
+            onChange={(e) => setSelectedProjectId(e.target.value)}
+            inputProps={{ 'aria-label': 'Active project' }}
+            sx={{ minWidth: 150, maxWidth: 220, fontSize: '0.85rem', fontWeight: 600 }}
+          >
+            {projects.length === 0 ? (
+              <MenuItem value="">No Projects Found</MenuItem>
+            ) : (
+              [
+                <MenuItem key="__placeholder" value="" disabled>
+                  Select a project
+                </MenuItem>,
+                ...projects.map((p) => (
+                  <MenuItem key={p.id} value={p.id}>
                     {p.name}
-                  </option>
-                ))
-              )}
-            </select>
-
-            {auth.isAuthenticated && (
-              <button 
-                className="btn-add-project-header" 
-                onClick={() => setIsModalOpen(true)}
-                title="Initialize New Project Context"
-              >
-                <Plus size={14} />
-              </button>
+                  </MenuItem>
+                )),
+              ]
             )}
-          </div>
-        </div>
+          </Select>
+        </Tooltip>
 
-        <nav className="nav-links">
-          {auth.isAuthenticated && (
-            <button 
-              className={`jira-settings-toggle-btn ${hasJiraConfig ? 'configured' : ''}`} 
-              onClick={openJiraModal} 
-              title="Configure Personal JIRA Integration"
+        {auth.isAuthenticated && (
+          <Tooltip title="Initialize New Project Context">
+            <IconButton
+              size="small"
+              color="primary"
+              aria-label="new project"
+              onClick={() => setIsModalOpen(true)}
             >
-              <Link2 size={15} />
-              <span>Jira</span>
-              {hasJiraConfig && <span className="active-dot" />}
-            </button>
-          )}
+              <Plus size={16} />
+            </IconButton>
+          </Tooltip>
+        )}
 
-          <button className="theme-toggle" onClick={toggleTheme} title="Toggle Theme">
+        <Box sx={{ flexGrow: 1 }} />
+
+        {auth.isAuthenticated && (
+          <Tooltip title="Configure Personal JIRA Integration">
+            <Button
+              size="small"
+              variant={hasJiraConfig ? 'outlined' : 'text'}
+              color={hasJiraConfig ? 'success' : 'inherit'}
+              onClick={openJiraModal}
+              startIcon={<Link2 size={15} />}
+              sx={{ borderRadius: 99, display: { xs: 'none', sm: 'inline-flex' } }}
+            >
+              Jira
+            </Button>
+          </Tooltip>
+        )}
+
+        <Tooltip title="Toggle Theme">
+          <IconButton color="inherit" aria-label="toggle theme" onClick={toggleTheme}>
             {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
+          </IconButton>
+        </Tooltip>
 
-          <div className="api-status">
-            <ShieldCheck size={16} color="#10b981" />
-            <span className="status-text">API Secure</span>
-          </div>
+        <Chip
+          size="small"
+          color="success"
+          variant="outlined"
+          icon={<ShieldCheck size={14} />}
+          label="API Secure"
+          sx={{ display: { xs: 'none', md: 'inline-flex' }, fontWeight: 600 }}
+        />
 
-          {auth.isAuthenticated ? (
-            <div className="user-menu">
-              <span className="user-email" title={email}>
-                <UserIcon size={14} /> {email}
-              </span>
-              <button className="auth-btn" onClick={handleSignOut} title="Sign Out">
-                <LogOut size={16} /> <span className="auth-btn-label">Sign Out</span>
-              </button>
-            </div>
-          ) : !auth.isLoading && (
-            <button className="auth-btn primary" onClick={handleSignIn} title="Sign In">
-              <LogIn size={16} /> <span className="auth-btn-label">Sign In</span>
-            </button>
-          )}
-        </nav>
-      </div>
+        {auth.isAuthenticated ? (
+          <>
+            <Tooltip title={email || 'Account'}>
+              <IconButton
+                aria-label="account"
+                onClick={(e) => setUserMenuAnchor(e.currentTarget)}
+                size="small"
+              >
+                <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main', fontSize: '0.85rem' }}>
+                  {(email || '?').charAt(0).toUpperCase()}
+                </Avatar>
+              </IconButton>
+            </Tooltip>
+            <Menu
+              anchorEl={userMenuAnchor}
+              open={Boolean(userMenuAnchor)}
+              onClose={() => setUserMenuAnchor(null)}
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+            >
+              <Box sx={{ px: 2, py: 1, maxWidth: 260 }}>
+                <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }} noWrap>
+                  <UserIcon size={14} /> {email}
+                </Typography>
+              </Box>
+              <Divider />
+              <MenuItem
+                onClick={() => {
+                  setUserMenuAnchor(null);
+                  handleSignOut();
+                }}
+              >
+                <ListItemIcon><LogOut size={16} /></ListItemIcon>
+                Sign Out
+              </MenuItem>
+            </Menu>
+          </>
+        ) : !auth.isLoading && (
+          <Button
+            variant="contained"
+            size="small"
+            onClick={handleSignIn}
+            startIcon={<LogIn size={16} />}
+            sx={{ borderRadius: 99 }}
+          >
+            Sign In
+          </Button>
+        )}
+      </Box>
 
-      {/* New Project Modal Overlay */}
-      {isModalOpen && (
-        <div className="modal-backdrop-premium">
-          <div className="modal-content-premium animate-fade-in">
-            <div className="modal-header">
-              <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-                <Sparkles size={20} color="var(--accent-primary)" />
-                <span>Initialize Quality Context</span>
-              </h4>
-              <button className="modal-close-btn" onClick={() => setIsModalOpen(false)}>
-                <X size={18} />
-              </button>
-            </div>
-            <form onSubmit={handleCreateProject}>
-              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
-                {modalError && (
-                  <div style={{ color: '#f87171', background: 'rgba(239, 68, 68, 0.1)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '0.85rem' }}>
-                    {modalError}
-                  </div>
-                )}
-                
-                <div className="form-group-premium">
-                  <label>Project / Suite Name</label>
-                  <input
-                    type="text"
-                    className="form-input-premium"
-                    placeholder="e.g. Customer Portal Revamp"
-                    value={projectName}
-                    onChange={(e) => setProjectName(e.target.value)}
-                    required
-                    disabled={isSubmitting}
-                  />
-                </div>
-
-                <div className="form-group-premium">
-                  <label>Target Web Application URL</label>
-                  <input
-                    type="text"
-                    className="form-input-premium"
-                    placeholder="https://app.example.com"
-                    value={targetUrl}
-                    onChange={(e) => setTargetUrl(e.target.value)}
-                    required
-                    disabled={isSubmitting}
-                  />
-                </div>
-
-                <div className="form-group-premium">
-                  <label>Description (Optional)</label>
-                  <textarea
-                    className="form-input-premium"
-                    rows={3}
-                    placeholder="Provide details about standard parameters, release timeline..."
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    disabled={isSubmitting}
-                  />
-                </div>
-              </div>
-              <div className="modal-footer" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setIsModalOpen(false)} disabled={isSubmitting}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="spin" size={16} />
-                      <span>Initializing...</span>
-                    </>
-                  ) : (
-                    <span>Initialize Context</span>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* New Project Modal */}
+      <Dialog open={isModalOpen} onClose={() => setIsModalOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Sparkles size={20} color="var(--accent-primary)" />
+          <span>Initialize Quality Context</span>
+        </DialogTitle>
+        <form onSubmit={handleCreateProject}>
+          <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {modalError && (
+              <Typography variant="body2" color="error">
+                {modalError}
+              </Typography>
+            )}
+            <TextField
+              label="Project / Suite Name"
+              placeholder="e.g. Customer Portal Revamp"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              required
+              disabled={isSubmitting}
+              fullWidth
+            />
+            <TextField
+              label="Target Web Application URL"
+              placeholder="https://app.example.com"
+              value={targetUrl}
+              onChange={(e) => setTargetUrl(e.target.value)}
+              required
+              disabled={isSubmitting}
+              fullWidth
+            />
+            <TextField
+              label="Description (Optional)"
+              placeholder="Provide details about standard parameters, release timeline..."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              disabled={isSubmitting}
+              multiline
+              rows={3}
+              fullWidth
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setIsModalOpen(false)} disabled={isSubmitting} color="inherit">
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={isSubmitting}
+              startIcon={isSubmitting ? <CircularProgress size={16} color="inherit" /> : null}
+            >
+              {isSubmitting ? 'Initializing...' : 'Initialize Context'}
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
 
       {/* JIRA Connection Settings Modal */}
-      {isJiraModalOpen && (
-        <div className="modal-backdrop-premium" style={{ zIndex: 10000 }}>
-          <div className="modal-content-premium animate-fade-in" style={{ maxWidth: '460px' }}>
-            <div className="modal-header">
-              <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-                <Link2 size={20} color="#0052cc" />
-                <span>Configure JIRA Workspace</span>
-              </h4>
-              <button className="modal-close-btn" onClick={() => setIsJiraModalOpen(false)}>
-                <X size={18} />
-              </button>
-            </div>
-            <form onSubmit={handleSaveJiraConfig}>
-              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.25rem' }}>
-                <p style={{ margin: 0, fontSize: '0.825rem', color: '#94a3b8', lineHeight: '1.4' }}>
-                  Enable real-time synchronization of JIRA user stories and one-click bug raising. These credentials are saved securely in your local browser storage.
-                </p>
-
-                <div className="form-group-premium">
-                  <label>Jira Instance URL</label>
-                  <input
-                    type="url"
-                    className="form-input-premium"
-                    placeholder="https://your-domain.atlassian.net"
-                    value={jiraUrl}
-                    onChange={(e) => setJiraUrl(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="form-group-premium">
-                  <label>Jira Username / Email</label>
-                  <input
-                    type="email"
-                    className="form-input-premium"
-                    placeholder="name@company.com"
-                    value={jiraEmail}
-                    onChange={(e) => setJiraEmail(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="form-group-premium">
-                  <label>Jira API Token</label>
-                  <input
-                    type="password"
-                    className="form-input-premium"
-                    placeholder="Enter your Atlassian API Token"
-                    value={jiraToken}
-                    onChange={(e) => setJiraToken(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="form-group-premium">
-                  <label>Default Project Key</label>
-                  <input
-                    type="text"
-                    className="form-input-premium"
-                    placeholder="e.g. SEC, QA, PROJ"
-                    value={jiraProjectKey}
-                    onChange={(e) => setJiraProjectKey(e.target.value)}
-                    required
-                    style={{ textTransform: 'uppercase' }}
-                  />
-                </div>
-              </div>
-              
-              <div className="modal-footer" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
-                <button 
-                  type="button" 
-                  className="btn btn-secondary" 
-                  onClick={() => setIsJiraModalOpen(false)}
-                  style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8' }}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary" style={{ background: '#0052cc', borderColor: '#0052cc', color: '#fff' }}>
-                  Save Connection
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      <style>{`
-        .app-header {
-          background: var(--bg-secondary);
-          backdrop-filter: blur(10px);
-          border-bottom: 1px solid var(--border-color);
-          position: sticky;
-          top: 0;
-          z-index: 100;
-          padding: 1rem 0;
-          transition: background 0.3s, border 0.3s;
-        }
-        
-        .header-content {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 0 2rem;
-        }
-        
-        .logo-section {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-        }
-        
-        .logo-icon {
-          width: 40px;
-          height: 40px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        
-        .app-title {
-          font-size: 1.5rem;
-          font-weight: 700;
-          letter-spacing: -0.5px;
-          color: var(--text-primary);
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-
-        .project-select-dropdown {
-          background: rgba(255, 255, 255, 0.05);
-          color: var(--text-primary);
-          border: 1px solid var(--border-color);
-          border-radius: var(--radius-md);
-          padding: 0.35rem 0.75rem;
-          font-size: 0.85rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s;
-          outline: none;
-          max-width: 220px;
-        }
-
-        .project-select-dropdown:hover {
-          background: rgba(255, 255, 255, 0.1);
-          border-color: var(--accent-primary);
-          box-shadow: 0 0 8px rgba(139, 92, 246, 0.2);
-        }
-
-        .btn-add-project-header {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 28px;
-          height: 28px;
-          border-radius: var(--radius-md);
-          background: rgba(139, 92, 246, 0.15);
-          color: var(--accent-primary);
-          border: 1px solid rgba(139, 92, 246, 0.3);
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .btn-add-project-header:hover {
-          background: var(--accent-primary);
-          color: #fff;
-          box-shadow: 0 0 10px var(--accent-glow);
-        }
-
-        .full-title {
-           font-size: 1rem;
-           font-weight: 500;
-           color: var(--text-secondary);
-        }
-
-        /* Modal Overlay Overlay Styles */
-        .modal-backdrop-premium {
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100vw;
-          height: 100vh;
-          background: rgba(15, 23, 42, 0.85);
-          backdrop-filter: blur(12px);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 9999;
-        }
-
-        .modal-content-premium {
-          width: 100%;
-          max-width: 500px;
-          padding: 2.5rem;
-          background: #1e293b;
-          border-radius: var(--radius-lg);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
-          color: #f8fafc;
-        }
-
-        .modal-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .modal-close-btn {
-          background: none;
-          border: none;
-          color: var(--text-muted);
-          cursor: pointer;
-          padding: 0.25rem;
-          border-radius: 4px;
-          transition: all 0.2s;
-        }
-
-        .modal-close-btn:hover {
-          color: var(--text-primary);
-          background: rgba(255, 255, 255, 0.05);
-        }
-
-        .form-group-premium {
-          display: flex;
-          flex-direction: column;
-          gap: 0.4rem;
-        }
-
-        .form-group-premium label {
-          font-size: 0.8rem;
-          color: #94a3b8;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-
-        .form-input-premium {
-          background: rgba(15, 23, 42, 0.6);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          color: #f8fafc;
-          border-radius: var(--radius-md);
-          padding: 0.65rem 0.75rem;
-          font-size: 0.95rem;
-          outline: none;
-          transition: all 0.2s;
-        }
-
-        .form-input-premium:focus {
-          border-color: var(--accent-primary);
-          box-shadow: 0 0 8px rgba(139, 92, 246, 0.25);
-        }
-
-        /* Cohesive Header Navigation Layout */
-        .nav-links {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          flex-wrap: nowrap;
-        }
-
-        .jira-settings-toggle-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.4rem;
-          background: rgba(255, 255, 255, 0.03);
-          color: var(--text-secondary);
-          border: 1px solid var(--border-color);
-          border-radius: 99px;
-          padding: 0.45rem 0.95rem;
-          font-size: 0.8rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-          position: relative;
-          outline: none;
-        }
-
-        .jira-settings-toggle-btn:hover {
-          background: rgba(0, 82, 204, 0.08);
-          border-color: #3b82f6;
-          color: var(--text-primary);
-          transform: translateY(-1px) scale(1.02);
-          box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
-        }
-
-        .jira-settings-toggle-btn:active {
-          transform: translateY(0) scale(0.98);
-        }
-
-        .jira-settings-toggle-btn.configured {
-          background: rgba(16, 185, 129, 0.08);
-          border-color: rgba(16, 185, 129, 0.3);
-          color: #10b981;
-        }
-
-        .jira-settings-toggle-btn.configured:hover {
-          background: rgba(16, 185, 129, 0.15);
-          border-color: #10b981;
-          box-shadow: 0 0 12px rgba(16, 185, 129, 0.2);
-        }
-
-        .jira-settings-toggle-btn .active-dot {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: #10b981;
-          position: absolute;
-          top: 3px;
-          right: 6px;
-          box-shadow: 0 0 6px #10b981;
-        }
-
-        .theme-toggle {
-          width: 36px;
-          height: 36px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          background: var(--bg-tertiary);
-          border: 1px solid var(--border-color);
-          border-radius: 50%;
-          color: var(--text-primary);
-          cursor: pointer;
-          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-          outline: none;
-        }
-
-        .theme-toggle:hover {
-          background: var(--bg-primary);
-          border-color: var(--accent-primary);
-          color: var(--accent-primary);
-          transform: translateY(-1px) scale(1.05) rotate(15deg);
-          box-shadow: 0 0 12px var(--accent-glow);
-        }
-
-        .theme-toggle:active {
-          transform: scale(0.95);
-        }
-
-        .api-status {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.4rem;
-          background: rgba(16, 185, 129, 0.08);
-          border: 1px solid rgba(16, 185, 129, 0.2);
-          color: #10b981;
-          padding: 0.45rem 0.85rem;
-          border-radius: 99px;
-          font-size: 0.8rem;
-          font-weight: 600;
-          letter-spacing: 0.3px;
-          transition: all 0.25s ease;
-          user-select: none;
-        }
-
-        .api-status:hover {
-          background: rgba(16, 185, 129, 0.15);
-          border-color: rgba(16, 185, 129, 0.4);
-          box-shadow: 0 0 10px rgba(16, 185, 129, 0.25);
-        }
-
-        .user-menu {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.5rem;
-          background: var(--bg-tertiary);
-          border: 1px solid var(--border-color);
-          border-radius: 99px;
-          padding: 0.25rem 0.25rem 0.25rem 0.75rem;
-          transition: all 0.25s ease;
-        }
-
-        .user-menu:hover {
-          background: var(--bg-secondary);
-          border-color: var(--border-focus);
-        }
-
-        .user-email {
-          font-size: 0.8rem;
-          font-weight: 500;
-          color: var(--text-secondary);
-          display: flex;
-          align-items: center;
-          gap: 0.35rem;
-          max-width: 180px;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        .auth-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.4rem;
-          background: rgba(239, 68, 68, 0.08);
-          border: 1px solid rgba(239, 68, 68, 0.25);
-          color: #ef4444;
-          padding: 0.4rem 0.85rem;
-          border-radius: 99px;
-          font-size: 0.8rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-          outline: none;
-        }
-
-        .auth-btn:hover {
-          background: #ef4444;
-          color: #ffffff;
-          border-color: #ef4444;
-          box-shadow: 0 4px 12px rgba(239, 68, 68, 0.35);
-          transform: translateY(-1px) scale(1.02);
-        }
-
-        .auth-btn:active {
-          transform: translateY(0) scale(0.98);
-        }
-
-        .auth-btn.primary {
-          background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-          border: 1px solid transparent;
-          color: #ffffff;
-        }
-
-        .auth-btn.primary:hover {
-          box-shadow: 0 4px 12px var(--accent-glow);
-          transform: translateY(-1px) scale(1.02);
-        }
-
-        .spin {
-          animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
-    </header>
+      <Dialog open={isJiraModalOpen} onClose={() => setIsJiraModalOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Link2 size={20} color="#0052cc" />
+          <span>Configure JIRA Workspace</span>
+        </DialogTitle>
+        <form onSubmit={handleSaveJiraConfig}>
+          <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Enable real-time synchronization of JIRA user stories and one-click bug raising. These
+              credentials are saved securely in your local browser storage.
+            </Typography>
+            <TextField
+              type="url"
+              label="Jira Instance URL"
+              placeholder="https://your-domain.atlassian.net"
+              value={jiraUrl}
+              onChange={(e) => setJiraUrl(e.target.value)}
+              required
+              fullWidth
+            />
+            <TextField
+              type="email"
+              label="Jira Username / Email"
+              placeholder="name@company.com"
+              value={jiraEmail}
+              onChange={(e) => setJiraEmail(e.target.value)}
+              required
+              fullWidth
+            />
+            <TextField
+              type="password"
+              label="Jira API Token"
+              placeholder="Enter your Atlassian API Token"
+              value={jiraToken}
+              onChange={(e) => setJiraToken(e.target.value)}
+              required
+              fullWidth
+            />
+            <TextField
+              label="Default Project Key"
+              placeholder="e.g. SEC, QA, PROJ"
+              value={jiraProjectKey}
+              onChange={(e) => setJiraProjectKey(e.target.value)}
+              required
+              fullWidth
+              sx={{ '& input': { textTransform: 'uppercase' } }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setIsJiraModalOpen(false)} color="inherit">
+              Cancel
+            </Button>
+            <Button type="submit" variant="contained">
+              Save Connection
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
+    </>
   );
 };
 
