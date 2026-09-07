@@ -3643,7 +3643,10 @@ app.use('/api/admin/usage', securityRateLimiter, adminRoutes);
 // No `authenticateToken` here: the browser EventSource API cannot set an
 // Authorization header, so the route verifies a token from ?access_token=
 // itself via the shared `verifyToken` core. Also no rate limiter — a long-
-// lived stream per job is the expected usage pattern.
+// lived stream per job is the expected usage pattern. Note the token lands in
+// the edge (nginx) access logs as a query string — an accepted EventSource
+// constraint; the route also enforces job ownership so a leaked URL only
+// exposes that one job, and only until the token expires.
 app.use('/api/events', eventRoutes);
 
 // ZAP health check (no auth required)
