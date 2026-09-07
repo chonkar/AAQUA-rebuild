@@ -15,8 +15,13 @@ import { getAccessToken, API_BASE } from './apiClient.js'
  *
  * The browser's native EventSource auto-reconnects on network drops; the
  * server's replay-on-connect behavior means a reconnect naturally resumes
- * from current state rather than replaying full history.
+ * from current state rather than replaying full history. `es.onerror` fires
+ * for both a transient drop (browser is auto-reconnecting, `readyState ===
+ * CONNECTING`) and a permanent failure (browser gave up, e.g. after a 401/404
+ * response, `readyState === CLOSED`). Only the latter is reported to the
+ * caller via `onError` — a transient reconnect is not a user-facing failure.
  *
+
  * If no access token is available (e.g. the user is logged out), no
  * connection is attempted — `onError` fires asynchronously (via
  * queueMicrotask, so it never runs before the caller gets the unsubscribe
@@ -57,6 +62,15 @@ export function subscribeToJob(jobId, { onUpdate, onDone, onError } = {}) {
         } else {
             onUpdate?.(data)
         }
+    }
+
+    es.onerror = () => {
+        if (es.readyState === EventSource.CLOSED) {
+            onError?.('Connection lost — please retry')
+            es.close()
+        }
+        // readyState === CONNECTING means the browser is auto-reconnecting;
+        // nothing to report yet.
     }
 
     return () => es.close()

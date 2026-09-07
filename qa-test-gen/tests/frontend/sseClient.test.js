@@ -2,12 +2,23 @@ import { expect, test, vi, beforeEach } from 'vitest'
 
 class FakeEventSource {
   static instances = []
-  constructor(url) { this.url = url; this.listeners = {}; FakeEventSource.instances.push(this) }
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSED = 2
+  constructor(url) {
+    this.url = url
+    this.listeners = {}
+    this.readyState = FakeEventSource.OPEN
+    FakeEventSource.instances.push(this)
+  }
   addEventListener(type, fn) { this.listeners[type] = fn }
   set onmessage(fn) { this.listeners.message = fn }
   get onmessage() { return this.listeners.message }
-  close() { this.closed = true }
+  set onerror(fn) { this.listeners.error = fn }
+  get onerror() { return this.listeners.error }
+  close() { this.closed = true; this.readyState = FakeEventSource.CLOSED }
   emit(data) { this.listeners.message?.({ data: JSON.stringify(data) }) }
+  emitError(readyState) { this.readyState = readyState; this.listeners.error?.({}) }
 }
 vi.stubGlobal('EventSource', FakeEventSource)
 
@@ -57,6 +68,24 @@ test('unsubscribe closes the stream', () => {
   const unsub = subscribeToJob('j1', {})
   unsub()
   expect(FakeEventSource.instances[0].closed).toBe(true)
+})
+
+test('transient connection error (readyState CONNECTING) does not fire onError', () => {
+  const onError = vi.fn()
+  subscribeToJob('j1', { onError })
+  const es = FakeEventSource.instances[0]
+  es.emitError(FakeEventSource.CONNECTING)
+  expect(onError).not.toHaveBeenCalled()
+  expect(es.closed).toBeFalsy()
+})
+
+test('permanent connection error (readyState CLOSED) fires onError and closes the stream', () => {
+  const onError = vi.fn()
+  subscribeToJob('j1', { onError })
+  const es = FakeEventSource.instances[0]
+  es.emitError(FakeEventSource.CLOSED)
+  expect(onError).toHaveBeenCalledWith('Connection lost — please retry')
+  expect(es.closed).toBe(true)
 })
 
 test('missing access token fires onError and never opens a connection', async () => {
