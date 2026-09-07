@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from 'react-oidc-context';
 import { createApiClient } from '../../utils/apiClient';
-import { Sparkles, Loader2, RotateCcw, Database, AlertCircle } from 'lucide-react';
+import { Loader2, RotateCcw, AlertCircle } from 'lucide-react';
 
 /**
  * Requirement capture: manual free text or a fetched JIRA story description,
@@ -15,18 +15,16 @@ import { Sparkles, Loader2, RotateCcw, Database, AlertCircle } from 'lucide-reac
  * open, the JIRA key being typed, whether the advanced panel is expanded)
  * stays local.
  *
- * `showSubmit={false}` hides the Generate/Cancel row for hosts that own the
- * generate action themselves (the wizard's Generate step does).
+ * The generate action itself is NOT here — the hosting wizard owns it (its
+ * Generate step has the button, the cancel control and the progress pane), so
+ * this component is purely requirement capture.
  */
 const RequirementInput = ({
-    onGenerate,
     isGenerating,
-    onCancel,
     contextCount = 0,
     onClearContext,
     values = {},
     onChange,
-    showSubmit = true,
 }) => {
     const auth = useAuth();
     const api = createApiClient(() => auth.user?.access_token);
@@ -60,11 +58,6 @@ const RequirementInput = ({
         } finally {
             setIsFetchingJira(false);
         }
-    };
-
-    const handleSubmit = () => {
-        if (!requirement.trim()) return;
-        onGenerate(requirement, businessRules, regressionContext, techDetails);
     };
 
     return (
@@ -232,46 +225,6 @@ const RequirementInput = ({
                     )}
                 </div>
 
-                {showSubmit && (
-                    <div className="btn-group" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', flex: 1 }}>
-                        <button
-                            className="btn btn-primary"
-                            onClick={handleSubmit}
-                            disabled={isGenerating || !requirement.trim()}
-                        >
-                            {isGenerating ? (
-                                <>
-                                    <Loader2 className="spin" size={20} />
-                                    Analyzing & Generating...
-                                </>
-                            ) : (
-                                <>
-                                    <Sparkles size={20} />
-                                    Generate Test Cases
-                                </>
-                            )}
-                        </button>
-                        {isGenerating && (
-                            <button
-                                className="btn btn-danger"
-                                onClick={onCancel}
-                                style={{
-                                    background: 'rgba(239, 68, 68, 0.2)',
-                                    color: '#fca5a5',
-                                    border: '1px solid rgba(239, 68, 68, 0.5)',
-                                    borderRadius: 'var(--radius-md)',
-                                    padding: '0.75rem 1rem',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.5rem'
-                                }}
-                            >
-                                <span>Cancel</span>
-                            </button>
-                        )}
-                    </div>
-                )}
             </div>
 
             <style>{`

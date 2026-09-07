@@ -172,9 +172,17 @@ export const generateTestCases = async ({
             .map((b, i) => `### ${b.name}\n${partials[i] || '…'}`)
             .join('\n\n');
 
+        // Clearing a slot has to be pushed to the caller too, otherwise the
+        // output pane keeps showing the abandoned attempt's text until the
+        // next token of the new one happens to arrive.
+        const resetPartial = (i, placeholder = '') => {
+            partials[i] = placeholder;
+            onToken?.('', compose());
+        };
+
         const queryBatchWithRetry = async (b, i, retriesLeft = 1) => {
             try {
-                partials[i] = ''; // a retry restarts this batch's visible output
+                resetPartial(i); // a retry restarts this batch's visible output
                 const text = await streamLLM({
                     prompt: b.prompt,
                     maxTokens: MAX_TOKENS,
@@ -201,6 +209,10 @@ export const generateTestCases = async ({
                     console.log(`[AI Batch Retry] Retrying ${b.name} after error...`);
                     return await queryBatchWithRetry(b, i, retriesLeft - 1);
                 }
+                // Out of retries: replace the partial text with the reason, so
+                // the pane shows which batch gave up rather than a truncated
+                // fragment that looks like it is still arriving.
+                resetPartial(i, `[failed: ${err.message}]`);
                 return [];
             }
         };

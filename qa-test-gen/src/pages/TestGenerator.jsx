@@ -5,10 +5,6 @@ import {
     Box,
     Button,
     Chip,
-    Dialog,
-    DialogActions,
-    DialogContent,
-    DialogTitle,
     Stack,
     TextField,
     Typography,
@@ -25,14 +21,18 @@ import ToolWorkflow from '../components/workflow/ToolWorkflow';
 import GenerationProgress from '../components/workflow/GenerationProgress';
 import RequirementInput from '../components/features/RequirementInput';
 import ExportControls from '../components/features/ExportControls';
+import RaiseDefectDialog from '../components/features/RaiseDefectDialog';
 import { useNotify } from '../components/common/NotificationProvider';
 import { useProject } from '../context/ProjectContext';
 import { createApiClient } from '../utils/apiClient';
 import { generateTestCases } from '../services/testCaseGenerationService';
 import { exportToExcel, exportToJSON } from '../utils/exportUtils';
 
-const STEP_INPUT = 0;
-const STEP_REVIEW = 2;
+// Wizard step order — the single source of truth for both the stepper and any
+// programmatic jump (`stepIndex('review')`). The steps array below is built
+// from this list, so no numeric step index is maintained by hand.
+const STEP_ORDER = ['input', 'generate', 'review', 'export'];
+const stepIndex = (key) => STEP_ORDER.indexOf(key);
 
 // Format an elapsed-seconds value as "12.3s" or "1m 05s".
 const fmtDuration = (s) => {
@@ -56,13 +56,6 @@ const maxFtNumber = (rows) => rows.reduce((max, tc) => {
     const num = parseInt(String(tc.id).replace('FT_', ''), 10);
     return !isNaN(num) && num > max ? num : max;
 }, 0);
-
-// The grid keys rows by `id`; a model that omits it (or a hand-added row) gets
-// a generated one here so DataGrid never sees an undefined row id.
-const withRowIds = (rows) => {
-    let next = maxFtNumber(rows);
-    return rows.map((tc) => (tc?.id ? tc : { ...tc, id: ftId(++next) }));
-};
 
 const priorityColor = (priority) => {
     const p = String(priority || '').split('-')[0].toLowerCase();
@@ -107,7 +100,8 @@ const TestGenerator = () => {
     // Every piece of user-visible state lives here, not inside a step's
     // content: ToolWorkflow unmounts the previous step on navigation, so
     // anything held below this component would be lost on Back/Next.
-    const [step, setStep] = useState(STEP_INPUT);
+    // Index into STEP_ORDER; jumps elsewhere go through stepIndex(key).
+    const [step, setStep] = useState(stepIndex('input'));
     const [form, setForm] = useState(EMPTY_FORM);
     const [requirementHistory, setRequirementHistory] = useState([]);
     const [testCases, setTestCases] = useState([]);
@@ -143,6 +137,8 @@ const TestGenerator = () => {
             abortControllerRef.current.abort();
             abortControllerRef.current = null;
             setIsGenerating(false);
+            // Mark the pane so a half-streamed batch doesn't read as still running.
+            setStreamText((prev) => (prev ? `${prev}\n\n[Cancelled]` : '[Cancelled]'));
         }
     };
 
@@ -168,16 +164,22 @@ const TestGenerator = () => {
                 signal: controller.signal,
             });
 
-            // Continue the FT_ numbering from whatever is already in the table,
-            // so a second generation appends instead of overwriting.
-            const startAt = maxFtNumber(testCases);
-            const appended = results.map((tc, idx) => ({ ...tc, id: ftId(startAt + idx + 1) }));
-            setTestCases([...testCases, ...appended]);
-            setRequirementHistory([...requirementHistory, form.requirement]);
-            setLastBatchCount(appended.length);
+            // Async completion must use functional setState — the user may
+            // mutate state mid-run (Review is reachable while a generation is
+            // still streaming, so rows can be edited or added before this
+            // resolves, and a stale closure would silently drop those edits).
+            // The FT_ numbering continues from whatever is in the table at
+            // merge time, so the re-indexing lives inside the updater too.
+            const count = results.length;
+            setTestCases((prev) => {
+                const startAt = maxFtNumber(prev);
+                return [...prev, ...results.map((tc, idx) => ({ ...tc, id: ftId(startAt + idx + 1) }))];
+            });
+            setRequirementHistory((prev) => [...prev, form.requirement]);
+            setLastBatchCount(count);
             setGenSeconds((performance.now() - startedAt) / 1000);
-            notify.success(`Generated ${appended.length} test case${appended.length === 1 ? '' : 's'}`);
-            setStep(STEP_REVIEW);
+            notify.success(`Generated ${count} test case${count === 1 ? '' : 's'}`);
+            setStep(stepIndex('review'));
         } catch (err) {
             if (err.name === 'AbortError') {
                 notify.info('Generation cancelled');
@@ -205,22 +207,30 @@ const TestGenerator = () => {
     };
 
     // ---------- Review grid ----------
+    // Every row that enters state is given its `id` here (or in
+    // handleGenerate's updater), which is what lets the grid consume
+    // `testCases` directly: a row without an id would be un-editable
+    // (processRowUpdate matches on id) and could collide with another row on
+    // export.
     const handleAddTestCase = () => {
-        const next = ftId(maxFtNumber(testCases) + 1);
-        setTestCases([...testCases, {
-            id: next,
-            module: '',
-            feature: '',
-            scenario: '',
-            preconditions: '',
-            testData: '',
-            steps: [],
-            expectedResult: '',
-            priority: 'P3-Medium',
-            platform: '',
-            testType: 'Functional',
-        }]);
-        notify.info(`${next} added — double-click a cell to edit it`);
+        let assigned;
+        setTestCases((prev) => {
+            assigned = ftId(maxFtNumber(prev) + 1);
+            return [...prev, {
+                id: assigned,
+                module: '',
+                feature: '',
+                scenario: '',
+                preconditions: '',
+                testData: '',
+                steps: [],
+                expectedResult: '',
+                priority: 'P3-Medium',
+                platform: '',
+                testType: 'Functional',
+            }];
+        });
+        notify.info(`${assigned} added — double-click a cell to edit it`);
     };
 
     const processRowUpdate = (newRow) => {
@@ -256,7 +266,7 @@ const TestGenerator = () => {
             const data = await api.post('/api/jira/defect', {
                 testCase: tc,
                 actualResult,
-                projectName: selectedProject?.name || 'AAUQA Quality Run',
+                projectName: selectedProject?.name || 'AAQUA Quality Run',
             });
             recordBug(tcId, { success: true, key: data.jiraKey });
             notify.success(`Defect ${data.jiraKey} raised for ${tcId}`);
@@ -350,8 +360,8 @@ const TestGenerator = () => {
     // Map to an ordered, human-labeled "Test Cases" sheet so a first-time
     // reviewer can read it top-to-bottom (ID → context → detailed steps → result).
     const handleExportExcel = () => {
-        const rows = testCases.map((tc, i) => ({
-            'Test Case ID': tc.id || ftId(i + 1),
+        const rows = testCases.map((tc) => ({
+            'Test Case ID': tc.id,
             'Module': tc.module || '',
             'Feature': tc.feature || '',
             'Scenario': tc.scenario || '',
@@ -367,8 +377,6 @@ const TestGenerator = () => {
     };
     const handleExportJSON = () => exportToJSON(testCases);
 
-    const rows = useMemo(() => withRowIds(testCases), [testCases]);
-
     const inputStep = (
         <>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -377,7 +385,6 @@ const TestGenerator = () => {
             <RequirementInput
                 values={form}
                 onChange={setField}
-                showSubmit={false}
                 isGenerating={isGenerating}
                 contextCount={requirementHistory.length}
                 onClearContext={handleClearContext}
@@ -451,7 +458,7 @@ const TestGenerator = () => {
             ) : (
                 <Box sx={{ height: 600, width: '100%' }}>
                     <DataGrid
-                        rows={rows}
+                        rows={testCases}
                         columns={columns}
                         getRowId={(row) => row.id}
                         disableRowSelectionOnClick
@@ -474,30 +481,14 @@ const TestGenerator = () => {
                 </Box>
             )}
 
-            <Dialog open={!!defectTarget} onClose={() => setDefectTarget(null)} fullWidth maxWidth="sm">
-                <DialogTitle>Raise JIRA Defect ticket for {defectTarget?.id}</DialogTitle>
-                <DialogContent>
-                    <Typography variant="caption" color="text.secondary">Test Case Scenario</Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 600, mb: 2 }}>{defectTarget?.scenario}</Typography>
-                    <Typography variant="caption" color="text.secondary">Target Project Context</Typography>
-                    <Typography variant="body2" color="primary" sx={{ fontWeight: 600, mb: 2 }}>
-                        {selectedProject?.name || 'AAUQA Default Context'}
-                    </Typography>
-                    <TextField
-                        label="Execution Failure Reason / Actual Result"
-                        placeholder="Describe what went wrong in detail..."
-                        multiline
-                        minRows={4}
-                        fullWidth
-                        value={actualResult}
-                        onChange={(e) => setActualResult(e.target.value)}
-                    />
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setDefectTarget(null)}>Cancel</Button>
-                    <Button variant="contained" onClick={handleRaiseDefect}>Raise Defect</Button>
-                </DialogActions>
-            </Dialog>
+            <RaiseDefectDialog
+                target={defectTarget}
+                projectName={selectedProject?.name || 'AAQUA Default Context'}
+                actualResult={actualResult}
+                onChange={setActualResult}
+                onSubmit={handleRaiseDefect}
+                onClose={() => setDefectTarget(null)}
+            />
         </Box>
     );
 
@@ -515,12 +506,13 @@ const TestGenerator = () => {
         </Box>
     );
 
-    const steps = [
-        { key: 'input', label: 'Input', content: inputStep, canAdvance: form.requirement.trim().length > 0 },
-        { key: 'generate', label: 'Generate', content: generateStep, canAdvance: testCases.length > 0 },
-        { key: 'review', label: 'Review', content: reviewStep, canAdvance: testCases.length > 0 },
-        { key: 'export', label: 'Export', content: exportStep },
-    ];
+    const stepDefs = {
+        input: { label: 'Input', content: inputStep, canAdvance: form.requirement.trim().length > 0 },
+        generate: { label: 'Generate', content: generateStep, canAdvance: testCases.length > 0 },
+        review: { label: 'Review', content: reviewStep, canAdvance: testCases.length > 0 },
+        export: { label: 'Export', content: exportStep },
+    };
+    const steps = STEP_ORDER.map((key) => ({ key, ...stepDefs[key] }));
 
     return (
         <ToolWorkflow
