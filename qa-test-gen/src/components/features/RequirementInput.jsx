@@ -3,19 +3,45 @@ import { useAuth } from 'react-oidc-context';
 import { createApiClient } from '../../utils/apiClient';
 import { Sparkles, Loader2, RotateCcw, Database, AlertCircle } from 'lucide-react';
 
-const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0, onClearContext }) => {
+/**
+ * Requirement capture: manual free text or a fetched JIRA story description,
+ * plus optional advanced context fields.
+ *
+ * Controlled by the parent: the four content fields live in `values` and are
+ * written back through `onChange(field, value)`. This is deliberate — the page
+ * hosts this component inside a ToolWorkflow step, and step content unmounts
+ * on step change, so any field state kept locally would be lost when the user
+ * navigates to Generate and back. Only transient UI state (which source tab is
+ * open, the JIRA key being typed, whether the advanced panel is expanded)
+ * stays local.
+ *
+ * `showSubmit={false}` hides the Generate/Cancel row for hosts that own the
+ * generate action themselves (the wizard's Generate step does).
+ */
+const RequirementInput = ({
+    onGenerate,
+    isGenerating,
+    onCancel,
+    contextCount = 0,
+    onClearContext,
+    values = {},
+    onChange,
+    showSubmit = true,
+}) => {
     const auth = useAuth();
     const api = createApiClient(() => auth.user?.access_token);
 
     const [sourceType, setSourceType] = useState('manual'); // 'manual' | 'jira'
     const [jiraKey, setJiraKey] = useState('');
-    const [requirement, setRequirement] = useState('');
     const [isFetchingJira, setIsFetchingJira] = useState(false);
     const [jiraError, setJiraError] = useState(null);
     const [showAdvanced, setShowAdvanced] = useState(false);
-    const [businessRules, setBusinessRules] = useState('');
-    const [regressionContext, setRegressionContext] = useState('');
-    const [techDetails, setTechDetails] = useState('');
+
+    const requirement = values.requirement ?? '';
+    const businessRules = values.businessRules ?? '';
+    const regressionContext = values.regressionContext ?? '';
+    const techDetails = values.techDetails ?? '';
+    const setField = (field, value) => onChange?.(field, value);
 
     const handleFetchJiraStory = async () => {
         if (!jiraKey.trim()) return;
@@ -24,7 +50,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
         try {
             const data = await api.get(`/api/jira/story/${encodeURIComponent(jiraKey.trim())}`);
             if (data?.story?.description) {
-                setRequirement(data.story.description);
+                setField('requirement', data.story.description);
             } else {
                 throw new Error('Jira story fetched, but no description or requirements found in it.');
             }
@@ -127,13 +153,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                             <span style={{ fontSize: '0.75rem', background: 'rgba(59, 130, 246, 0.1)', color: '#60a5fa', padding: '0.2rem 0.6rem', borderRadius: '1rem', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
                                 Context: {contextCount} previous
                             </span>
-                            <button onClick={() => {
-                                onClearContext();
-                                setRequirement('');
-                                setBusinessRules('');
-                                setRegressionContext('');
-                                setTechDetails('');
-                            }} title="Start clean with no context" style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: 0 }} className="hover-text-white">
+                            <button onClick={() => onClearContext?.()} title="Start clean with no context" style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: 0 }} className="hover-text-white">
                                 <RotateCcw size={12} />
                                 Clear
                             </button>
@@ -144,7 +164,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                     className="input-field textarea-premium"
                     placeholder="e.g. Create a login page with email validation, 'Forgot Password' link, and Google SSO integration..."
                     value={requirement}
-                    onChange={(e) => setRequirement(e.target.value)}
+                    onChange={(e) => setField('requirement', e.target.value)}
                     rows={6}
                     disabled={isGenerating}
                 />
@@ -178,7 +198,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                                     className="input-field"
                                     placeholder="e.g. Only manager role can approve request; Max transaction amount is 10000..."
                                     value={businessRules}
-                                    onChange={(e) => setBusinessRules(e.target.value)}
+                                    onChange={(e) => setField('businessRules', e.target.value)}
                                     rows={2}
                                     disabled={isGenerating}
                                     style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.1)' }}
@@ -190,7 +210,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                                     className="input-field"
                                     placeholder="e.g. Must integrate with the existing 'Patient Database' module and backward support the user history view..."
                                     value={regressionContext}
-                                    onChange={(e) => setRegressionContext(e.target.value)}
+                                    onChange={(e) => setField('regressionContext', e.target.value)}
                                     rows={2}
                                     disabled={isGenerating}
                                     style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.1)' }}
@@ -202,7 +222,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                                     className="input-field"
                                     placeholder="e.g. App is built on OutSystems; Screens reload asynchronously via AJAX; Password requires custom hashing..."
                                     value={techDetails}
-                                    onChange={(e) => setTechDetails(e.target.value)}
+                                    onChange={(e) => setField('techDetails', e.target.value)}
                                     rows={2}
                                     disabled={isGenerating}
                                     style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.1)' }}
@@ -212,44 +232,46 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                     )}
                 </div>
 
-                <div className="btn-group" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', flex: 1 }}>
-                    <button
-                        className="btn btn-primary"
-                        onClick={handleSubmit}
-                        disabled={isGenerating || !requirement.trim()}
-                    >
-                        {isGenerating ? (
-                            <>
-                                <Loader2 className="spin" size={20} />
-                                Analyzing & Generating...
-                            </>
-                        ) : (
-                            <>
-                                <Sparkles size={20} />
-                                Generate Test Cases
-                            </>
-                        )}
-                    </button>
-                    {isGenerating && (
+                {showSubmit && (
+                    <div className="btn-group" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', flex: 1 }}>
                         <button
-                            className="btn btn-danger"
-                            onClick={onCancel}
-                            style={{
-                                background: 'rgba(239, 68, 68, 0.2)',
-                                color: '#fca5a5',
-                                border: '1px solid rgba(239, 68, 68, 0.5)',
-                                borderRadius: 'var(--radius-md)',
-                                padding: '0.75rem 1rem',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem'
-                            }}
+                            className="btn btn-primary"
+                            onClick={handleSubmit}
+                            disabled={isGenerating || !requirement.trim()}
                         >
-                            <span>Cancel</span>
+                            {isGenerating ? (
+                                <>
+                                    <Loader2 className="spin" size={20} />
+                                    Analyzing & Generating...
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles size={20} />
+                                    Generate Test Cases
+                                </>
+                            )}
                         </button>
-                    )}
-                </div>
+                        {isGenerating && (
+                            <button
+                                className="btn btn-danger"
+                                onClick={onCancel}
+                                style={{
+                                    background: 'rgba(239, 68, 68, 0.2)',
+                                    color: '#fca5a5',
+                                    border: '1px solid rgba(239, 68, 68, 0.5)',
+                                    borderRadius: 'var(--radius-md)',
+                                    padding: '0.75rem 1rem',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem'
+                                }}
+                            >
+                                <span>Cancel</span>
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
 
             <style>{`
