@@ -17,12 +17,25 @@ import { getAccessToken, API_BASE } from './apiClient.js'
  * server's replay-on-connect behavior means a reconnect naturally resumes
  * from current state rather than replaying full history.
  *
+ * If no access token is available (e.g. the user is logged out), no
+ * connection is attempted — `onError` fires asynchronously (via
+ * queueMicrotask, so it never runs before the caller gets the unsubscribe
+ * function back) with a string message, matching the shape of the
+ * failed-frame path (`onError(data.error)`), and the returned unsubscribe
+ * is a no-op.
+ *
  * @param {string} jobId
  * @param {{ onUpdate?: (frame: object) => void, onDone?: (result: any) => void, onError?: (error: any) => void }} handlers
  * @returns {() => void} unsubscribe function that closes the stream
  */
 export function subscribeToJob(jobId, { onUpdate, onDone, onError } = {}) {
-    const url = `${API_BASE}/events/${jobId}?access_token=${encodeURIComponent(getAccessToken())}`
+    const token = getAccessToken()
+    if (!token) {
+        queueMicrotask(() => onError?.('Not authenticated — please sign in again'))
+        return () => {}
+    }
+
+    const url = `${API_BASE}/events/${encodeURIComponent(jobId)}?access_token=${encodeURIComponent(token)}`
     const es = new EventSource(url)
 
     es.onmessage = (evt) => {

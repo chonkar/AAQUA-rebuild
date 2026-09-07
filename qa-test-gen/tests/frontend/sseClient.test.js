@@ -10,11 +10,21 @@ class FakeEventSource {
   emit(data) { this.listeners.message?.({ data: JSON.stringify(data) }) }
 }
 vi.stubGlobal('EventSource', FakeEventSource)
-vi.mock('../../src/utils/apiClient.js', () => ({ getAccessToken: () => 'tok-123', API_BASE: '/api' }))
+
+// Mutable token via vi.hoisted so individual tests can flip getAccessToken's
+// return value (e.g. to simulate a logged-out user) without re-mocking.
+const tokenState = vi.hoisted(() => ({ token: 'tok-123' }))
+vi.mock('../../src/utils/apiClient.js', () => ({
+  getAccessToken: () => tokenState.token,
+  API_BASE: '/api',
+}))
 
 import { subscribeToJob } from '../../src/utils/sseClient.js'
 
-beforeEach(() => { FakeEventSource.instances = [] })
+beforeEach(() => {
+  FakeEventSource.instances = []
+  tokenState.token = 'tok-123'
+})
 
 test('opens EventSource with token query param and forwards updates', () => {
   const onUpdate = vi.fn()
@@ -34,8 +44,32 @@ test('terminal events fire onDone/onError and close the stream', () => {
   expect(es.closed).toBe(true)
 })
 
+test('failed events fire onError with the error payload and close the stream', () => {
+  const onError = vi.fn()
+  subscribeToJob('j1', { onError })
+  const es = FakeEventSource.instances[0]
+  es.emit({ status: 'failed', error: 'boom' })
+  expect(onError).toHaveBeenCalledWith('boom')
+  expect(es.closed).toBe(true)
+})
+
 test('unsubscribe closes the stream', () => {
   const unsub = subscribeToJob('j1', {})
   unsub()
   expect(FakeEventSource.instances[0].closed).toBe(true)
+})
+
+test('missing access token fires onError and never opens a connection', async () => {
+  tokenState.token = null
+  const onError = vi.fn()
+  const unsub = subscribeToJob('j1', { onError })
+
+  expect(FakeEventSource.instances.length).toBe(0)
+  expect(onError).not.toHaveBeenCalled()
+
+  await Promise.resolve()
+
+  expect(onError).toHaveBeenCalledWith('Not authenticated — please sign in again')
+  expect(FakeEventSource.instances.length).toBe(0)
+  expect(() => unsub()).not.toThrow()
 })
