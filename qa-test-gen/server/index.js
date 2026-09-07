@@ -20,6 +20,7 @@ import jiraRoutes from './routes/jiraRoutes.js';
 import readinessRoutes from './routes/readinessRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import eventRoutes from './routes/eventRoutes.js';
+import llmRoutes from './routes/llmRoutes.js';
 import { calculateAndSaveReadiness } from './services/readinessService.js';
 import { parseSpec } from './services/apiSpecService.js';
 import { generateApiTestCases } from './services/apiTestGenService.js';
@@ -3648,6 +3649,12 @@ app.use('/api/admin/usage', securityRateLimiter, adminRoutes);
 // constraint; the route also enforces job ownership so a leaked URL only
 // exposes that one job, and only until the token expires.
 app.use('/api/events', eventRoutes);
+
+// ─── LLM streaming proxy ────────────
+// Browser POSTs a prompt here instead of calling the LLM gateway directly, so
+// the API key stays server-side. `authenticateToken` runs per-route inside
+// the router (see server/routes/llmRoutes.js), not applied here.
+app.use('/api/llm', llmRoutes);
 
 // ZAP health check (no auth required)
 app.get('/api/security/zap/health', async (req, res) => {
