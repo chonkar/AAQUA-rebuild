@@ -15,11 +15,13 @@ import {
 } from '@mui/material';
 import ArticleIcon from '@mui/icons-material/Article';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DownloadIcon from '@mui/icons-material/Download';
 import EditNoteIcon from '@mui/icons-material/EditNote';
 import LinkIcon from '@mui/icons-material/Link';
 import ToolWorkflow from '../components/workflow/ToolWorkflow';
 import GenerationProgress from '../components/workflow/GenerationProgress';
+import SafeHtml from '../components/common/SafeHtml';
 import { useNotify } from '../components/common/NotificationProvider';
 import { createApiClient } from '../utils/apiClient';
 import { generateTestPlan, TEST_PLAN_SECTIONS } from '../services/testPlanService';
@@ -39,6 +41,16 @@ const fmtDuration = (s) => {
     if (s >= 60) return `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, '0')}s`;
     return `${s.toFixed(1)}s`;
 };
+
+// Escape a user-supplied value before interpolating it into the DOCX cover
+// block's HTML. Only the client/project fields go through this — the generated
+// plan itself is interpolated raw on purpose (see handleExportDocx).
+const escapeHtml = (v) => String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 
 const EMPTY_FORM = { clientName: '', projectName: '', requirement: '' };
 
@@ -182,13 +194,21 @@ const TestPlanGenerator = () => {
         if (!generatedPlan) return;
 
         try {
-            // Wrap generated HTML in a standard document structure for better conversion
+            // Wrap generated HTML in a standard document structure for better conversion.
+            //
+            // `generatedPlan` is interpolated RAW here, deliberately: sanitizing is a
+            // render-time concern (the preview goes through SafeHtml), whereas
+            // html-docx-js needs the full original markup — DOMPurify's html profile
+            // would strip the <style> block and inline document styling the converter
+            // relies on — and a .docx is not a browser execution context. The two
+            // user-supplied cover fields ARE escaped, since they are the only values
+            // a user could inject markup into this wrapper through.
             const fullHtml = `
                 <!DOCTYPE html>
                 <html>
                 <head>
                     <meta charset="utf-8">
-                    <title>Test Plan - ${projectName}</title>
+                    <title>Test Plan - ${escapeHtml(projectName)}</title>
                     <style>
                         body { font-family: 'Calibri', sans-serif; line-height: 1.5; color: #333; }
                         h1, h2, h3 { color: #2E4053; }
@@ -199,8 +219,8 @@ const TestPlanGenerator = () => {
                 </head>
                 <body>
                     <h1 style="text-align: center; color: #1a237e;">Test Plan</h1>
-                    <p style="text-align: center; font-size: 1.2em;"><strong>Client:</strong> ${clientName}</p>
-                    <p style="text-align: center; font-size: 1.2em;"><strong>Project:</strong> ${projectName}</p>
+                    <p style="text-align: center; font-size: 1.2em;"><strong>Client:</strong> ${escapeHtml(clientName)}</p>
+                    <p style="text-align: center; font-size: 1.2em;"><strong>Project:</strong> ${escapeHtml(projectName)}</p>
                     <hr/>
                     ${generatedPlan}
                 </body>
@@ -208,13 +228,26 @@ const TestPlanGenerator = () => {
             `;
 
             const blob = await asBlob(fullHtml);
-            const fileName = `${clientName.replace(/\s+/g, '_')}_TestPlan.docx`;
-            saveAs(blob, fileName);
-            notify.success(`Downloaded ${fileName}`);
+            // Reuse the value the Export step shows as a caption, so the promised
+            // filename and the delivered one can never drift apart.
+            saveAs(blob, docxFileName);
+            notify.success(`Downloaded ${docxFileName}`);
         } catch (err) {
             console.error('Export Error:', err);
             setError('Failed to export document.');
             notify.error('Failed to export document.');
+        }
+    };
+
+    const handleCopyHtml = async () => {
+        if (!generatedPlan) return;
+        try {
+            await navigator.clipboard.writeText(generatedPlan);
+            notify.success('Plan HTML copied to clipboard');
+        } catch (err) {
+            // Clipboard access needs a secure context and can be denied outright.
+            console.error('[Copy Error]', err);
+            notify.error('Could not copy to clipboard — copy manually from the preview.');
         }
     };
 
@@ -365,8 +398,8 @@ const TestPlanGenerator = () => {
                 <Alert severity="info">No test plan yet — generate one on the previous step.</Alert>
             ) : (
                 <Paper elevation={3} sx={DOCUMENT_SX}>
-                    {/* Model-authored HTML fragment, rendered as the legacy page did. */}
-                    <div dangerouslySetInnerHTML={{ __html: generatedPlan }} />
+                    {/* Model-authored HTML — sanitized at render time by SafeHtml. */}
+                    <SafeHtml html={generatedPlan} />
                 </Paper>
             )}
         </Box>
@@ -387,6 +420,14 @@ const TestPlanGenerator = () => {
                     disabled={isGenerating || !generatedPlan}
                 >
                     Download as Word Doc
+                </Button>
+                <Button
+                    variant="outlined"
+                    startIcon={<ContentCopyIcon />}
+                    onClick={handleCopyHtml}
+                    disabled={isGenerating || !generatedPlan}
+                >
+                    Copy HTML
                 </Button>
                 {generatedPlan && (
                     <Typography variant="caption" color="text.secondary">{docxFileName}</Typography>
