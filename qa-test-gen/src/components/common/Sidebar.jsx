@@ -1,177 +1,193 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
-import { Settings, HelpCircle, Database, Target, ShieldCheck, Layers, Globe, PersonStanding, RefreshCw, LayoutDashboard, FileCode, FileText, Webhook, Gauge } from 'lucide-react';
+import { NavLink, useLocation } from 'react-router-dom';
+import {
+  Box,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Tooltip,
+  Typography,
+} from '@mui/material';
+import {
+  Settings, HelpCircle, Database, Target, ShieldCheck, Layers, Globe, PersonStanding,
+  RefreshCw, LayoutDashboard, FileCode, FileText, Webhook, Gauge, Users, Lock,
+} from 'lucide-react';
 import { useProject } from '../../context/ProjectContext';
 import { useAuth } from 'react-oidc-context';
-import { Users } from 'lucide-react';
 
-// A service link that renders as a disabled, non-navigating item when no
-// project is active (Phase 1 project gate), mirroring the route-level guard.
-const ServiceLink = ({ to, icon, label, locked, inactiveColor }) => {
+const LOCKED_HINT = 'Select or create a project to use this service';
+
+// Project-gated tools (Phase 1 project gate mirrors the route-level guard in
+// App.jsx's RequireProject wrapper).
+const SERVICE_ITEMS = [
+  { to: '/test-plan-generator', icon: FileText, label: 'Test Plan Generator' },
+  { to: '/test-generator', icon: FileCode, label: 'Functional Test Generator' },
+  { to: '/test-data-generator', icon: Database, label: 'Test Data Generator' },
+  { to: '/locator-generator', icon: Target, label: 'Smart Locators' },
+  { to: '/test-converter', icon: RefreshCw, label: 'Migration Service', inactiveColor: 'var(--accent-secondary)' },
+  { to: '/framework-generator', icon: Layers, label: 'Framework Generator' },
+  { to: '/api-test-generator', icon: Webhook, label: 'API Test Generator' },
+  { to: '/test-runner', icon: RefreshCw, label: 'Test Runner' },
+  { to: '/localization', icon: Globe, label: 'Localization Tester' },
+  { to: '/accessibility-scanner', icon: PersonStanding, label: 'Accessibility Scanner' },
+  { to: '/performance-scanner', icon: Gauge, label: 'Performance Scanner' },
+  { to: '/security-scanner', icon: ShieldCheck, label: 'Security Scanner' },
+];
+
+const itemSx = {
+  borderRadius: 1.5,
+  mb: 0.25,
+  '&.Mui-selected': {
+    color: 'primary.main',
+    bgcolor: 'action.selected',
+    borderLeft: '3px solid',
+    borderColor: 'primary.main',
+  },
+};
+
+const NavItem = ({ to, icon, label, iconColor, selected, onNavigate }) => {
   const Icon = icon;
-  if (locked) {
-    return (
-      <div className="nav-link disabled" title="Select or create a project to use this service">
-        <Icon size={20} />
-        <span>{label}</span>
-      </div>
-    );
-  }
   return (
-    <NavLink to={to} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-      {({ isActive }) => (
-        <>
-          <Icon size={20} style={!isActive && inactiveColor ? { color: inactiveColor } : undefined} />
-          <span>{label}</span>
-        </>
-      )}
-    </NavLink>
+    <ListItem disablePadding>
+      <ListItemButton
+        component={NavLink}
+        to={to}
+        selected={selected}
+        onClick={onNavigate}
+        sx={itemSx}
+      >
+        <ListItemIcon sx={{ minWidth: 36, color: selected ? 'primary.main' : iconColor || 'inherit' }}>
+          <Icon size={20} />
+        </ListItemIcon>
+        <ListItemText primary={label} slotProps={{ primary: { fontSize: '0.9rem' } }} />
+      </ListItemButton>
+    </ListItem>
   );
 };
 
-const Sidebar = () => {
+// A locked service renders as a disabled, non-navigating row. The Tooltip needs
+// the wrapping span because disabled buttons emit no pointer events.
+const LockedItem = ({ icon, label }) => {
+  const Icon = icon;
+  return (
+    <ListItem disablePadding>
+      <Tooltip title={LOCKED_HINT} placement="right">
+        <Box component="span" sx={{ width: '100%' }}>
+          <ListItemButton disabled sx={itemSx}>
+            <ListItemIcon sx={{ minWidth: 36 }}>
+              <Icon size={20} />
+            </ListItemIcon>
+            <ListItemText primary={label} slotProps={{ primary: { fontSize: '0.9rem' } }} />
+            <Lock size={14} />
+          </ListItemButton>
+        </Box>
+      </Tooltip>
+    </ListItem>
+  );
+};
+
+const Sidebar = ({ onNavigate }) => {
   const { selectedProject } = useProject();
   const locked = !selectedProject;
   const auth = useAuth();
   const isKavita = auth.user?.profile?.email === 'kavita.chonkar@aaseya.com';
+  const { pathname } = useLocation();
+  const isActive = (to) => (to === '/' ? pathname === '/' : pathname === to || pathname.startsWith(`${to}/`));
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-content">
-        <div className="nav-section">
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        px: 1.5,
+        py: 2,
+        '&::-webkit-scrollbar': { width: 4 },
+        '&::-webkit-scrollbar-thumb': { bgcolor: 'divider', borderRadius: 2 },
+      }}
+    >
+      <List disablePadding>
+        <NavItem
+          to="/"
+          icon={LayoutDashboard}
+          label="Release Intelligence"
+          selected={isActive('/')}
+          onNavigate={onNavigate}
+        />
 
-          <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <LayoutDashboard size={20} />
-            <span>Release Intelligence</span>
-          </NavLink>
+        {isKavita && (
+          <NavItem
+            to="/usage-dashboard"
+            icon={Users}
+            label="User Dashboard"
+            iconColor="var(--success)"
+            selected={isActive('/usage-dashboard')}
+            onNavigate={onNavigate}
+          />
+        )}
 
-          {isKavita && (
-            <NavLink to="/usage-dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Users size={20} style={{ color: 'var(--success)' }} />
-              <span>User Dashboard</span>
-            </NavLink>
-          )}
+        <NavItem
+          to="/services"
+          icon={Layers}
+          label="All Services"
+          selected={isActive('/services')}
+          onNavigate={onNavigate}
+        />
 
-          <NavLink to="/services" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <Layers size={20} />
-            <span>All Services</span>
-          </NavLink>
+        {SERVICE_ITEMS.map((item) =>
+          locked ? (
+            <LockedItem key={item.to} icon={item.icon} label={item.label} />
+          ) : (
+            <NavItem
+              key={item.to}
+              to={item.to}
+              icon={item.icon}
+              label={item.label}
+              iconColor={item.inactiveColor}
+              selected={isActive(item.to)}
+              onNavigate={onNavigate}
+            />
+          )
+        )}
+      </List>
 
-          <ServiceLink to="/test-plan-generator" icon={FileText} label="Test Plan Generator" locked={locked} />
-          <ServiceLink to="/test-generator" icon={FileCode} label="Functional Test Generator" locked={locked} />
-          <ServiceLink to="/test-data-generator" icon={Database} label="Test Data Generator" locked={locked} />
-          <ServiceLink to="/locator-generator" icon={Target} label="Smart Locators" locked={locked} />
-          <ServiceLink to="/test-converter" icon={RefreshCw} label="Migration Service" locked={locked} inactiveColor="var(--accent-secondary)" />
-          <ServiceLink to="/framework-generator" icon={Layers} label="Framework Generator" locked={locked} />
-          <ServiceLink to="/api-test-generator" icon={Webhook} label="API Test Generator" locked={locked} />
-          <ServiceLink to="/test-runner" icon={RefreshCw} label="Test Runner" locked={locked} />
-          <ServiceLink to="/localization" icon={Globe} label="Localization Tester" locked={locked} />
-          <ServiceLink to="/accessibility-scanner" icon={PersonStanding} label="Accessibility Scanner" locked={locked} />
-          <ServiceLink to="/performance-scanner" icon={Gauge} label="Performance Scanner" locked={locked} />
-          <ServiceLink to="/security-scanner" icon={ShieldCheck} label="Security Scanner" locked={locked} />
-        </div>
-
-        <div className="nav-section mt-auto">
-          <p className="section-label">System</p>
-          <div className="nav-link">
-            <Settings size={20} />
-            <span>Settings</span>
-          </div>
-          <div className="nav-link">
-            <HelpCircle size={20} />
-            <span>Support</span>
-          </div>
-        </div>
-      </div>
-
-      <style>{`
-        .sidebar {
-          width: 260px;
-          background: var(--bg-secondary);
-          border-right: 1px solid var(--border-color);
-          display: flex;
-          flex-direction: column;
-          flex-shrink: 0;
-          height: calc(100vh - 73px); /* Subtract header height */
-          position: sticky;
-          top: 73px;
-        }
-
-        .sidebar-content {
-          padding: 1.5rem;
-          padding-bottom: 2rem;
-          display: flex;
-          flex-direction: column;
-          gap: 2rem;
-          height: 100%;
-          overflow-y: auto;
-          overflow-x: hidden;
-        }
-
-        /* Custom thin scrollbar for sidebar */
-        .sidebar-content::-webkit-scrollbar { width: 4px; }
-        .sidebar-content::-webkit-scrollbar-track { background: transparent; }
-        .sidebar-content::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
-        .sidebar-content::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-
-        .section-label {
-          font-size: 0.75rem;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-          color: var(--text-muted);
-          margin-bottom: 0.75rem;
-          font-weight: 600;
-        }
-
-        .nav-link {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          padding: 0.75rem 1rem;
-          color: var(--text-secondary);
-          text-decoration: none;
-          border-radius: var(--radius-md);
-          transition: all 0.2s;
-          cursor: pointer;
-          margin-bottom: 0.25rem;
-        }
-
-        .nav-link:hover {
-          background: rgba(255, 255, 255, 0.03);
-          color: var(--text-primary);
-        }
-
-        .nav-link.active {
-          background: linear-gradient(90deg, rgba(109, 40, 217, 0.1), transparent);
-          color: var(--accent-primary);
-          border-left: 3px solid var(--accent-primary);
-        }
-
-        .nav-link.disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .mt-auto {
-          margin-top: auto;
-        }
-
-        .badge-soon {
-          font-size: 0.6rem;
-          background: var(--bg-primary);
-          padding: 2px 4px;
-          border-radius: 4px;
-          border: 1px solid var(--border-color);
-          margin-left: auto;
-        }
-
-        @media (max-width: 768px) {
-            .sidebar {
-                display: none;
-            }
-        }
-      `}</style>
-    </aside >
+      <Box sx={{ mt: 'auto', pt: 2 }}>
+        <Typography
+          component="p"
+          sx={{
+            px: 2,
+            fontSize: '0.75rem',
+            textTransform: 'uppercase',
+            letterSpacing: '1px',
+            color: 'text.secondary',
+            fontWeight: 600,
+            mb: 0.75,
+          }}
+        >
+          System
+        </Typography>
+        <List disablePadding>
+          {/* Placeholders — these were non-navigating rows before the MUI
+              re-skin and stay non-navigating. */}
+          <ListItem disablePadding>
+            <ListItemButton sx={itemSx}>
+              <ListItemIcon sx={{ minWidth: 36 }}><Settings size={20} /></ListItemIcon>
+              <ListItemText primary="Settings" slotProps={{ primary: { fontSize: '0.9rem' } }} />
+            </ListItemButton>
+          </ListItem>
+          <ListItem disablePadding>
+            <ListItemButton sx={itemSx}>
+              <ListItemIcon sx={{ minWidth: 36 }}><HelpCircle size={20} /></ListItemIcon>
+              <ListItemText primary="Support" slotProps={{ primary: { fontSize: '0.9rem' } }} />
+            </ListItemButton>
+          </ListItem>
+        </List>
+      </Box>
+    </Box>
   );
 };
 

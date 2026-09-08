@@ -5,7 +5,40 @@
  *   const api = createApiClient(() => auth.user?.access_token);
  *   const data = await api.get('/api/projects');
  */
+import { oidcConfig } from '../auth/oidcConfig.js';
+
 const API_PREFIX = import.meta.env.BASE_URL.replace(/\/$/, '');   // '' in dev, '/aaqua' in QA
+
+/**
+ * Base path for backend API calls, including the '/api' segment
+ * (e.g. '/api' in dev, '/aaqua/api' in QA). Consumers that can't route through
+ * createApiClient's fetch wrapper (EventSource, raw fetch to non-JSON
+ * endpoints) build their URLs as `${API_BASE}/whatever`.
+ */
+export const API_BASE = `${API_PREFIX}/api`;
+
+/**
+ * Read the current Keycloak access token outside of a React component.
+ *
+ * react-oidc-context (see src/auth/oidcConfig.js) persists the oidc-client-ts
+ * user in localStorage via WebStorageStateStore under the key
+ * `oidc.user:{authority}:{client_id}` — the same session createApiClient's
+ * callers read via `auth.user?.access_token` from useAuth(). This reads that
+ * same storage entry directly for call sites (EventSource, SSE) that can't
+ * use a hook.
+ */
+export function getAccessToken() {
+    try {
+        const key = `oidc.user:${oidcConfig.authority}:${oidcConfig.client_id}`;
+        const raw = window.localStorage.getItem(key);
+        if (!raw) return null;
+        const user = JSON.parse(raw);
+        return user?.access_token ?? null;
+    } catch (e) {
+        console.error('[apiClient] Failed reading access token from storage:', e);
+        return null;
+    }
+}
 
 export function createApiClient(getToken) {
     async function request(path, { method = 'GET', body, headers = {} } = {}) {

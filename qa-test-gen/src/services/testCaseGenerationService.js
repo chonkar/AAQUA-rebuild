@@ -1,9 +1,16 @@
 
-import { LocalLLM as GoogleGenerativeAI } from "../utils/llmClient";
+import { streamLLM } from '../utils/llmStream.js';
 
-const API_KEY = import.meta.env.VITE_LLM_API_KEY;
-const LLM_ENDPOINT = import.meta.env.VITE_LLM_ENDPOINT;
-const MODEL_NAME = import.meta.env.VITE_LLM_MODEL || "gemma-4";
+// Kept in sync with the values the (now removed) browser-side LocalLLM client
+// used for this tool: src/utils/llmClient.js defaulted to max_tokens 12000 /
+// temperature 0.2, so the streaming proxy is given the same budget rather than
+// falling back to its own defaults. `reasoning_effort: 'low'` came from the
+// same call site and matters just as much: gpt-oss is a reasoning model and
+// without the cap it can burn all 12000 tokens on internal reasoning and
+// return empty content (finish_reason='length') for every batch.
+const MAX_TOKENS = 12000;
+const TEMPERATURE = 0.2;
+const REASONING_EFFORT = 'low';
 
 // Parse the model's JSON array of test cases, tolerant of markdown fences,
 // surrounding prose, and — importantly — a TRUNCATED response. Local models can
@@ -48,22 +55,45 @@ export function extractTestCases(text) {
     return objects;
 }
 
-export const generateTestCases = async (requirement, requirementHistory = [], businessRules = '', regressionContext = '', techDetails = '', signal) => {
-    if (!API_KEY) {
-        throw new Error("API Key is missing. Please check your .env file.");
-    }
-
+/**
+ * Generate functional test cases for `requirement`, streamed through the
+ * backend LLM proxy (`POST /api/llm/generate` via streamLLM) — the browser no
+ * longer holds an LLM API key nor talks to the gateway directly.
+ *
+ * The four-batch prompt strategy, the per-batch retry policy and the
+ * JSON-salvage parsing are unchanged from the pre-streaming version. Batches
+ * still run in parallel; because four interleaved token streams would be
+ * unreadable in a single output pane, each batch accumulates into its own slot
+ * and `onToken` receives a stable, section-headed composition of all four.
+ *
+ * @param {Object} opts
+ * @param {string} opts.requirement - The feature/requirement to cover.
+ * @param {string[]} [opts.requirementHistory] - Previously used requirements, passed as domain context.
+ * @param {string} [opts.businessRules]
+ * @param {string} [opts.regressionContext]
+ * @param {string} [opts.techDetails]
+ * @param {(token: string, full: string) => void} [opts.onToken] - Called with each
+ *   incremental token and the composed live text of every batch so far.
+ * @param {AbortSignal} [opts.signal] - Cancels every in-flight batch.
+ * @returns {Promise<Object[]>} Test-case rows, re-indexed as FT_001…FT_NNN.
+ */
+export const generateTestCases = async ({
+    requirement,
+    requirementHistory = [],
+    businessRules = '',
+    regressionContext = '',
+    techDetails = '',
+    onToken,
+    signal,
+} = {}) => {
     if (signal?.aborted) {
         throw new DOMException("Aborted", "AbortError");
     }
 
     try {
-        const genAI = new GoogleGenerativeAI(API_KEY, LLM_ENDPOINT);
-        const model = genAI.getGenerativeModel({ model: MODEL_NAME, generationConfig: { reasoningEffort: 'low' } });
-
         // Sanitize requirement to remove repeating dots, ellipses, and excess spacing from copied texts
         const sanitizedRequirement = (requirement || "")
-            .replace(/[\u2026\u22EF]/g, ' ') // Replace unicode ellipses
+            .replace(/[…⋯]/g, ' ') // Replace unicode ellipses
             .replace(/\.{2,}/g, ' ')         // Replace repeating periods with space
             .replace(/\s+/g, ' ')            // Normalize whitespace
             .trim();
@@ -135,26 +165,41 @@ export const generateTestCases = async (requirement, requirementHistory = [], bu
             }
         ];
 
-        const cancellationPromise = new Promise((_, reject) => {
-            if (signal) {
-                signal.addEventListener('abort', () => reject(new DOMException("Aborted", "AbortError")));
-            }
-        });
+        // One accumulator slot per batch, so the caller always sees the batches
+        // in declaration order regardless of which stream emits next.
+        const partials = batches.map(() => '');
+        const compose = () => batches
+            .map((b, i) => `### ${b.name}\n${partials[i] || '…'}`)
+            .join('\n\n');
 
-        const queryBatchWithRetry = async (b, retriesLeft = 1) => {
+        // Clearing a slot has to be pushed to the caller too, otherwise the
+        // output pane keeps showing the abandoned attempt's text until the
+        // next token of the new one happens to arrive.
+        const resetPartial = (i, placeholder = '') => {
+            partials[i] = placeholder;
+            onToken?.('', compose());
+        };
+
+        const queryBatchWithRetry = async (b, i, retriesLeft = 1) => {
             try {
-                const result = await Promise.race([
-                    model.generateContent(b.prompt),
-                    cancellationPromise
-                ]);
-                const response = await result.response;
-                const text = response.text();
+                resetPartial(i); // a retry restarts this batch's visible output
+                const text = await streamLLM({
+                    prompt: b.prompt,
+                    maxTokens: MAX_TOKENS,
+                    temperature: TEMPERATURE,
+                    reasoningEffort: REASONING_EFFORT,
+                    signal,
+                    onToken: (token, full) => {
+                        partials[i] = full;
+                        onToken?.(token, compose());
+                    },
+                });
                 const cases = extractTestCases(text);
-                
+
                 // If it succeeded but returned very few cases (less than 5), retry once if retries are left
                 if (cases.length < 5 && retriesLeft > 0) {
                     console.warn(`[AI Batch Warning] Generated only ${cases.length} cases for ${b.name}. Retrying once...`);
-                    return await queryBatchWithRetry(b, retriesLeft - 1);
+                    return await queryBatchWithRetry(b, i, retriesLeft - 1);
                 }
                 return cases;
             } catch (err) {
@@ -162,15 +207,19 @@ export const generateTestCases = async (requirement, requirementHistory = [], bu
                 console.error(`[AI Batch Error] Failed to generate ${b.name}:`, err);
                 if (retriesLeft > 0) {
                     console.log(`[AI Batch Retry] Retrying ${b.name} after error...`);
-                    return await queryBatchWithRetry(b, retriesLeft - 1);
+                    return await queryBatchWithRetry(b, i, retriesLeft - 1);
                 }
+                // Out of retries: replace the partial text with the reason, so
+                // the pane shows which batch gave up rather than a truncated
+                // fragment that looks like it is still arriving.
+                resetPartial(i, `[failed: ${err.message}]`);
                 return [];
             }
         };
 
         // Run queries in parallel
         const results = await Promise.all(
-            batches.map(b => queryBatchWithRetry(b))
+            batches.map((b, i) => queryBatchWithRetry(b, i))
         );
 
         // Flatten all generated test cases
@@ -193,9 +242,6 @@ export const generateTestCases = async (requirement, requirementHistory = [], bu
             throw error;
         }
         console.error("AI Service Error:", error);
-        if (error.message.includes("404")) {
-            throw new Error(`Model '${MODEL_NAME}' not found or API Key invalid. Ensure your API key has access to Generative Language API.`);
-        }
         throw error;
     }
 };

@@ -1,29 +1,113 @@
-import React, { useState, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useAuth } from 'react-oidc-context';
+import {
+    Alert,
+    Box,
+    Button,
+    Chip,
+    Grid,
+    Paper,
+    Stack,
+    TextField,
+    ToggleButton,
+    ToggleButtonGroup,
+    Typography,
+} from '@mui/material';
+import ArticleIcon from '@mui/icons-material/Article';
+import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import DownloadIcon from '@mui/icons-material/Download';
+import EditNoteIcon from '@mui/icons-material/EditNote';
+import LinkIcon from '@mui/icons-material/Link';
+import ToolWorkflow from '../components/workflow/ToolWorkflow';
+import GenerationProgress from '../components/workflow/GenerationProgress';
+import SafeHtml from '../components/common/SafeHtml';
+import { useNotify } from '../components/common/NotificationProvider';
 import { createApiClient } from '../utils/apiClient';
-import { generateTestPlan } from '../services/testPlanService';
-import { Download, FileText, Loader, AlertCircle, Loader2 } from 'lucide-react';
+import { generateTestPlan, TEST_PLAN_SECTIONS } from '../services/testPlanService';
 import { asBlob } from 'html-docx-js-typescript';
 import * as FileSaverModule from 'file-saver';
 const saveAs = FileSaverModule.saveAs || FileSaverModule.default || FileSaverModule || FileSaverModule.saveAs;
 
+// Wizard step order — the single source of truth for both the stepper and any
+// programmatic jump (`stepIndex('review')`). The steps array below is built
+// from this list, so no numeric step index is maintained by hand.
+const STEP_ORDER = ['input', 'generate', 'review', 'export'];
+const stepIndex = (key) => STEP_ORDER.indexOf(key);
+
+// Format an elapsed-seconds value as "12.3s" or "1m 05s".
+const fmtDuration = (s) => {
+    if (s == null) return '';
+    if (s >= 60) return `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, '0')}s`;
+    return `${s.toFixed(1)}s`;
+};
+
+// Escape a user-supplied value before interpolating it into the DOCX cover
+// block's HTML. Only the client/project fields go through this — the generated
+// plan itself is interpolated raw on purpose (see handleExportDocx).
+const escapeHtml = (v) => String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const EMPTY_FORM = { clientName: '', projectName: '', requirement: '' };
+
+// The generated fragment is styled by the model with inline CSS for a light
+// "document" look, so the preview sheet is pinned to white/dark-grey in both
+// app themes (as the legacy page did with `.document-preview` and `!important`)
+// rather than inheriting the dark app surface and rendering dark-on-dark.
+// Table rules mirror the DOCX wrapper below so the preview matches the export.
+const DOCUMENT_SX = {
+    bgcolor: '#ffffff',
+    color: '#333333',
+    p: { xs: 2, md: 6 },
+    minHeight: 480,
+    overflowX: 'auto',
+    '& h1, & h2, & h3, & h4, & p, & li, & td, & th, & span, & div': { color: '#333333' },
+    '& table': { borderCollapse: 'collapse', width: '100%', margin: '20px 0' },
+    '& th, & td': { border: '1px solid #ddd', padding: '8px', textAlign: 'left' },
+    '& th': { backgroundColor: '#f2f2f2' },
+};
+
 const TestPlanGenerator = () => {
+    const notify = useNotify();
     const auth = useAuth();
-    const api = createApiClient(() => auth.user?.access_token);
 
-    const [clientName, setClientName] = useState('');
-    const [projectName, setProjectName] = useState('');
-    const [requirement, setRequirement] = useState('');
-    const [generatedPlan, setGeneratedPlan] = useState(null);
-    const [isGenerating, setIsGenerating] = useState(false);
-    const [error, setError] = useState(null);
-    const abortControllerRef = useRef(null);
-
-    // Jira Integration States
+    // Every piece of user-visible state lives here, not inside a step's
+    // content: ToolWorkflow unmounts the previous step on navigation, so
+    // anything held below this component (the JIRA key being typed, the
+    // generated plan, the stream buffer) would be lost on Back/Next.
+    // Index into STEP_ORDER; jumps elsewhere go through stepIndex(key).
+    const [step, setStep] = useState(stepIndex('input'));
+    const [form, setForm] = useState(EMPTY_FORM);
     const [sourceType, setSourceType] = useState('manual'); // 'manual' | 'jira'
     const [jiraKey, setJiraKey] = useState('');
     const [isFetchingJira, setIsFetchingJira] = useState(false);
     const [jiraError, setJiraError] = useState(null);
+    const [generatedPlan, setGeneratedPlan] = useState(null);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [streamText, setStreamText] = useState('');
+    const [error, setError] = useState(null);
+    const [genSeconds, setGenSeconds] = useState(null);
+    const abortControllerRef = useRef(null);
+
+    const api = createApiClient(() => auth.user?.access_token);
+    const setField = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+
+    const { clientName, projectName, requirement } = form;
+    const isFormComplete = Boolean(clientName.trim() && projectName.trim() && requirement.trim());
+    const docxFileName = `${(clientName.trim() || 'Client').replace(/\s+/g, '_')}_TestPlan.docx`;
+
+    // Heading count is a cheap "did the model actually emit the eight sections"
+    // signal for the reviewer. Deliberately reported as a neutral count rather
+    // than a pass/fail gate: the model is free to use h1/h3 for sections and
+    // sub-sections, so any threshold check would raise false alarms.
+    const headingCount = useMemo(
+        () => (generatedPlan ? (generatedPlan.match(/<h[1-3][\s>]/gi) || []).length : 0),
+        [generatedPlan],
+    );
 
     const handleFetchJiraStory = async () => {
         if (!jiraKey.trim()) return;
@@ -32,13 +116,15 @@ const TestPlanGenerator = () => {
         try {
             const data = await api.get(`/api/jira/story/${encodeURIComponent(jiraKey.trim())}`);
             if (data?.story?.description) {
-                setRequirement(data.story.description);
+                setField('requirement', data.story.description);
+                notify.success(`Imported requirements from ${jiraKey.trim()}`);
             } else {
                 throw new Error('Jira story fetched, but no description or requirements found in it.');
             }
         } catch (err) {
             console.error('[Jira Fetch Error]', err);
             setJiraError(err.message);
+            notify.error(`Jira import failed: ${err.message}`);
         } finally {
             setIsFetchingJira(false);
         }
@@ -49,29 +135,51 @@ const TestPlanGenerator = () => {
             abortControllerRef.current.abort();
             abortControllerRef.current = null;
             setIsGenerating(false);
+            // Mark the pane so a half-streamed plan doesn't read as still running.
+            setStreamText((prev) => (prev ? `${prev}\n\n[Cancelled]` : '[Cancelled]'));
         }
     };
 
     const handleGenerate = async () => {
-        if (!clientName || !projectName || !requirement) {
-            setError("All fields are required.");
+        if (!isFormComplete) {
+            setError('All fields are required.');
             return;
         }
-
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
         abortControllerRef.current = controller;
 
         setIsGenerating(true);
         setError(null);
+        setStreamText('');
+        setGenSeconds(null);
+        const startedAt = performance.now();
         try {
-            const planHtml = await generateTestPlan(clientName, projectName, requirement, controller.signal);
+            const planHtml = await generateTestPlan({
+                clientName: clientName.trim(),
+                projectName: projectName.trim(),
+                requirement,
+                onToken: (_token, full) => setStreamText(full),
+                signal: controller.signal,
+            });
+
+            // Unlike the Test Case Generator (where an async batch merges into a
+            // table the user may have edited mid-run, so its updater must be
+            // functional), a plan is one document that wholly replaces the
+            // previous one — there is no prior value to read, so a functional
+            // updater here would be ceremony. The stale-run hazard is instead
+            // handled by aborting the previous controller above: a superseded
+            // run throws AbortError out of streamLLM and never reaches this line.
             setGeneratedPlan(planHtml);
+            setGenSeconds((performance.now() - startedAt) / 1000);
+            notify.success('Test plan generated');
+            setStep(stepIndex('review'));
         } catch (err) {
             if (err.name === 'AbortError') {
-                console.log("Cancelled");
+                notify.info('Generation cancelled');
             } else {
                 setError(err.message);
+                notify.error(`Generation failed: ${err.message}`);
             }
         } finally {
             if (abortControllerRef.current === controller) {
@@ -81,17 +189,26 @@ const TestPlanGenerator = () => {
         }
     };
 
+    // ---------- DOCX export (conversion logic unchanged from the legacy page) ----------
     const handleExportDocx = async () => {
         if (!generatedPlan) return;
 
         try {
-            // Wrap generated HTML in a standard document structure for better conversion
+            // Wrap generated HTML in a standard document structure for better conversion.
+            //
+            // `generatedPlan` is interpolated RAW here, deliberately: sanitizing is a
+            // render-time concern (the preview goes through SafeHtml), whereas
+            // html-docx-js needs the full original markup — DOMPurify's html profile
+            // would strip the <style> block and inline document styling the converter
+            // relies on — and a .docx is not a browser execution context. The two
+            // user-supplied cover fields ARE escaped, since they are the only values
+            // a user could inject markup into this wrapper through.
             const fullHtml = `
                 <!DOCTYPE html>
                 <html>
                 <head>
                     <meta charset="utf-8">
-                    <title>Test Plan - ${projectName}</title>
+                    <title>Test Plan - ${escapeHtml(projectName)}</title>
                     <style>
                         body { font-family: 'Calibri', sans-serif; line-height: 1.5; color: #333; }
                         h1, h2, h3 { color: #2E4053; }
@@ -102,8 +219,8 @@ const TestPlanGenerator = () => {
                 </head>
                 <body>
                     <h1 style="text-align: center; color: #1a237e;">Test Plan</h1>
-                    <p style="text-align: center; font-size: 1.2em;"><strong>Client:</strong> ${clientName}</p>
-                    <p style="text-align: center; font-size: 1.2em;"><strong>Project:</strong> ${projectName}</p>
+                    <p style="text-align: center; font-size: 1.2em;"><strong>Client:</strong> ${escapeHtml(clientName)}</p>
+                    <p style="text-align: center; font-size: 1.2em;"><strong>Project:</strong> ${escapeHtml(projectName)}</p>
                     <hr/>
                     ${generatedPlan}
                 </body>
@@ -111,273 +228,230 @@ const TestPlanGenerator = () => {
             `;
 
             const blob = await asBlob(fullHtml);
-            const fileName = `${clientName.replace(/\s+/g, '_')}_TestPlan.docx`;
-            saveAs(blob, fileName);
+            // Reuse the value the Export step shows as a caption, so the promised
+            // filename and the delivered one can never drift apart.
+            saveAs(blob, docxFileName);
+            notify.success(`Downloaded ${docxFileName}`);
         } catch (err) {
-            console.error("Export Error:", err);
-            setError("Failed to export document.");
+            console.error('Export Error:', err);
+            setError('Failed to export document.');
+            notify.error('Failed to export document.');
         }
     };
 
-    return (
-        <div className="test-plan-generator animate-fade-in">
-            <div className="page-header">
-                <h2>ISTQB Test Plan Generator</h2>
-                <p>Create professional, standard-compliant test strategy documents.</p>
-            </div>
+    const handleCopyHtml = async () => {
+        if (!generatedPlan) return;
+        try {
+            await navigator.clipboard.writeText(generatedPlan);
+            notify.success('Plan HTML copied to clipboard');
+        } catch (err) {
+            // Clipboard access needs a secure context and can be denied outright.
+            console.error('[Copy Error]', err);
+            notify.error('Could not copy to clipboard — copy manually from the preview.');
+        }
+    };
 
-            <div className="input-grid">
-                <div className="form-group">
-                    <label>Client Name</label>
-                    <input
-                        type="text"
-                        className="input-field"
+    // ---------- Steps ----------
+    const inputStep = (
+        <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Create professional, standard-compliant ISTQB test strategy documents.
+            </Typography>
+
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+                <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                        label="Client Name"
+                        fullWidth
                         value={clientName}
-                        onChange={(e) => setClientName(e.target.value)}
+                        onChange={(e) => setField('clientName', e.target.value)}
                         placeholder="e.g. Acme Corp"
                         disabled={isGenerating}
                     />
-                </div>
-                <div className="form-group">
-                    <label>Project Name</label>
-                    <input
-                        type="text"
-                        className="input-field"
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                        label="Project Name"
+                        fullWidth
                         value={projectName}
-                        onChange={(e) => setProjectName(e.target.value)}
+                        onChange={(e) => setField('projectName', e.target.value)}
                         placeholder="e.g. E-Commerce Revamp"
                         disabled={isGenerating}
                     />
-                </div>
-            </div>
+                </Grid>
+            </Grid>
 
-            {/* Source Selector Toggles */}
-            <div className="source-selector-tabs" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
-                <button
-                    className={`tab-btn ${sourceType === 'manual' ? 'active' : ''}`}
-                    onClick={() => setSourceType('manual')}
-                    style={{
-                        background: sourceType === 'manual' ? 'rgba(109, 40, 217, 0.15)' : 'transparent',
-                        color: sourceType === 'manual' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                        border: '1px solid ' + (sourceType === 'manual' ? 'var(--accent-primary)' : 'transparent'),
-                        padding: '0.4rem 1rem',
-                        borderRadius: 'var(--radius-md)',
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                        fontSize: '0.85rem',
-                        transition: 'all 0.2s'
-                    }}
-                >
-                    📝 Manual Input
-                </button>
-                <button
-                    className={`tab-btn ${sourceType === 'jira' ? 'active' : ''}`}
-                    onClick={() => setSourceType('jira')}
-                    style={{
-                        background: sourceType === 'jira' ? 'rgba(109, 40, 217, 0.15)' : 'transparent',
-                        color: sourceType === 'jira' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                        border: '1px solid ' + (sourceType === 'jira' ? 'var(--accent-primary)' : 'transparent'),
-                        padding: '0.4rem 1rem',
-                        borderRadius: 'var(--radius-md)',
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                        fontSize: '0.85rem',
-                        transition: 'all 0.2s'
-                    }}
-                >
-                    🔌 JIRA Story Integration
-                </button>
-            </div>
+            <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={sourceType}
+                onChange={(_e, next) => next && setSourceType(next)}
+                aria-label="Requirement source"
+                sx={{ mb: 2 }}
+            >
+                <ToggleButton value="manual" aria-label="Manual input">
+                    <EditNoteIcon fontSize="small" sx={{ mr: 0.75 }} /> Manual Input
+                </ToggleButton>
+                <ToggleButton value="jira" aria-label="JIRA story integration">
+                    <LinkIcon fontSize="small" sx={{ mr: 0.75 }} /> JIRA Story Integration
+                </ToggleButton>
+            </ToggleButtonGroup>
 
-            {/* JIRA Import Workbench */}
             {sourceType === 'jira' && (
-                <div className="jira-workbench animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border-color)' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <input
-                            type="text"
-                            className="input-field"
-                            placeholder="JIRA Issue Key (e.g. QA-123)"
+                <Paper variant="outlined" sx={{ p: 2, mb: 2, borderStyle: 'dashed' }}>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' } }}>
+                        <TextField
+                            label="JIRA Issue Key"
+                            placeholder="e.g. QA-123"
+                            fullWidth
                             value={jiraKey}
                             onChange={(e) => setJiraKey(e.target.value)}
                             disabled={isFetchingJira}
-                            style={{ margin: 0, flex: 1 }}
                         />
-                        <button
-                            className="btn btn-secondary"
+                        <Button
+                            variant="outlined"
+                            startIcon={<CloudDownloadIcon />}
                             onClick={handleFetchJiraStory}
                             disabled={isFetchingJira || !jiraKey.trim()}
-                            style={{ padding: '0.75rem 1.25rem', whiteSpace: 'nowrap' }}
+                            sx={{ whiteSpace: 'nowrap' }}
                         >
-                            {isFetchingJira ? (
-                                <>
-                                    <Loader2 className="spin" size={16} />
-                                    <span>Fetching...</span>
-                                </>
-                            ) : (
-                                <span>Fetch Story Description</span>
-                            )}
-                        </button>
-                    </div>
-                    {jiraError && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#f87171', fontSize: '0.85rem' }}>
-                            <AlertCircle size={14} />
-                            <span>{jiraError}</span>
-                        </div>
-                    )}
-                </div>
+                            {isFetchingJira ? 'Fetching…' : 'Fetch Story Description'}
+                        </Button>
+                    </Stack>
+                    {jiraError && <Alert severity="error" sx={{ mt: 2 }}>{jiraError}</Alert>}
+                </Paper>
             )}
 
-            <div className="form-group mb-4">
-                <label>Project Requirements / Scope</label>
-                <textarea
-                    className="input-field textarea"
-                    value={requirement}
-                    onChange={(e) => setRequirement(e.target.value)}
-                    placeholder="Describe the project scope, key features, and objectives..."
-                    rows={6}
-                    disabled={isGenerating}
-                />
-            </div>
+            <TextField
+                label="Project Requirements / Scope"
+                fullWidth
+                multiline
+                minRows={6}
+                value={requirement}
+                onChange={(e) => setField('requirement', e.target.value)}
+                placeholder="Describe the project scope, key features, and objectives..."
+                disabled={isGenerating}
+                helperText={sourceType === 'jira'
+                    ? 'Fetched text lands here and stays editable before you generate.'
+                    : 'Client name, project name and scope are all required.'}
+            />
+        </Box>
+    );
 
-            <div className="btn-group-action" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
-                <button
-                    className="btn btn-primary generate-btn"
+    const generateStep = (
+        <Box>
+            <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+                <Button
+                    variant="contained"
+                    startIcon={<ArticleIcon />}
                     onClick={handleGenerate}
-                    disabled={isGenerating || !requirement}
-                    style={{ flex: 1 }}
+                    disabled={isGenerating || !isFormComplete}
                 >
-                    {isGenerating ? (
-                        <>
-                            <Loader className="spin" size={20} />
-                            <span>Generating Plan...</span>
-                        </>
-                    ) : (
-                        <>
-                            <FileText size={20} />
-                            <span>Generate Test Plan</span>
-                        </>
-                    )}
-                </button>
+                    {isGenerating
+                        ? 'Generating Plan…'
+                        : (generatedPlan ? 'Regenerate Test Plan' : 'Generate Test Plan')}
+                </Button>
                 {isGenerating && (
-                    <button
-                        className="btn btn-danger"
-                        onClick={handleCancel}
-                        title="Cancel Generation"
-                        style={{
-                            background: 'rgba(239, 68, 68, 0.2)',
-                            color: '#fca5a5',
-                            border: '1px solid rgba(239, 68, 68, 0.5)',
-                            borderRadius: 'var(--radius-md)',
-                            padding: '0.75rem 1rem',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem'
-                        }}
-                    >
-                        <AlertCircle size={20} />
-                        <span>Cancel</span>
-                    </button>
+                    <Button variant="outlined" color="error" onClick={handleCancel}>Cancel</Button>
                 )}
-            </div>
+            </Stack>
+
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Sections generated: {TEST_PLAN_SECTIONS.join(' · ')}
+            </Typography>
 
             {error && (
-                <div className="error-banner animate-fade-in">
-                    <AlertCircle size={20} />
-                    <span>{error}</span>
-                </div>
+                <Alert
+                    severity="error"
+                    sx={{ mb: 2 }}
+                    action={<Button color="inherit" size="small" onClick={handleGenerate}>Retry</Button>}
+                >
+                    {error}
+                </Alert>
             )}
-
-            {generatedPlan && (
-                <div className="preview-section animate-fade-in">
-                    <div className="preview-header">
-                        <h3>Plan Preview</h3>
-                        <button className="btn btn-secondary" onClick={handleExportDocx}>
-                            <Download size={18} />
-                            <span>Download as Word Doc</span>
-                        </button>
-                    </div>
-                    <div className="document-preview">
-                        <div dangerouslySetInnerHTML={{ __html: generatedPlan }} />
-                    </div>
-                </div>
+            {!isGenerating && genSeconds != null && (
+                <Alert severity="success" sx={{ mb: 2 }}>
+                    Test plan generated in {fmtDuration(genSeconds)}
+                </Alert>
             )}
+            <GenerationProgress streamText={streamText || null} onRetry={handleGenerate} />
+        </Box>
+    );
 
-            <style>{`
-                .test-plan-generator {
-                    max-width: 1000px;
-                    margin: 0 auto;
-                }
-                .page-header { margin-bottom: 2rem; }
-                .page-header h2 { font-size: 1.75rem; margin-bottom: 0.5rem; }
-                .page-header p { color: var(--text-secondary); }
+    const reviewStep = (
+        <Box>
+            <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                <Typography variant="h6" sx={{ mr: 'auto' }}>Plan Preview</Typography>
+                {headingCount > 0 && <Chip size="small" label={`${headingCount} headings`} />}
+                <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<DownloadIcon />}
+                    onClick={handleExportDocx}
+                    disabled={!generatedPlan}
+                >
+                    Download as Word Doc
+                </Button>
+            </Stack>
 
-                .input-grid {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 1.5rem;
-                    margin-bottom: 1.5rem;
-                }
+            {!generatedPlan ? (
+                <Alert severity="info">No test plan yet — generate one on the previous step.</Alert>
+            ) : (
+                <Paper elevation={3} sx={DOCUMENT_SX}>
+                    {/* Model-authored HTML — sanitized at render time by SafeHtml. */}
+                    <SafeHtml html={generatedPlan} />
+                </Paper>
+            )}
+        </Box>
+    );
 
-                .form-group label {
-                    display: block;
-                    margin-bottom: 0.5rem;
-                    color: var(--text-secondary);
-                    font-size: 0.9rem;
-                    font-weight: 500;
-                }
+    const exportStep = (
+        <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                {generatedPlan
+                    ? 'The plan is exported as a Word document with the client/project cover block prepended.'
+                    : 'Generate a test plan first — there is nothing to export yet.'}
+            </Typography>
+            <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                <Button
+                    variant="contained"
+                    startIcon={<DownloadIcon />}
+                    onClick={handleExportDocx}
+                    disabled={isGenerating || !generatedPlan}
+                >
+                    Download as Word Doc
+                </Button>
+                <Button
+                    variant="outlined"
+                    startIcon={<ContentCopyIcon />}
+                    onClick={handleCopyHtml}
+                    disabled={isGenerating || !generatedPlan}
+                >
+                    Copy HTML
+                </Button>
+                {generatedPlan && (
+                    <Typography variant="caption" color="text.secondary">{docxFileName}</Typography>
+                )}
+            </Stack>
+            {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+        </Box>
+    );
 
-                .textarea { resize: vertical; min-height: 120px; }
-                .mb-4 { margin-bottom: 2rem; }
+    const stepDefs = {
+        input: { label: 'Input', content: inputStep, canAdvance: isFormComplete },
+        generate: { label: 'Generate', content: generateStep, canAdvance: !!generatedPlan },
+        review: { label: 'Review', content: reviewStep, canAdvance: !!generatedPlan },
+        export: { label: 'Export', content: exportStep },
+    };
+    const steps = STEP_ORDER.map((key) => ({ key, ...stepDefs[key] }));
 
-                .error-banner {
-                   background: rgba(239, 68, 68, 0.1);
-                   border: 1px solid var(--error);
-                   color: #fca5a5;
-                   padding: 1rem;
-                   border-radius: var(--radius-md);
-                   margin-top: 1rem;
-                   display: flex;
-                   align-items: center;
-                   gap: 0.75rem;
-                }
-
-                .preview-section {
-                    margin-top: 3rem;
-                    border-top: 1px solid var(--border-color);
-                    padding-top: 2rem;
-                }
-
-                .preview-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 1.5rem;
-                }
-
-                .document-preview {
-                    background: white;
-                    color: #333;
-                    padding: 3rem;
-                    border-radius: var(--radius-md);
-                    box-shadow: var(--shadow-lg);
-                    min-height: 500px;
-                }
-
-                /* Override dark mode styles for the document preview explicitly */
-                .document-preview h1, .document-preview h2, .document-preview h3, .document-preview p, .document-preview li {
-                     color: #333 !important;
-                }
-                
-                .spin { animation: spin 1s linear infinite; }
-                @keyframes spin { 100% { transform: rotate(360deg); } }
-
-                @media (max-width: 768px) {
-                    .input-grid { grid-template-columns: 1fr; }
-                    .document-preview { padding: 1.5rem; }
-                }
-            `}</style>
-        </div>
+    return (
+        <ToolWorkflow
+            title="ISTQB Test Plan Generator"
+            steps={steps}
+            activeStep={step}
+            onStepChange={setStep}
+        />
     );
 };
 
