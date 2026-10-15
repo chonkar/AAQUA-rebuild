@@ -1,3 +1,5 @@
+import { downloadBlob } from '../utils/exportUtils';
+
 // See testRunnerService.js for why this is BASE_URL-prefixed rather than a bare /api.
 const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
@@ -150,12 +152,6 @@ async function triggerDownload(response, fallbackName) {
     if (m && m[1]) filename = m[1].trim().replace(/["']/g, '');
 
     const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { window.URL.revokeObjectURL(url); a.remove(); }, 2000);
+    const zipBlob = new Blob([blob], { type: response.headers.get('Content-Type') || 'application/zip' });
+    await downloadBlob(zipBlob, filename);
 }

@@ -40,7 +40,14 @@ FROM mcr.microsoft.com/playwright:v1.58.0-jammy
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends openjdk-17-jdk maven && \
+    apt-get install -y --no-install-recommends \
+        openjdk-17-jdk \
+        maven \
+        xvfb \
+        x11vnc \
+        fluxbox \
+        novnc \
+        websockify && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -52,18 +59,20 @@ RUN npx playwright install chromium chrome firefox webkit && \
         if [ -f "$path" ] && [ ! -L "$path" ]; then \
             mv "$path" "${path}-original" && \
             echo '#!/bin/bash' > "$path" && \
-            echo "exec ${path}-original --no-sandbox --disable-dev-shm-usage --headless=new \"\$@\"" >> "$path" && \
+            echo "exec ${path}-original --no-sandbox --disable-dev-shm-usage \"\$@\"" >> "$path" && \
             chmod +x "$path"; \
         fi; \
     done
 
 ENV NODE_ENV=production \
     PORT=3001 \
+    DISPLAY=:99 \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 COPY server ./server
-RUN mkdir -p temp_uploads temp_extract temp_output
+COPY scripts ./scripts
+RUN chmod +x scripts/*.sh && mkdir -p temp_uploads temp_extract temp_output
 
-EXPOSE 3001
+EXPOSE 3001 6080
 # tini is provided by `init: true` in docker-compose.yml so we don't install it here.
-ENTRYPOINT ["node", "server/index.js"]
+ENTRYPOINT ["/bin/bash", "/app/scripts/start-container.sh"]

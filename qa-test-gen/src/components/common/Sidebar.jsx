@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Settings, HelpCircle, Database, Target, ShieldCheck, Layers, Globe, PersonStanding, RefreshCw, LayoutDashboard, FileCode, FileText, Webhook, Gauge } from 'lucide-react';
+import { Settings, HelpCircle, Database, Target, Layers, Globe, PersonStanding, RefreshCw, LayoutDashboard, FileCode, FileText, Webhook, Bot } from 'lucide-react';
 import { useProject } from '../../context/ProjectContext';
 import { useAuth } from 'react-oidc-context';
 import { Users } from 'lucide-react';
@@ -25,7 +25,7 @@ const ServiceLink = ({ to, icon, label, locked, inactiveColor }) => {
           <span>{label}</span>
         </>
       )}
-    </NavLink>
+  </NavLink>
   );
 };
 
@@ -67,8 +67,7 @@ const Sidebar = () => {
           <ServiceLink to="/test-runner" icon={RefreshCw} label="Test Runner" locked={locked} />
           <ServiceLink to="/localization" icon={Globe} label="Localization Tester" locked={locked} />
           <ServiceLink to="/accessibility-scanner" icon={PersonStanding} label="Accessibility Scanner" locked={locked} />
-          <ServiceLink to="/performance-scanner" icon={Gauge} label="Performance Scanner" locked={locked} />
-          <ServiceLink to="/security-scanner" icon={ShieldCheck} label="Security Scanner" locked={locked} />
+          <ServiceLink to="/mcp-agent-hub" icon={Bot} label="MCP Agent Hub" locked={locked} />
         </div>
 
         <div className="nav-section mt-auto">

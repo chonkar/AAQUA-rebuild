@@ -4,8 +4,7 @@ import { createApiClient } from '../utils/apiClient';
 import { generateTestPlan } from '../services/testPlanService';
 import { Download, FileText, Loader, AlertCircle, Loader2 } from 'lucide-react';
 import { asBlob } from 'html-docx-js-typescript';
-import * as FileSaverModule from 'file-saver';
-const saveAs = FileSaverModule.saveAs || FileSaverModule.default || FileSaverModule || FileSaverModule.saveAs;
+import { downloadBlob } from '../utils/exportUtils';
 
 const TestPlanGenerator = () => {
     const auth = useAuth();
@@ -112,7 +111,8 @@ const TestPlanGenerator = () => {
 
             const blob = await asBlob(fullHtml);
             const fileName = `${clientName.replace(/\s+/g, '_')}_TestPlan.docx`;
-            saveAs(blob, fileName);
+            const docxBlob = new Blob([blob], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            await downloadBlob(docxBlob, fileName);
         } catch (err) {
             console.error("Export Error:", err);
             setError("Failed to export document.");

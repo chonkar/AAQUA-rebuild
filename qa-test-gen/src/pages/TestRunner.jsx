@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Clock, FolderOpen, ChevronDown, ChevronRight, Terminal, BarChart3, Download, CalendarClock, Wrench, Upload, GitBranch } from 'lucide-react';
+import { Play, RotateCcw, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Clock, FolderOpen, ChevronDown, ChevronRight, Terminal, BarChart3, Download, CalendarClock, Wrench, Upload, GitBranch, Puzzle, Monitor } from 'lucide-react';
 import { runTestsLocal, runTestsZip, runTestsGit, getRunStatus, retryFailedTests, getRuntimeInfo } from '../services/testRunnerService';
 import { startBatchHeal, getBatchHealStatus, applyHeal } from '../services/autoHealService';
 import { useProject } from '../context/ProjectContext';
+import ExtensionInstallModal from '../components/common/ExtensionInstallModal';
+import LiveBrowserViewer from '../components/common/LiveBrowserViewer';
 
 const HEADED_PREF_KEY = 'aaqua.testrunner.headed';
 
@@ -57,16 +59,20 @@ const SummaryCard = ({ label, value, color, icon: _Icon }) => (
 );
 
 // ─── Suite Row ───
-const SuiteRow = ({ suite }) => {
-    const [expanded, setExpanded] = useState(false);
+const SuiteRow = ({ suite, failuresOnly }) => {
     const passed = suite.tests.filter(t => t.status === 'PASSED').length;
     const failed = suite.tests.filter(t => t.status === 'FAILED').length;
     const skipped = suite.tests.filter(t => t.status === 'SKIPPED').length;
 
+    const [userExpanded, setUserExpanded] = useState(null);
+    const isExpanded = userExpanded !== null ? userExpanded : (failuresOnly && failed > 0);
+
+    const displayTests = failuresOnly ? suite.tests.filter(t => t.status === 'FAILED') : suite.tests;
+
     return (
         <div className="tr-suite">
-            <div className="tr-suite-header" onClick={() => setExpanded(!expanded)}>
-                <span className="tr-suite-chevron">{expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
+            <div className="tr-suite-header" onClick={() => setUserExpanded(!isExpanded)}>
+                <span className="tr-suite-chevron">{isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
                 <span className="tr-suite-name">{suite.name}</span>
                 <span className="tr-suite-counts">
                     {passed > 0 && <span className="tr-mini-badge pass">{passed} ✓</span>}
@@ -75,9 +81,9 @@ const SuiteRow = ({ suite }) => {
                 </span>
                 <span className="tr-suite-duration">{suite.duration}</span>
             </div>
-            {expanded && (
+            {isExpanded && (
                 <div className="tr-suite-tests animate-fade-in">
-                    {suite.tests.map((test, i) => <TestRow key={i} test={test} />)}
+                    {displayTests.map((test, i) => <TestRow key={i} test={test} />)}
                 </div>
             )}
         </div>
@@ -87,7 +93,17 @@ const SuiteRow = ({ suite }) => {
 // ─── Test Row ───
 const TestRow = ({ test }) => {
     const [showTrace, setShowTrace] = useState(false);
+    const [copied, setCopied] = useState(false);
     const Icon = STATUS_ICONS[test.status] || MinusCircle;
+
+    const handleCopy = (e) => {
+        e.stopPropagation();
+        const fullText = `Error: ${test.errorMessage}\n\nStack Trace:\n${test.stackTrace || ''}`;
+        navigator.clipboard.writeText(fullText);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
     return (
         <div className="tr-test-row">
             <div className="tr-test-main" onClick={() => test.errorMessage && setShowTrace(!showTrace)}>
@@ -97,9 +113,29 @@ const TestRow = ({ test }) => {
                 <span className="tr-test-dur">{test.duration}</span>
             </div>
             {showTrace && test.errorMessage && (
-                <div className="tr-error-block animate-fade-in">
-                    <p className="tr-error-msg">{test.errorMessage}</p>
-                    {test.stackTrace && <pre className="tr-stack">{typeof test.stackTrace === 'string' ? test.stackTrace.substring(0, 600) : JSON.stringify(test.stackTrace).substring(0, 600)}</pre>}
+                <div className="tr-error-container animate-fade-in">
+                    <div className="tr-error-card">
+                        <div className="tr-error-header">
+                            <span className="tr-error-title">Execution Failure Details</span>
+                            <button className="btn-copy-error" onClick={handleCopy}>
+                                {copied ? '✓ Copied!' : '📋 Copy Details'}
+                            </button>
+                        </div>
+                        <div className="tr-error-body">
+                            <div className="tr-error-message-box">
+                                <strong>Error Message:</strong>
+                                <div className="tr-error-message-text">{test.errorMessage}</div>
+                            </div>
+                            {test.stackTrace && (
+                                <div className="tr-error-stack-box">
+                                    <strong>Stack Trace:</strong>
+                                    <pre className="tr-error-stack-text">
+                                        {typeof test.stackTrace === 'string' ? test.stackTrace : JSON.stringify(test.stackTrace, null, 2)}
+                                    </pre>
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
@@ -154,6 +190,7 @@ const TestRunner = () => {
         try { return localStorage.getItem(HEADED_PREF_KEY) === 'true'; } catch { return false; }
     });
     const [hasDisplayServer, setHasDisplayServer] = useState(false);
+    const [activeMonitorTab, setActiveMonitorTab] = useState('console'); // 'console' | 'browser'
     const logCursorRef = useRef(0);
     const [framework, setFramework] = useState(null);
     const [projectRoot, setProjectRoot] = useState(null); // real server-side project root (may differ from projectPath if ZIP was uploaded)
@@ -167,6 +204,7 @@ const TestRunner = () => {
     const [scheduleTime, setScheduleTime] = useState('');
     const [scheduleDate, setScheduleDate] = useState(new Date().toISOString().split('T')[0]); // default today
     const [isScheduled, setIsScheduled] = useState(false);
+    const [failuresOnly, setFailuresOnly] = useState(false);
     const [isBrowsing, setIsBrowsing] = useState(false);
     const pollRef = useRef(null);
     const scheduleTimerRef = useRef(null);
@@ -175,6 +213,7 @@ const TestRunner = () => {
     const [healCandidates, setHealCandidates] = useState([]); // healable tests from results
     const [selectedHeals, setSelectedHeals] = useState({});   // { testKey: true/false }
     const [extensionReady, setExtensionReady] = useState(false);
+    const [showExtensionModal, setShowExtensionModal] = useState(false);
     const [pendingHealTests, setPendingHealTests] = useState(null);
     const [batchId, setBatchId] = useState(null);
     const [batchProgress, setBatchProgress] = useState(null); // { total, processed, results }
@@ -182,6 +221,9 @@ const TestRunner = () => {
     const [healApplyState, setHealApplyState] = useState({}); // { testKey: { status, healRunId, reRunResult } }
     const batchPollRef = useRef(null);
     const healPollRefs = useRef({});
+
+    const [runtimeInfo, setRuntimeInfo] = useState(null);
+    const [liveScreenshot, setLiveScreenshot] = useState(null);
 
     // Persist the headed preference whenever the user toggles it.
     useEffect(() => {
@@ -193,7 +235,10 @@ const TestRunner = () => {
     // entirely rather than offer something that can't work.
     useEffect(() => {
         getRuntimeInfo()
-            .then(info => setHasDisplayServer(!!info.hasDisplayServer))
+            .then(info => {
+                setRuntimeInfo(info);
+                setHasDisplayServer(!!info.hasDisplayServer);
+            })
             .catch(() => setHasDisplayServer(false));
     }, []);
 
@@ -206,6 +251,7 @@ const TestRunner = () => {
                 const data = await getRunStatus(rid, logCursorRef.current);
                 if (data.cursor != null) logCursorRef.current = data.cursor;
                 if (data.logs) setLogs(prev => prev + data.logs);
+                if (data.liveScreenshot) setLiveScreenshot(data.liveScreenshot);
                 setStatus(data.status);
                 setFramework(data.framework);
                 // Live dashboard data (parsed from partial XML reports)
@@ -262,7 +308,8 @@ const TestRunner = () => {
         if (runMode === 'path' && !projectPath.trim()) return;
         if (runMode === 'zip' && !zipFile) return;
         if (runMode === 'git' && !gitUrl.trim()) return;
-        setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
+        setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null); setLiveScreenshot(null);
+        if (headed) setActiveMonitorTab('browser');
         logCursorRef.current = 0;
         try {
             let data;
@@ -287,7 +334,7 @@ const TestRunner = () => {
     const handleRetry = async () => {
         const sourceId = retrySourceRunId || runId;
         if (!sourceId) return;
-        setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null);
+        setStatus('running'); setError(null); setResults(null); setLogs(''); setFailedCount(0); setLiveResults(null); setLiveScreenshot(null);
         logCursorRef.current = 0;
         try {
             const data = await retryFailedTests(sourceId);
@@ -370,7 +417,7 @@ const TestRunner = () => {
             setPendingHealTests(tests);
             window.postMessage({ source: 'aaqua-app', type: 'AAQUA_GET_DOM', url: targetUrl }, '*');
         } else {
-            alert("AAQUA Extension not detected. Please install and enable the AAQUA Chrome extension to capture the DOM for auto-healing.");
+            setShowExtensionModal(true);
         }
     };
 
@@ -529,9 +576,32 @@ const TestRunner = () => {
 
     return (
         <div className="tr-page animate-fade-in">
-            <div className="tr-header">
-                <h1><BarChart3 size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />Test Runner</h1>
-                <p className="tr-subtitle">Run your test suite and view live results with an interactive dashboard</p>
+            <div className="tr-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                    <h1><BarChart3 size={28} style={{ verticalAlign: 'middle', marginRight: 8 }} />Test Runner</h1>
+                    <p className="tr-subtitle">Run your test suite and view live results with an interactive dashboard</p>
+                </div>
+                <button
+                    onClick={() => setShowExtensionModal(true)}
+                    style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.45rem',
+                        background: extensionReady ? 'rgba(16, 185, 129, 0.12)' : 'rgba(59, 130, 246, 0.12)',
+                        border: '1px solid ' + (extensionReady ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.3)'),
+                        color: extensionReady ? '#10b981' : '#60a5fa',
+                        padding: '0.45rem 0.95rem',
+                        borderRadius: '99px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease'
+                    }}
+                    title="Click to install or view AAQUA Chrome Extension setup"
+                >
+                    <Puzzle size={14} />
+                    <span>{extensionReady ? '✓ Extension Active' : '🧩 Install AAQUA Extension'}</span>
+                </button>
             </div>
 
             {/* Input Panel */}
@@ -659,14 +729,17 @@ const TestRunner = () => {
                             />
                         </div>
                     )}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem', cursor: hasDisplayServer ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', opacity: hasDisplayServer ? 1 : 0.5 }} title={!hasDisplayServer ? "No display server detected on host. Headed mode is disabled." : ""}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem', cursor: hasDisplayServer ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', opacity: hasDisplayServer ? 1 : 0.5 }} title={!hasDisplayServer ? "No display server detected on host. Headed mode is disabled." : (runtimeInfo?.hasVnc ? "Watch live browser inside noVNC virtual display" : "Launch visible Chromium browser window directly on your desktop")}>
                         <input
                             type="checkbox"
                             checked={headed}
-                            onChange={(e) => setHeaded(e.target.checked)}
+                            onChange={(e) => {
+                                setHeaded(e.target.checked);
+                                if (e.target.checked) setActiveMonitorTab('browser');
+                            }}
                             disabled={isRunning || isScheduled || !hasDisplayServer}
                         />
-                        Show Browser (Headed)
+                        {runtimeInfo?.hasVnc ? 'Show Browser (noVNC)' : 'Show Browser (Headed Window)'}
                     </label>
                     <button 
                         className="btn btn-primary" 
@@ -678,6 +751,29 @@ const TestRunner = () => {
                     <button className="btn btn-retry" onClick={handleRetry} disabled={!canRetry} title={!canRetry ? (isRunning ? 'Wait for run to finish' : failedCount === 0 ? 'No failed tests' : 'Run tests first') : 'Re-run failed tests'}>
                         <RotateCcw size={18} />Re-Run Failed
                     </button>
+                    {hasRun && runMode === 'zip' && runId && (
+                        <button 
+                            className="btn btn-secondary" 
+                            style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '0.4rem', 
+                                border: '1px solid var(--accent-secondary)', 
+                                color: 'var(--accent-secondary)',
+                                padding: '0.5rem 1rem',
+                                borderRadius: 'var(--radius-md)',
+                                background: 'transparent',
+                                cursor: 'pointer'
+                            }}
+                            onClick={() => {
+                                const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+                                window.open(`${baseUrl}/api/download-healed-zip/${runId}`);
+                            }}
+                            title="Download ZIP of your project with healed locators applied"
+                        >
+                            <Download size={18} /> Download Healed ZIP
+                        </button>
+                    )}
                 </div>
 
                 {runMode === 'git' && (
@@ -764,8 +860,80 @@ const TestRunner = () => {
                 </div>
             )}
 
-            {/* Live Console */}
-            {(isRunning || logs) && <LiveConsole logs={logs} isRunning={isRunning} />}
+            {/* Live Execution Monitoring (Console & Live noVNC Browser View) */}
+            {(isRunning || logs || hasRun || activeMonitorTab === 'browser') && (
+                <div className="tr-monitor-section animate-fade-in" style={{ marginTop: '1.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' }}>
+                        <div style={{ display: 'flex', gap: '0.4rem', background: 'var(--bg-tertiary)', padding: '0.25rem', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                            <button
+                                type="button"
+                                onClick={() => setActiveMonitorTab('console')}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    padding: '0.35rem 0.85rem',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: activeMonitorTab === 'console' ? 'var(--accent-primary)' : 'transparent',
+                                    color: activeMonitorTab === 'console' ? '#fff' : 'var(--text-secondary)',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                <Terminal size={14} /> Console Logs
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setActiveMonitorTab('browser')}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    padding: '0.35rem 0.85rem',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    background: activeMonitorTab === 'browser' ? 'var(--accent-primary)' : 'transparent',
+                                    color: activeMonitorTab === 'browser' ? '#fff' : 'var(--text-secondary)',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                <Monitor size={14} /> {runtimeInfo?.hasVnc ? 'Live Browser (noVNC)' : 'Live Browser'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {activeMonitorTab === 'console' ? (
+                        <LiveConsole logs={logs} isRunning={isRunning} />
+                    ) : (
+                        <LiveBrowserViewer 
+                            title="Test Runner Live Browser" 
+                            subtitle={runtimeInfo?.hasVnc ? "Virtual Desktop (DISPLAY=:99) — Watching Headed Test Execution" : (headed ? "Native Desktop Execution (Chromium Window)" : "Headless Automated Test Execution")}
+                            isExecuting={isRunning} 
+                            liveScreenshot={liveScreenshot}
+                            runId={runId}
+                            pollEndpoint={runId ? `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api/test-runner/live-screen/${runId}` : null}
+                            isHeaded={headed}
+                            hasDisplayServer={hasDisplayServer}
+                            hasVnc={runtimeInfo?.hasVnc}
+                            onToggleHeaded={() => {
+                                const next = !headed;
+                                setHeaded(next);
+                                try { localStorage.setItem(HEADED_PREF_KEY, String(next)); } catch { /* ignore */ }
+                            }}
+                            framework={framework}
+                            logs={logs}
+                            status={status}
+                            results={results}
+                        />
+                    )}
+                </div>
+            )}
 
             {/* Live Dashboard (during execution) */}
             {isRunning && liveResults && liveSummary && (
@@ -792,8 +960,23 @@ const TestRunner = () => {
 
                     {liveResults.suites && liveResults.suites.length > 0 && (
                         <div className="tr-suites-section">
-                            <h3>Suite Breakdown</h3>
-                            {liveResults.suites.map((suite, i) => <SuiteRow key={i} suite={suite} />)}
+                            <div className="tr-suites-header-row">
+                                <h3>Suite Breakdown</h3>
+                                <label className="tr-failures-only-toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={failuresOnly}
+                                        onChange={(e) => setFailuresOnly(e.target.checked)}
+                                    />
+                                    <span>Show Failed Tests Only</span>
+                                </label>
+                            </div>
+                            {liveResults.suites
+                                .filter(suite => !failuresOnly || suite.tests.some(t => t.status === 'FAILED'))
+                                .map((suite, i) => (
+                                    <SuiteRow key={i} suite={suite} failuresOnly={failuresOnly} />
+                                ))
+                            }
                         </div>
                     )}
                 </div>
@@ -947,8 +1130,23 @@ const TestRunner = () => {
                     {/* Suite Breakdown */}
                     {results.suites && results.suites.length > 0 && (
                         <div className="tr-suites-section">
-                            <h3>Suite Breakdown</h3>
-                            {results.suites.map((suite, i) => <SuiteRow key={i} suite={suite} />)}
+                            <div className="tr-suites-header-row">
+                                <h3>Suite Breakdown</h3>
+                                <label className="tr-failures-only-toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={failuresOnly}
+                                        onChange={(e) => setFailuresOnly(e.target.checked)}
+                                    />
+                                    <span>Show Failed Tests Only</span>
+                                </label>
+                            </div>
+                            {results.suites
+                                .filter(suite => !failuresOnly || suite.tests.some(t => t.status === 'FAILED'))
+                                .map((suite, i) => (
+                                    <SuiteRow key={i} suite={suite} failuresOnly={failuresOnly} />
+                                ))
+                            }
                         </div>
                     )}
                 </div>
@@ -1433,8 +1631,120 @@ const TestRunner = () => {
         .ah-sum-item.green { color: var(--success); }
         .ah-sum-item.red { color: var(--error); }
         .ah-sum-item.orange { color: var(--tr-heal-text); }
+
+        /* Premium Error Card & Filter Toggles */
+        .tr-suites-header-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 1rem;
+          flex-wrap: wrap;
+          gap: 1rem;
+        }
+        .tr-failures-only-toggle {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+          cursor: pointer;
+          user-select: none;
+          background: var(--bg-tertiary);
+          padding: 0.4rem 0.8rem;
+          border-radius: var(--radius-md);
+          border: 1px solid var(--border-color);
+          transition: all 0.2s;
+        }
+        .tr-failures-only-toggle:hover {
+          border-color: var(--accent-secondary);
+          color: var(--text-primary);
+        }
+        .tr-failures-only-toggle input {
+          cursor: pointer;
+        }
+        .tr-error-container {
+          padding: 0.75rem 1rem 1rem 2.25rem;
+          background: rgba(239, 68, 68, 0.02);
+        }
+        .tr-error-card {
+          border: 1px solid rgba(239, 68, 68, 0.25);
+          background: #141118;
+          border-radius: 8px;
+          overflow: hidden;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        .tr-error-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0.6rem 1rem;
+          background: rgba(239, 68, 68, 0.08);
+          border-bottom: 1px solid rgba(239, 68, 68, 0.15);
+        }
+        .tr-error-title {
+          font-size: 0.78rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: #fca5a5;
+        }
+        .btn-copy-error {
+          background: transparent;
+          border: 1px solid rgba(252, 165, 165, 0.3);
+          color: #fca5a5;
+          padding: 2px 8px;
+          font-size: 0.72rem;
+          border-radius: 4px;
+          cursor: pointer;
+          font-weight: 600;
+          transition: all 0.2s;
+        }
+        .btn-copy-error:hover {
+          background: rgba(252, 165, 165, 0.15);
+          border-color: #fca5a5;
+        }
+        .tr-error-body {
+          padding: 1rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.85rem;
+        }
+        .tr-error-message-box strong, .tr-error-stack-box strong {
+          display: block;
+          font-size: 0.75rem;
+          color: var(--text-secondary);
+          margin-bottom: 0.3rem;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .tr-error-message-text {
+          font-size: 0.82rem;
+          color: #f87171;
+          background: rgba(239, 68, 68, 0.04);
+          padding: 0.5rem 0.75rem;
+          border-radius: 6px;
+          border-left: 3px solid #ef4444;
+          line-height: 1.5;
+          word-break: break-all;
+          white-space: pre-wrap;
+        }
+        .tr-error-stack-text {
+          font-size: 0.75rem;
+          color: #d1d5db;
+          font-family: monospace;
+          background: #0d0d14;
+          padding: 0.75rem;
+          border-radius: 6px;
+          max-height: 300px;
+          overflow-y: auto;
+          line-height: 1.6;
+          white-space: pre-wrap;
+          word-break: break-all;
+          border: 1px solid var(--border-color);
+        }
       `}</style>
 
+            <ExtensionInstallModal isOpen={showExtensionModal} onClose={() => setShowExtensionModal(false)} />
         </div>
     );
 };

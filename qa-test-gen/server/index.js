@@ -3,22 +3,24 @@ import multer from 'multer';
 import AdmZip from 'adm-zip';
 import fs from 'fs';
 import path from 'path';
+import { globSync } from 'glob';
 import { LocalLLM as GoogleGenerativeAI } from './utils/llmClient.js';
 import { createRequire } from 'module';
 import { spawn } from 'child_process';
 import { XMLParser } from 'fast-xml-parser';
 import crypto from 'crypto';
+import { Op } from 'sequelize';
 const require = createRequire(import.meta.url);
 
-// ─── AI Secure Engine imports ────────────────────────────
-import { initDatabase, AccessibilityResult, LocalizationResult, AutomationResult, PerformanceResult } from './models/index.js';
+// ─── Subsystem imports ────────────────────────────
+import { initDatabase, AccessibilityResult, LocalizationResult, AutomationResult, TransientDownload } from './models/index.js';
 import projectRoutes from './routes/projectRoutes.js';
-import scanRoutes from './routes/scanRoutes.js';
-import dashboardRoutes from './routes/dashboardRoutes.js';
-import governanceRoutes from './routes/governanceRoutes.js';
+import testCaseHistoryRoutes from './routes/testCaseHistoryRoutes.js';
 import jiraRoutes from './routes/jiraRoutes.js';
 import readinessRoutes from './routes/readinessRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import mcpRoutes from './routes/mcpRoutes.js';
+import recorderRoutes from './routes/recorderRoutes.js';
 import { calculateAndSaveReadiness } from './services/readinessService.js';
 import { parseSpec } from './services/apiSpecService.js';
 import { generateApiTestCases } from './services/apiTestGenService.js';
@@ -27,6 +29,8 @@ import { emitRestAssured } from './services/emitters/restAssuredEmitter.js';
 import { emitPlaywright } from './services/emitters/playwrightApiEmitter.js';
 import { emitPlaywrightFlows } from './services/emitters/playwrightFlowEmitter.js';
 import { emitK6 } from './services/emitters/k6Emitter.js';
+import { autoHealGraph } from './agents/autoHealAgent.js';
+import { testGenGraph } from './agents/testGenAgent.js';
 import { validateHttpUrl } from './middleware/urlValidator.js';
 import { securityRateLimiter } from './middleware/rateLimiter.js';
 import { generateWithRetry } from './utils/aiUtils.js';
@@ -1183,7 +1187,15 @@ public class DriverManager {
                 WebDriverManager.chromedriver().setup();
                 ChromeOptions options = new ChromeOptions();
                 options.addArguments("--remote-allow-origins=*");
-                if (headless) options.addArguments("--headless");
+                options.setAcceptInsecureCerts(true);
+                options.addArguments("--no-sandbox");
+                options.addArguments("--window-size=1920,1080");
+                options.setExperimentalOption("excludeSwitches", new String[]{"enable-automation"});
+                options.setExperimentalOption("useAutomationExtension", false);
+                if (headless) {
+                    options.addArguments("--headless=new");
+                    options.addArguments("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                }
                 instance = new ChromeDriver(options);
                 break;
         }
@@ -2075,129 +2087,6 @@ app.get('/api/analyze-localization/status/:jobId', (req, res) => {
     res.json({ status: job.status, done: job.done, total: job.total, issues: job.issues, error: job.error });
 });
 
-// ─── Performance scan (Phase 1): Lighthouse front-end audit ───
-// Runs Lighthouse against a URL (reusing Playwright's bundled Chromium) and
-// returns the performance score + Core Web Vitals + top opportunities. No LLM
-// needed — Lighthouse is local. SSRF-validated like the other URL endpoints.
-app.post('/api/analyze-performance', async (req, res) => {
-    const { url, projectId } = req.body || {};
-    if (!url) return res.status(400).json({ error: 'url is required.' });
-    const check = await validateHttpUrl(url);
-    if (!check.valid) return res.status(400).json({ error: check.error });
-
-    let chrome;
-    try {
-        const lighthouse = (await import('lighthouse')).default;
-        const chromeLauncher = await import('chrome-launcher');
-        chrome = await chromeLauncher.launch({
-            chromePath: chromium.executablePath(),
-            chromeFlags: ['--headless=new', '--no-sandbox', '--disable-gpu'],
-        });
-        console.log(`[Performance] Running Lighthouse on ${check.href}...`);
-        const runnerResult = await lighthouse(check.href, {
-            port: chrome.port,
-            output: 'json',
-            logLevel: 'error',
-            onlyCategories: ['performance'],
-        });
-        const lhr = runnerResult.lhr;
-
-        const ms = (id) => {
-            const a = lhr.audits[id];
-            return a && typeof a.numericValue === 'number' ? Math.round(a.numericValue) : null;
-        };
-        const score = Math.round((lhr.categories.performance.score || 0) * 100);
-        const clsAudit = lhr.audits['cumulative-layout-shift'];
-        const metrics = {
-            lcp: ms('largest-contentful-paint'),
-            cls: clsAudit && typeof clsAudit.numericValue === 'number' ? Number(clsAudit.numericValue.toFixed(3)) : null,
-            tbt: ms('total-blocking-time'),
-            fcp: ms('first-contentful-paint'),
-            speedIndex: ms('speed-index'),
-            ttfb: ms('server-response-time'),
-        };
-        // Failing / sub-optimal performance audits. Lighthouse 13 dropped the old
-        // 'load-opportunities' auditRef group, so select by score instead — and
-        // exclude the metric audits (already shown as CWV cards) and
-        // informative/not-applicable ones.
-        const METRIC_AUDIT_IDS = new Set([
-            'largest-contentful-paint', 'first-contentful-paint', 'cumulative-layout-shift',
-            'total-blocking-time', 'speed-index', 'interactive', 'max-potential-fid', 'server-response-time',
-        ]);
-        const opportunities = (lhr.categories.performance.auditRefs || [])
-            .map(ref => lhr.audits[ref.id])
-            .filter(a => a && a.score !== null && a.score < 0.9
-                && !['informative', 'notApplicable', 'manual'].includes(a.scoreDisplayMode)
-                && !METRIC_AUDIT_IDS.has(a.id))
-            .map(a => ({
-                title: a.title,
-                savingsMs: a.details && typeof a.details.overallSavingsMs === 'number' ? Math.round(a.details.overallSavingsMs) : null,
-                description: String(a.description || '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').slice(0, 220),
-            }))
-            .sort((x, y) => (y.savingsMs || 0) - (x.savingsMs || 0))
-            .slice(0, 10);
-
-        console.log(`[Performance] Score ${score} for ${check.href}`);
-
-        // Persist for Release Readiness (non-fatal; mirrors the other scanners).
-        try {
-            if (projectId) {
-                await PerformanceResult.create({
-                    project_id: projectId,
-                    performance_score: score,
-                    lcp_ms: metrics.lcp,
-                    cls: metrics.cls,
-                    tbt_ms: metrics.tbt,
-                    ttfb_ms: metrics.ttfb,
-                    scanned_url: check.href,
-                });
-                await calculateAndSaveReadiness(projectId);
-            }
-        } catch (dbErr) {
-            console.error('[Performance] Failed to persist PerformanceResult:', dbErr.message);
-        }
-
-        res.json({ score, metrics, opportunities, scannedUrl: check.href });
-    } catch (err) {
-        console.error('[Performance] Lighthouse error:', err.message);
-        res.status(500).json({ error: `Performance scan failed: ${err.message}` });
-    } finally {
-        if (chrome) { try { await chrome.kill(); } catch { /* best-effort */ } }
-    }
-});
-
-// AI triage of a Lighthouse result — prioritized plain-English fixes. Kept
-// SEPARATE from the scan so the fast scan isn't blocked by the slow local LLM;
-// the UI fetches this after showing the raw report. Fail-loud (502), never silent.
-app.post('/api/performance-insights', async (req, res) => {
-    const { score, metrics = {}, opportunities = [], url } = req.body || {};
-    const apiKey = req.headers['x-api-key'] || process.env.VITE_LLM_API_KEY;
-    if (!apiKey) return res.status(401).json({ error: 'LLM API key missing.' });
-    try {
-        const genAI = new GoogleGenerativeAI(apiKey, process.env.VITE_LLM_ENDPOINT);
-        const model = genAI.getGenerativeModel({
-            model: process.env.VITE_LLM_MODEL || 'gemma-4',
-            generationConfig: { temperature: 0.2, reasoningEffort: 'low', timeoutMs: 120000 },
-        });
-        const opps = (Array.isArray(opportunities) && opportunities.length)
-            ? opportunities.map(o => `- ${o.title}${o.savingsMs ? ` (~${o.savingsMs} ms)` : ''}`).join('\n')
-            : '(none flagged)';
-        const prompt = `You are a senior web-performance engineer. From this Lighthouse result, write a SHORT triage in plain text (NO markdown headings): first a one-line verdict, then "Top fixes:" with the 3 highest-impact actions, each with the likely user impact. Be concrete and concise.
-
-URL: ${url || 'n/a'}
-Performance score: ${score}/100
-Core Web Vitals: LCP ${metrics.lcp ?? '?'} ms, CLS ${metrics.cls ?? '?'}, TBT ${metrics.tbt ?? '?'} ms, TTFB ${metrics.ttfb ?? '?'} ms
-Opportunities:
-${opps}`;
-        const summary = (await generateWithRetry(model, prompt)).trim();
-        if (!summary) return res.status(502).json({ error: 'AI returned an empty summary — try again.' });
-        res.json({ summary });
-    } catch (err) {
-        console.error('[Performance] AI insights failed:', err.message);
-        res.status(502).json({ error: `AI insights failed: ${err.message}` });
-    }
-});
-
 // Accessibility Analysis Endpoint
 
 
@@ -2911,6 +2800,13 @@ app.post('/api/run-tests-local', async (req, res) => {
         res.json({ runId, framework });
 
         // Run tests asynchronously using existing helpers
+        const targetDisplay = process.env.DISPLAY || ':99';
+        const extraEnv = !isHeadless ? {
+            HEADLESS: 'false',
+            ...(process.platform !== 'win32' ? { DISPLAY: targetDisplay } : {})
+        } : {};
+        prepareHeadedMode(projectRoot, !isHeadless);
+
         if (framework === 'maven') {
             // Delete old report directories to prevent live dashboard from showing stale results
             const reportDirs = [
@@ -2924,7 +2820,10 @@ app.post('/api/run-tests-local', async (req, res) => {
                 }
             }
             const mvnArgs = ['clean', 'test', '-fae', '--no-transfer-progress'];
-            if (!isHeadless) mvnArgs.push('-Dheadless=false');
+            if (!isHeadless) {
+                mvnArgs.push('-Dheadless=false');
+                mvnArgs.push('-Dheaded=true');
+            }
             runCommand('mvn', mvnArgs, projectRoot, runId, (code) => {
                 const r = runStore.get(runId);
                 appendRunLog(r, `\n[AAQUA] Process exited with code ${code}\n`);
@@ -2934,7 +2833,7 @@ app.post('/api/run-tests-local', async (req, res) => {
                 r.status = 'completed';
                 persistRunLogs(runId, r);
                 persistRunToReadiness(r.projectId, r.results.summary);
-            });
+            }, extraEnv);
         } else if (framework === 'playwright') {
             runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
                 const r2 = runStore.get(runId);
@@ -2953,8 +2852,8 @@ app.post('/api/run-tests-local', async (req, res) => {
                     persistRunLogs(runId, r3);
                     persistRunToReadiness(r3.projectId, r3.results.summary);
                     try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
-                }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, pw.options);
-            });
+                }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, { ...pw.options, extraEnv });
+            }, extraEnv);
         } else if (framework === 'cypress') {
             runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
                 const cyArgs = ['cypress', 'run', '--reporter', 'json'];
@@ -3160,14 +3059,110 @@ app.post('/api/run-tests-git', async (req, res) => {
     }
 });
 
+// Helper: find latest screenshot generated by tests in projectRoot
+function findLatestScreenshot(projectRoot) {
+    if (!projectRoot || !fs.existsSync(projectRoot)) return null;
+    try {
+        const candidateDirs = [
+            path.join(projectRoot, 'playwright-results'),
+            path.join(projectRoot, 'test-results'),
+            path.join(projectRoot, 'screenshots'),
+            path.join(projectRoot, 'target', 'screenshots'),
+            path.join(projectRoot, 'target', 'surefire-reports'),
+            path.join(projectRoot, 'cypress', 'screenshots'),
+        ];
+        let newestFile = null;
+        let newestMtime = 0;
+        for (const dir of candidateDirs) {
+            if (fs.existsSync(dir)) {
+                const files = globSync('**/*.{png,jpg,jpeg}', { cwd: dir, absolute: true });
+                for (const file of files) {
+                    try {
+                        const stats = fs.statSync(file);
+                        if (stats.mtimeMs > newestMtime) {
+                            newestMtime = stats.mtimeMs;
+                            newestFile = file;
+                        }
+                    } catch { /* ignore stat errors */ }
+                }
+            }
+        }
+        if (newestFile) {
+            return {
+                filePath: newestFile,
+                mtime: newestMtime,
+                buffer: fs.readFileSync(newestFile),
+                mime: newestFile.endsWith('.png') ? 'image/png' : 'image/jpeg'
+            };
+        }
+    } catch { /* best-effort */ }
+    return null;
+}
+
+// Helper: sanitize Java source code, properties, and test configs when headed mode is requested
+function prepareHeadedMode(projectRoot, runHeaded) {
+    if (!runHeaded || !projectRoot || !fs.existsSync(projectRoot)) return;
+    try {
+        // 1. Patch Java files for Selenium/TestNG/JUnit
+        const javaFiles = globSync('**/*.java', { cwd: projectRoot, ignore: ['**/target/**', '**/node_modules/**'] }).map(f => path.join(projectRoot, f));
+        for (const file of javaFiles) {
+            let content = fs.readFileSync(file, 'utf-8');
+            if (content.includes('--headless')) {
+                const patched = content
+                    .replace(/options\.addArguments\(\s*["']--headless(=new)?["']\s*\);?/g, '// options.addArguments("--headless=new"); // disabled for headed mode')
+                    .replace(/options\.addArguments\(\s*["']--headless["']\s*\);?/g, '// options.addArguments("--headless"); // disabled for headed mode');
+                fs.writeFileSync(file, patched, 'utf-8');
+                console.log(`[Runner] Commented out hardcoded headless flag in ${path.basename(file)} for headed execution.`);
+            }
+        }
+
+        // 2. Patch config.properties / application.properties
+        const propFiles = globSync('**/*.properties', { cwd: projectRoot, ignore: ['**/target/**', '**/node_modules/**'] }).map(f => path.join(projectRoot, f));
+        for (const file of propFiles) {
+            let content = fs.readFileSync(file, 'utf-8');
+            if (/headless\s*=\s*true/i.test(content)) {
+                const patched = content.replace(/headless\s*=\s*true/gi, 'headless=false');
+                fs.writeFileSync(file, patched, 'utf-8');
+                console.log(`[Runner] Set headless=false in ${path.basename(file)} for headed execution.`);
+            }
+        }
+
+        // 3. Patch Playwright configs
+        const pwConfigFiles = globSync('**/playwright.config.{js,ts,mjs,cjs}', { cwd: projectRoot, ignore: ['**/node_modules/**'] }).map(f => path.join(projectRoot, f));
+        for (const file of pwConfigFiles) {
+            let content = fs.readFileSync(file, 'utf-8');
+            if (/headless\s*:\s*true/i.test(content)) {
+                const patched = content.replace(/headless\s*:\s*true/gi, 'headless: false');
+                fs.writeFileSync(file, patched, 'utf-8');
+                console.log(`[Runner] Set headless: false in ${path.basename(file)} for headed execution.`);
+            }
+        }
+    } catch (err) {
+        console.warn('[Runner] Could not patch files for headed mode:', err.message);
+    }
+}
+
 // Helper: execute the framework tests asynchronously
 function executeRunnerFramework(framework, projectRoot, runId, runHeaded) {
+    const targetDisplay = process.env.DISPLAY || ':99';
+    const extraEnv = runHeaded ? {
+        HEADLESS: 'false',
+        ...(process.platform !== 'win32' ? { DISPLAY: targetDisplay } : {})
+    } : {};
+    prepareHeadedMode(projectRoot, runHeaded);
+
     if (framework === 'maven') {
         // Delete old report directories to prevent stale live dashboard
         for (const d of [path.join(projectRoot, 'target', 'surefire-reports'), path.join(projectRoot, 'target', 'failsafe-reports')]) {
             if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
         }
-        runCommand('mvn', ['clean', 'test', '-fae', '--no-transfer-progress'], projectRoot, runId, (code) => {
+        const mvnArgs = ['clean', 'test', '-fae', '--no-transfer-progress'];
+        if (runHeaded) {
+            mvnArgs.push('-Dheadless=false');
+            mvnArgs.push('-Dheaded=true');
+        }
+        appendRunLog(runStore.get(runId), `[AAQUA] Starting Maven (${runHeaded ? 'headed (browser GUI enabled)' : 'headless'})...\n`);
+        runCommand('mvn', mvnArgs, projectRoot, runId, (code) => {
             const run = runStore.get(runId);
             appendRunLog(run, `\n[AAQUA] Process exited with code ${code}\n`);
             const suites = parseMavenResults(projectRoot);
@@ -3176,7 +3171,7 @@ function executeRunnerFramework(framework, projectRoot, runId, runHeaded) {
             run.status = 'completed';
             persistRunLogs(runId, run);
             persistRunToReadiness(run.projectId, run.results.summary);
-        });
+        }, extraEnv);
     } else if (framework === 'playwright') {
         // Install deps first
         runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
@@ -3196,19 +3191,21 @@ function executeRunnerFramework(framework, projectRoot, runId, runHeaded) {
                 persistRunLogs(runId, run3);
                 persistRunToReadiness(run3.projectId, run3.results.summary);
                 try { fs.unlinkSync(reportFile); } catch { /* best-effort */ }
-            }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, pw.options);
-        });
+            }, { PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile }, { ...pw.options, extraEnv });
+        }, extraEnv);
     } else if (framework === 'cypress') {
         runCommand('npm', npmInstallArgs(projectRoot), projectRoot, runId, () => {
-            runCommand('npx', ['cypress', 'run', '--reporter', 'json'], projectRoot, runId, (code) => {
+            const cyArgs = ['cypress', 'run', '--reporter', 'json'];
+            if (runHeaded) cyArgs.push('--headed');
+            runCommand('npx', cyArgs, projectRoot, runId, (code) => {
                 const run3 = runStore.get(runId);
                 appendRunLog(run3, `\n[AAQUA] Cypress exited with code ${code}\n`);
                 run3.results = { suites: [], summary: { total: 0, passed: 0, failed: 0, skipped: 0, duration: '—' } };
                 run3.status = 'completed';
                 persistRunLogs(runId, run3);
                 persistRunToReadiness(run3.projectId, run3.results.summary);
-            });
-        });
+            }, extraEnv);
+        }, extraEnv);
     }
 }
 
@@ -3347,6 +3344,9 @@ app.get('/api/run-status/:runId', (req, res) => {
     const tail = run.logs.slice(since);
     const cursor = run.logs.length;
 
+    const latestScr = findLatestScreenshot(run.projectRoot);
+    const liveScreenshot = latestScr ? latestScr.buffer.toString('base64') : (run.liveScreenshot || null);
+
     res.json({
         status: run.status,
         framework: run.framework,
@@ -3357,7 +3357,31 @@ app.get('/api/run-status/:runId', (req, res) => {
         failedCount: run.failedTests?.length || 0,
         projectRoot: run.projectRoot || null,
         error: run.error || null,
+        liveScreenshot: liveScreenshot,
+        screenshotName: latestScr ? path.basename(latestScr.filePath) : null,
     });
+});
+
+// GET /api/test-runner/live-screen/:runId — Serve latest frame/screenshot for Test Runner
+app.get('/api/test-runner/live-screen/:runId', (req, res) => {
+    const run = runStore.get(req.params.runId);
+    if (!run) return res.status(404).send('Run not found');
+
+    const screenshot = findLatestScreenshot(run.projectRoot);
+    if (screenshot) {
+        res.setHeader('Content-Type', screenshot.mime);
+        res.setHeader('Cache-Control', 'no-cache, no-store');
+        return res.send(screenshot.buffer);
+    }
+
+    if (run.liveScreenshot) {
+        const buf = Buffer.from(run.liveScreenshot, 'base64');
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'no-cache, no-store');
+        return res.send(buf);
+    }
+
+    res.status(404).send('No screenshot captured yet');
 });
 
 // POST /api/retry-tests/:runId — Retry only failed tests
@@ -3427,15 +3451,28 @@ app.post('/api/retry-tests/:runId', (req, res) => {
 });
 
 // GET /api/runtime-info — Lets the UI decide whether to show env-dependent
-// controls (e.g. the headed-mode toggle). Reports whether the host has a
-// display server and whether we're running inside a container. Unauthenticated
-// because the response carries no secrets and the UI needs it before the
-// auth flow has completed for some routes.
+// controls (e.g. the headed-mode toggle and live noVNC display). Reports whether
+// the host has a display server, whether we're running inside a container, and
+// whether noVNC live virtual display streaming is active.
 app.get('/api/runtime-info', (req, res) => {
+    const isContainer = fs.existsSync('/.dockerenv') || process.env.IS_CONTAINER === 'true';
+    const displayEnv = process.env.DISPLAY;
+    const hasDisplayServer = !!displayEnv || process.platform === 'win32' || isContainer;
+    
+    // Determine noVNC availability (active on container, explicit env, or X display)
+    const isVncActive = (displayEnv && displayEnv.startsWith(':')) || isContainer || process.env.ENABLE_VNC === 'true';
+    let vncUrl = null;
+    if (isVncActive) {
+        vncUrl = process.env.VNC_URL || '/aaqua/vnc/vnc.html?autoconnect=true&resize=scale&reconnect=true';
+    }
+
     res.json({
-        hasDisplayServer: !!process.env.DISPLAY,
-        isContainer: fs.existsSync('/.dockerenv'),
+        hasDisplayServer,
+        isContainer,
         platform: process.platform,
+        hasVnc: !!isVncActive,
+        vncUrl,
+        display: displayEnv || (process.platform === 'win32' ? 'native' : ':99')
     });
 });
 
@@ -3622,30 +3659,180 @@ app.post('/api/generate-api-flow-tests', (req, res) => {
     }
 });
 
-// ─── Projects: cross-cutting resource shared by every feature ────────────
-// Projects are not security-specific — Scan, AutomationResult,
-// AccessibilityResult, LocalizationResult, and ReleaseReadiness all hang off
-// Project — so the CRUD lives at the top level.
+// ─── Subsystem routes ────────────
 app.use('/api/projects', securityRateLimiter, projectRoutes);
-
-// ─── AI Secure Engine: Mount security routes ────────────
-// Authentication is owned by Keycloak; no /api/security/auth endpoints — clients
-// obtain tokens via the OIDC code+PKCE flow against the realm directly.
-app.use('/api/security/scan', securityRateLimiter, scanRoutes);
-app.use('/api/security/dashboard', securityRateLimiter, dashboardRoutes);
-app.use('/api/security/governance', securityRateLimiter, governanceRoutes);
+app.use('/api/testcase-history', securityRateLimiter, testCaseHistoryRoutes);
 app.use('/api/jira', securityRateLimiter, jiraRoutes);
 app.use('/api/readiness', securityRateLimiter, readinessRoutes);
 app.use('/api/admin/usage', securityRateLimiter, adminRoutes);
+app.use('/api/mcp', securityRateLimiter, mcpRoutes);
+app.use('/api/recorder', recorderRoutes);
+app.use('/api/mcp/recorder', recorderRoutes);
 
-// ZAP health check (no auth required)
-app.get('/api/security/zap/health', async (req, res) => {
+// POST /api/download/prepare: Cache binary file in PostgreSQL database (multi-instance safe)
+app.post('/api/download/prepare', async (req, res) => {
     try {
-        const { healthCheck } = await import('./services/zapService.js');
-        const status = await healthCheck();
-        res.json(status);
+        const { filename, base64Data, contentType } = req.body;
+        if (!filename || !base64Data || !contentType) {
+            return res.status(400).json({ error: 'filename, base64Data, and contentType are required.' });
+        }
+
+        const token = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 120000); // Expires in 2 minutes
+
+        // Write the transient file data to the shared database
+        await TransientDownload.create({
+            id: token,
+            filename,
+            contentType,
+            base64Data,
+            expiresAt
+        });
+
+        // Asynchronously clean up expired transient files from the DB
+        TransientDownload.destroy({
+            where: {
+                expiresAt: {
+                    [Op.lt]: new Date()
+                }
+            }
+        }).catch(cleanupErr => {
+            console.error('[Download Cache] DB cleanup failed:', cleanupErr);
+        });
+
+        res.json({ token });
     } catch (err) {
-        res.json({ status: 'error', error: err.message });
+        console.error('[Download Cache] Prepare error:', err);
+        res.status(500).json({ error: 'Failed to prepare download file.' });
+    }
+});
+
+// GET /api/download/:token: Download the cached file from PostgreSQL
+app.get('/api/download/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+
+        // Retrieve file details from shared database using primary key
+        const file = await TransientDownload.findByPk(token);
+
+        if (!file) {
+            return res.status(404).send('Download link invalid. Please try downloading again.');
+        }
+
+        // Compare timestamps in JS context using the system clock to avoid DB/Sequelize timezone differences
+        if (new Date(file.expiresAt) < new Date()) {
+            return res.status(404).send('Download link expired. Please try downloading again.');
+        }
+
+        const buffer = Buffer.from(file.base64Data, 'base64');
+        res.setHeader('Content-Type', file.contentType);
+        res.setHeader('Content-Length', buffer.length);
+        res.attachment(file.filename);
+
+        // Respond with file stream. We don't delete immediately to handle multiple/prefetch browser requests safely.
+        res.send(buffer);
+    } catch (err) {
+        console.error('[Download Cache] Serve error:', err);
+        res.status(500).send('Failed to serve download file.');
+    }
+});
+
+// Serve AAQUA Chrome Extension ZIP bundle for 1-click install
+app.get('/api/extension/download', (req, res) => {
+    try {
+        const zip = new AdmZip();
+        let extensionDir = path.join(process.cwd(), 'aaqua-cookie-extension');
+        if (!fs.existsSync(extensionDir)) {
+            extensionDir = path.join(process.cwd(), '..', 'aaqua-cookie-extension');
+        }
+
+        if (fs.existsSync(extensionDir)) {
+            zip.addLocalFolder(extensionDir);
+        } else {
+            return res.status(404).json({ error: 'AAQUA Extension files not found on server.' });
+        }
+
+        const instructions = `================================================
+AAQUA Chrome Extension Installation Instructions
+================================================
+
+1. Extract this ZIP file to a folder on your computer.
+2. Open Google Chrome and navigate to: chrome://extensions
+3. Enable "Developer mode" (toggle switch in top-right corner).
+4. Click the "Load unpacked" button in top-left corner.
+5. Select the folder where you extracted these extension files (containing manifest.json).
+6. The AAQUA Chrome Extension is now active!
+
+With this extension enabled, AAQUA can capture live DOM elements, session cookies, and local storage automatically for DOM auto-healing and instant session import.
+`;
+        zip.addFile('INSTALLATION_INSTRUCTIONS.txt', Buffer.from(instructions, 'utf8'));
+
+        const buffer = zip.toBuffer();
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', 'attachment; filename="aaqua-extension.zip"');
+        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+        res.send(buffer);
+    } catch (err) {
+        console.error('[Extension Download Error]', err);
+        res.status(500).json({ error: `Failed to download extension: ${err.message}` });
+    }
+});
+
+
+// ═══════════════════════════════════════════════════════════════
+// ─── LANGGRAPH AGENT ENDPOINTS ───
+// ═══════════════════════════════════════════════════════════════
+
+// POST /api/agent/auto-heal — Execute cyclic stateful Auto-Healing Agent
+app.post('/api/agent/auto-heal', async (req, res) => {
+    try {
+        const initialState = {
+            testName: req.body.testName,
+            classname: req.body.classname,
+            errorMessage: req.body.errorMessage,
+            stackTrace: req.body.stackTrace,
+            pageUrl: req.body.pageUrl,
+            dom: req.body.dom,
+            runId: req.body.runId,
+            projectRoot: req.body.projectRoot,
+            framework: req.body.framework,
+        };
+
+        const finalState = await autoHealGraph.invoke(initialState);
+        res.json({
+            status: finalState.status,
+            suggestions: finalState.suggestions || [],
+            appliedPatch: finalState.appliedPatch || null,
+            healedRunId: finalState.healedRunId || null,
+            logs: finalState.attemptLogs || [],
+            error: finalState.error || null,
+        });
+    } catch (err) {
+        console.error('[LangGraph AutoHeal Agent Error]', err);
+        res.status(500).json({ error: `LangGraph Agent execution failed: ${err.message}` });
+    }
+});
+
+// POST /api/agent/generate-tests — Execute self-correcting Test Generator Agent
+app.post('/api/agent/generate-tests', async (req, res) => {
+    try {
+        const initialState = {
+            prompt: req.body.prompt,
+            framework: req.body.framework || 'playwright',
+        };
+
+        const finalState = await testGenGraph.invoke(initialState);
+        res.json({
+            status: finalState.status,
+            plan: finalState.pageObjects || '',
+            code: finalState.generatedCode || '',
+            syntaxErrors: finalState.syntaxErrors || [],
+            retryCount: finalState.retryCount || 0,
+            logs: finalState.logs || [],
+        });
+    } catch (err) {
+        console.error('[LangGraph TestGen Agent Error]', err);
+        res.status(500).json({ error: `LangGraph Agent execution failed: ${err.message}` });
     }
 });
 
@@ -3898,12 +4085,11 @@ app.post('/api/apply-heal', async (req, res) => {
         }
 
         // ── Find the pattern in any project file ──
-        const glob = require('glob');
         let allFiles = [];
         if (framework === 'maven') {
-            allFiles = glob.sync('**/*.java', { cwd: projectRoot, ignore: ['**/target/**', '**/node_modules/**'] }).map(f => require('path').join(projectRoot, f));
+            allFiles = globSync('**/*.java', { cwd: projectRoot, ignore: ['**/target/**', '**/node_modules/**'] }).map(f => path.join(projectRoot, f));
         } else {
-            allFiles = glob.sync('**/*.{js,ts}', { cwd: projectRoot, ignore: ['**/node_modules/**', '**/dist/**'] }).map(f => require('path').join(projectRoot, f));
+            allFiles = globSync('**/*.{js,ts}', { cwd: projectRoot, ignore: ['**/node_modules/**', '**/dist/**'] }).map(f => path.join(projectRoot, f));
         }
 
         let sourceFile = null;
@@ -4021,6 +4207,31 @@ app.post('/api/apply-heal', async (req, res) => {
     }
 });
 
+// ── GET /api/download-healed-zip/:runId — Zip and download the healed project files ──
+app.get('/api/download-healed-zip/:runId', (req, res) => {
+    const { runId } = req.params;
+    const run = runStore.get(runId);
+    if (!run) {
+        return res.status(404).json({ error: 'Test run not found' });
+    }
+    if (!run.projectPath || !fs.existsSync(run.projectPath)) {
+        return res.status(404).json({ error: 'Extracted project files no longer exist on server' });
+    }
+
+    try {
+        const zip = new AdmZip();
+        zip.addLocalFolder(run.projectPath);
+        const buf = zip.toBuffer();
+
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="healed_project_${runId}.zip"`);
+        res.send(buf);
+    } catch (err) {
+        console.error('[DownloadHealedZip] Error:', err);
+        res.status(500).json({ error: 'Failed to create and download zip file.' });
+    }
+});
+
 // ─── Browse Directory Endpoint ───────────────────────────
 app.get('/api/browse-folder', (req, res) => {
     const psScript = `
@@ -4044,8 +4255,7 @@ if($f.ShowDialog() -eq 'OK'){
 // ─── Start server ────────────────────────────────────────
 (async () => {
     await initDatabase();
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
         console.log(`Backend Server running on http://localhost:${PORT}`);
-        console.log(`Security API: http://localhost:${PORT}/api/security`);
     });
 })();

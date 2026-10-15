@@ -2,36 +2,25 @@ import {
     AutomationResult,
     AccessibilityResult,
     LocalizationResult,
-    PerformanceResult,
     ReleaseReadiness,
-    Scan,
-    GovernanceMetric,
     Project
 } from '../models/index.js';
 
 // ─── Enterprise readiness policy ─────────────────────────────────────────
 // Weights are renormalized across only the dimensions that have been
 // scanned, so partial coverage doesn't artificially deflate the score.
-// Security carries the highest weight because Critical/High findings
-// represent breach, compliance, and brand exposure that no amount of
-// passing tests in other dimensions can offset.
 const DIMENSION_WEIGHTS = {
-    Security: 0.30,
-    Automation: 0.25,
-    Accessibility: 0.15,
-    Localization: 0.15,
-    Performance: 0.15,
+    Automation: 0.40,
+    Accessibility: 0.30,
+    Localization: 0.30,
 };
 
 // Hard gates: when any of these conditions are true the release MUST be
-// blocked regardless of the weighted score. This honours the policy the
-// security engine already enforces in governanceService.calculateGovernanceMetrics
-// and extends the same logic to the other quality dimensions.
+// blocked regardless of the weighted score.
 const HARD_GATE_THRESHOLDS = {
     automationPassRate: 70,
     accessibilityScore: 50,
     localizationScore: 50,
-    performanceScore: 50,
 };
 
 const BLOCKED_CONFIDENCE_CAP = 25; // Confidence ceiling when any hard gate fires.
@@ -44,7 +33,7 @@ const BLOCKED_CONFIDENCE_CAP = 25; // Confidence ceiling when any hard gate fire
  * Returns null for any dimension that has never been scanned.
  */
 export async function fetchLatestSources(projectId) {
-    const [automation, accessibility, localization, performance, scan] = await Promise.all([
+    const [automation, accessibility, localization] = await Promise.all([
         AutomationResult.findOne({
             where: { project_id: projectId },
             order: [['execution_date', 'DESC']],
@@ -57,31 +46,19 @@ export async function fetchLatestSources(projectId) {
             where: { project_id: projectId },
             order: [['execution_date', 'DESC']],
         }),
-        PerformanceResult.findOne({
-            where: { project_id: projectId },
-            order: [['execution_date', 'DESC']],
-        }),
-        Scan.findOne({
-            where: { project_id: projectId, status: 'completed' },
-            order: [['completed_at', 'DESC']],
-            include: [{ model: GovernanceMetric, as: 'governance' }],
-        }),
     ]);
-    return { automation, accessibility, localization, performance, scan };
+    return { automation, accessibility, localization };
 }
 
 /**
  * Calculate the dynamic quality score across active dimensions.
  *
  * Two-tier policy:
- *  1. HARD GATES — any single failure (security release_blocked, automation
- *     pass_rate < 70, a11y score < 50, loc score < 50) forces production_risk
- *     = 'High' and caps release_confidence at BLOCKED_CONFIDENCE_CAP. This
- *     prevents strong scores in other dimensions from masking a deal-breaker.
+ *  1. HARD GATES — any single failure (automation pass_rate < 70, a11y score < 50,
+ *     loc score < 50) forces production_risk = 'High' and caps release_confidence
+ *     at BLOCKED_CONFIDENCE_CAP.
  *  2. WEIGHTED AVERAGE — when no hard gate fires, the score is a weighted
  *     average across active dimensions (weights renormalized to sum to 1).
- *     Dimensions that haven't been scanned do not contribute and do not drag
- *     the score down.
  */
 export async function calculateAndSaveReadiness(projectId, releaseVersion = 'v1.0.0') {
     // 1. Fetch latest results for each quality dimension
@@ -89,15 +66,11 @@ export async function calculateAndSaveReadiness(projectId, releaseVersion = 'v1.
         automation: latestAutomation,
         accessibility: latestAccessibility,
         localization: latestLocalization,
-        performance: latestPerformance,
-        scan: latestScan,
     } = await fetchLatestSources(projectId);
 
     let automationHealth = null;
     let accessibilityHealth = null;
     let localizationHealth = null;
-    let performanceHealth = null;
-    let securityHealth = null;
 
     const activeDimensions = [];
     const blockingReasons = [];
@@ -135,41 +108,6 @@ export async function calculateAndSaveReadiness(projectId, releaseVersion = 'v1.
         }
     }
 
-    // Map Performance (Lighthouse score 0–100)
-    if (latestPerformance) {
-        performanceHealth = parseFloat(latestPerformance.performance_score);
-        activeDimensions.push({ name: 'Performance', score: performanceHealth });
-        if (performanceHealth < HARD_GATE_THRESHOLDS.performanceScore) {
-            blockingReasons.push(
-                `Performance score ${performanceHealth.toFixed(1)} is below the ${HARD_GATE_THRESHOLDS.performanceScore} gate (slow page / poor Core Web Vitals).`
-            );
-        }
-    }
-
-    // Map Security from ZAP Scan Governance.
-    // We honour governance.release_blocked as the authoritative security signal —
-    // it already encodes Critical>0, High>2, health<6, and Crit+High concentration >30%.
-    if (latestScan && latestScan.governance) {
-        const gov = latestScan.governance;
-        if (gov.critical_count > 0) {
-            securityHealth = 0;
-        } else {
-            securityHealth = Math.max(
-                0,
-                100 - (gov.high_count * 20 + Math.max(0, gov.total_count - gov.high_count) * 2)
-            );
-        }
-        activeDimensions.push({ name: 'Security', score: securityHealth });
-        if (gov.release_blocked) {
-            const detail = [
-                gov.critical_count > 0 ? `${gov.critical_count} Critical` : null,
-                gov.high_count > 2 ? `${gov.high_count} High` : null,
-                `health ${Number(gov.health_score).toFixed(1)}/10`,
-            ].filter(Boolean).join(', ');
-            blockingReasons.push(`Security scan is BLOCKED by governance policy (${detail}).`);
-        }
-    }
-
     // 2. Compute weighted score and apply hard gates.
     let overallQualityScore = 0;
     let releaseConfidence = 0;
@@ -189,8 +127,8 @@ export async function calculateAndSaveReadiness(projectId, releaseVersion = 'v1.
         );
         overallQualityScore = Math.round(weightedScore);
 
-        // Coverage bonus rewards full-spectrum scanning (max +10 with all 4 dimensions).
-        const coverageBonus = (activeDimensions.length / 4) * 10;
+        // Coverage bonus rewards full-spectrum scanning (max +10 with all 3 dimensions).
+        const coverageBonus = (activeDimensions.length / 3) * 10;
         releaseConfidence = Math.min(100, Math.round(overallQualityScore + coverageBonus));
 
         if (blockingReasons.length > 0) {
@@ -206,7 +144,7 @@ export async function calculateAndSaveReadiness(projectId, releaseVersion = 'v1.
                 `Resolve every failing gate listed in the executive summary, then re-run the affected scan(s) to recompute readiness.`;
         } else if (overallQualityScore >= 85) {
             productionRisk = 'Low';
-            aiSummary = `All evaluated quality gates (${activeDimensions.map(d => d.name).join(', ')}) demonstrate outstanding compliance. Weighted quality score ${overallQualityScore}/100 with ${activeDimensions.length}/4 dimensions covered. No hard gates breached.`;
+            aiSummary = `All evaluated quality gates (${activeDimensions.map(d => d.name).join(', ')}) demonstrate outstanding compliance. Weighted quality score ${overallQualityScore}/100 with ${activeDimensions.length}/3 dimensions covered. No hard gates breached.`;
             deploymentRecommendation = `🚀 PROCEED TO DEPLOYMENT: Release confidence is at ${releaseConfidence}%. Quality thresholds are met across all evaluated dimensions.`;
         } else if (overallQualityScore >= 70) {
             productionRisk = 'Medium';
@@ -223,7 +161,7 @@ export async function calculateAndSaveReadiness(projectId, releaseVersion = 'v1.
         overallQualityScore = 0;
         releaseConfidence = 0;
         productionRisk = 'Not Scanned';
-        aiSummary = 'No quality scans have been executed for this project yet. Please trigger an Automation, Security, Accessibility, or Localization scan to calculate your go-live readiness score.';
+        aiSummary = 'No quality scans have been executed for this project yet. Please trigger an Automation, Accessibility, or Localization scan to calculate your go-live readiness score.';
         deploymentRecommendation = '⏳ AWAITING SCAN RUNS: Complete at least one quality dimension scan to evaluate deployment feasibility.';
     }
 
@@ -232,10 +170,10 @@ export async function calculateAndSaveReadiness(projectId, releaseVersion = 'v1.
         project_id: projectId,
         release_version: releaseVersion,
         automation_health: automationHealth,
-        security_health: securityHealth,
         accessibility_health: accessibilityHealth,
         localization_health: localizationHealth,
-        performance_health: performanceHealth,
+        security_health: null,
+        performance_health: null,
         overall_quality_score: overallQualityScore,
         release_confidence: releaseConfidence,
         production_risk: productionRisk,
@@ -250,12 +188,8 @@ export async function calculateAndSaveReadiness(projectId, releaseVersion = 'v1.
  * Fetch the freshest Release Readiness Profile for a Project.
  *
  * Always recomputes from the latest source signals (AutomationResult,
- * AccessibilityResult, LocalizationResult, latest completed Scan) rather
- * than returning a possibly-stale snapshot. The cost is a handful of
- * SELECTs and arithmetic per page load, which is cheap and means readiness
- * never lies about the current state of the project — important when a
- * dimension has just transitioned (e.g. a security scan that flipped from
- * passing to BLOCKED would otherwise stay hidden until the next scan).
+ * AccessibilityResult, LocalizationResult) rather than returning a
+ * possibly-stale snapshot.
  */
 export async function getLatestReadiness(projectId) {
     return calculateAndSaveReadiness(projectId);

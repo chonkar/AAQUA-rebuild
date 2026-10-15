@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, FileText, ArrowRight, Star, Moon, Sun, Database, Target, ShieldCheck, Layers, Globe, PersonStanding, PlayCircle } from 'lucide-react';
+import { Sparkles, FileText, ArrowRight, Star, Moon, Sun, Database, Target, Layers, Globe, PersonStanding, PlayCircle, Bot } from 'lucide-react';
 
 const ServiceCard = ({ icon: _Icon, title, description, badge, onClick }) => (
   <div className="service-card" onClick={onClick}>
@@ -94,10 +94,10 @@ const Home = () => {
         />
 
         <ServiceCard
-          icon={ShieldCheck}
-          title="Security Scanner"
-          description="AI-powered OWASP ZAP security scanning with vulnerability analysis, remediation, and release gating."
-          onClick={() => navigate('/security-scanner')}
+          icon={Bot}
+          title="MCP Agent Hub"
+          description="Autonomous agentic QA and testing powered by external and local Model Context Protocol (MCP) servers."
+          onClick={() => navigate('/mcp-agent-hub')}
         />
       </div>
 

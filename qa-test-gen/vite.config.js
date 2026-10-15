@@ -7,10 +7,35 @@ export default defineConfig({
   base: process.env.VITE_BASE_PATH || '/',
   plugins: [react()],
   server: {
+    host: '0.0.0.0',
     port: 5173,
+    watch: {
+      ignored: [
+        '**/server/**',
+        '**/temp_uploads/**',
+        '**/temp_screenshots/**',
+        '**/scratch/**',
+        '**/temp_*/**',
+        '**/playwright-results/**',
+        '**/test-results/**',
+        '**/*.zip',
+        '**/*.bak',
+        '**/*.xlsx',
+        '**/*.xls',
+        '**/*.csv',
+        '**/*.sqlite*',
+        '**/*.log',
+        '**/*.html',
+        '**/*.png',
+        '**/*.jpg',
+        '**/*.jpeg',
+        '**/screenshots/**',
+        '**/playwright/.cache/**'
+      ]
+    },
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         secure: false,
       },

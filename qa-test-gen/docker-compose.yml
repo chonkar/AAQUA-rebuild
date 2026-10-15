@@ -1,4 +1,4 @@
-# AAQUA tenant compose — only the app backend and ZAP. Postgres, Keycloak,
+# AAQUA tenant compose — only the app backend. Postgres, Keycloak,
 # and the public-facing nginx live in /opt/shared-infra. This file joins
 # the shared docker network as `external: true`.
 #
@@ -20,13 +20,12 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
+      DISPLAY: ":99"
       DB_HOST: shared-postgres
       DB_PORT: 5432
       DB_USER: aaqua_app
       DB_NAME: aaqua_security
       DB_LOGGING: "false"
-      ZAP_API_URL: http://aaqua-zap:8080
-      ZAP_API_KEY: ""
       VITE_LLM_ENDPOINT: https://llm.lab.aaseya.com/v1
       VITE_LLM_MODEL: gemma-4
       KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-https://aaqua.aaseya.com:8443/auth/realms/aaseya-platform}
@@ -37,44 +36,17 @@ services:
       KEYCLOAK_JWKS_URL: ${KEYCLOAK_JWKS_URL:-}
       KEYCLOAK_AUDIENCE: aaqua-frontend
       JIRA_ENABLED: "false"
-      ALLOW_PRIVATE_SCAN: "false"
     secrets:
       - llm_api_key
       - db_password
       - jira_token
-    depends_on:
-      zap:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/security/zap/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/runtime-info"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
     restart: unless-stopped
-    networks:
-      - shared-infra_default
-
-  zap:
-    image: ghcr.io/zaproxy/zaproxy:stable
-    container_name: aaqua-zap
-    command: >
-      zap.sh -daemon -port 8080 -host 0.0.0.0
-      -config api.disablekey=true
-      -config api.addrs.addr.name=.*
-      -config api.addrs.addr.regex=true
-      -config connection.timeoutInSecs=120
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/JSON/core/view/version/"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 2G
     networks:
       - shared-infra_default
 

@@ -1,21 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from 'react-oidc-context';
 import { createApiClient } from '../../utils/apiClient';
 import { Sparkles, Loader2, RotateCcw, Database, AlertCircle } from 'lucide-react';
 
-const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0, onClearContext }) => {
+const RequirementInput = ({
+    onGenerate,
+    isGenerating,
+    onCancel,
+    contextCount = 0,
+    onClearContext,
+    // Controlled fields passed from parent
+    sourceType,
+    setSourceType,
+    jiraKey,
+    setJiraKey,
+    manualStoryKey,
+    setManualStoryKey,
+    requirement,
+    setRequirement,
+    businessRules,
+    setBusinessRules,
+    regressionContext,
+    setRegressionContext,
+    techDetails,
+    setTechDetails
+}) => {
     const auth = useAuth();
     const api = createApiClient(() => auth.user?.access_token);
 
-    const [sourceType, setSourceType] = useState('manual'); // 'manual' | 'jira'
-    const [jiraKey, setJiraKey] = useState('');
-    const [requirement, setRequirement] = useState('');
     const [isFetchingJira, setIsFetchingJira] = useState(false);
     const [jiraError, setJiraError] = useState(null);
     const [showAdvanced, setShowAdvanced] = useState(false);
-    const [businessRules, setBusinessRules] = useState('');
-    const [regressionContext, setRegressionContext] = useState('');
-    const [techDetails, setTechDetails] = useState('');
+
+    // Auto-expand advanced configuration panel if any of the values are populated (e.g. from loading history)
+    useEffect(() => {
+        if (businessRules?.trim() || regressionContext?.trim() || techDetails?.trim()) {
+            setShowAdvanced(true);
+        }
+    }, [businessRules, regressionContext, techDetails]);
 
     const handleFetchJiraStory = async () => {
         if (!jiraKey.trim()) return;
@@ -38,7 +60,12 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
 
     const handleSubmit = () => {
         if (!requirement.trim()) return;
-        onGenerate(requirement, businessRules, regressionContext, techDetails);
+        let keyToPass = sourceType === 'jira' ? jiraKey.trim() : manualStoryKey.trim();
+        if (!keyToPass) {
+            const snippet = requirement.trim().split(/\s+/).slice(0, 4).join(' ').replace(/[^a-zA-Z0-9 ]/g, '').trim();
+            keyToPass = snippet ? `Manual: ${snippet}` : `Manual Run - ${new Date().toLocaleDateString()}`;
+        }
+        onGenerate(requirement, businessRules, regressionContext, techDetails, keyToPass);
     };
 
     return (
@@ -120,6 +147,22 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                     </div>
                 )}
 
+                {/* Manual Story Name Input */}
+                {sourceType === 'manual' && (
+                    <div className="manual-story-key animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginBottom: '1.25rem' }}>
+                        <label className="input-label" style={{ marginBottom: '0.25rem' }}>User Story Name / Identifier</label>
+                        <input
+                            type="text"
+                            className="input-field"
+                            placeholder="e.g. User Login Flow, QA-101, or Search Filter"
+                            value={manualStoryKey}
+                            onChange={(e) => setManualStoryKey(e.target.value)}
+                            disabled={isGenerating}
+                            style={{ margin: 0 }}
+                        />
+                    </div>
+                )}
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
                     <label className="input-label" style={{ marginBottom: 0 }}>Describe your feature or requirement</label>
                     {contextCount > 0 && (
@@ -130,6 +173,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                             <button onClick={() => {
                                 onClearContext();
                                 setRequirement('');
+                                setManualStoryKey('');
                                 setBusinessRules('');
                                 setRegressionContext('');
                                 setTechDetails('');
@@ -147,6 +191,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                     onChange={(e) => setRequirement(e.target.value)}
                     rows={6}
                     disabled={isGenerating}
+                    spellCheck={false}
                 />
 
                 {/* Advanced Configuration Toggle */}
@@ -182,6 +227,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                                     rows={2}
                                     disabled={isGenerating}
                                     style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.1)' }}
+                                    spellCheck={false}
                                 />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
@@ -194,6 +240,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                                     rows={2}
                                     disabled={isGenerating}
                                     style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.1)' }}
+                                    spellCheck={false}
                                 />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
@@ -206,6 +253,7 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
                                     rows={2}
                                     disabled={isGenerating}
                                     style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.1)' }}
+                                    spellCheck={false}
                                 />
                             </div>
                         </div>
@@ -262,13 +310,24 @@ const RequirementInput = ({ onGenerate, isGenerating, onCancel, contextCount = 0
           text-transform: uppercase;
           letter-spacing: 0.5px;
         }
-        
         .textarea-premium {
           resize: vertical;
           min-height: 120px;
           font-size: 1rem;
           line-height: 1.6;
-          background: rgba(0, 0, 0, 0.2);
+          background: #ffffff;
+          color: #0f172a;
+          border: 1px solid var(--border-color);
+        }
+        .textarea-premium:focus {
+          border-color: var(--border-focus);
+          box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+          outline: none;
+        }
+        .textarea-premium:disabled {
+          background: #e2e8f0;
+          color: #64748b;
+          cursor: not-allowed;
         }
         
         .action-row {

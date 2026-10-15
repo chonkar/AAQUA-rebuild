@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Sparkles, ShieldCheck, Sun, Moon, LogIn, LogOut, User as UserIcon, Plus, X, Loader2, Link2 } from 'lucide-react';
+import { Sparkles, ShieldCheck, Sun, Moon, LogIn, LogOut, User as UserIcon, Plus, X, Loader2, Link2, Puzzle } from 'lucide-react';
 import { useAuth } from 'react-oidc-context';
 import { useTheme } from '../../hooks/useTheme';
 import { useProject } from '../../context/ProjectContext';
+import ExtensionInstallModal from './ExtensionInstallModal';
 
 const Header = () => {
   const { theme, toggleTheme } = useTheme();
@@ -21,6 +22,7 @@ const Header = () => {
 
   // JIRA Settings Modal States
   const [isJiraModalOpen, setIsJiraModalOpen] = useState(false);
+  const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
   const [jiraUrl, setJiraUrl] = useState('');
   const [jiraEmail, setJiraEmail] = useState('');
   const [jiraToken, setJiraToken] = useState('');
@@ -52,10 +54,10 @@ const Header = () => {
     e.preventDefault();
     try {
       const config = {
-        url: jiraUrl.trim(),
+        url: jiraUrl.trim().replace(/\/+$/, ''),
         email: jiraEmail.trim(),
         token: jiraToken.trim(),
-        projectKey: jiraProjectKey.trim(),
+        projectKey: jiraProjectKey.trim().toUpperCase(),
       };
       window.localStorage.setItem('aaqua_jira_config', JSON.stringify(config));
       setIsJiraModalOpen(false);
@@ -207,6 +209,15 @@ const Header = () => {
               {hasJiraConfig && <span className="active-dot" />}
             </button>
           )}
+
+          <button 
+            className="jira-settings-toggle-btn" 
+            onClick={() => setIsExtensionModalOpen(true)} 
+            title="Download & Install AAQUA Chrome Extension"
+          >
+            <Puzzle size={15} />
+            <span>Extension</span>
+          </button>
 
           <button className="theme-toggle" onClick={toggleTheme} title="Toggle Theme">
             {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
@@ -750,6 +761,8 @@ const Header = () => {
           100% { transform: rotate(360deg); }
         }
       `}</style>
+
+      <ExtensionInstallModal isOpen={isExtensionModalOpen} onClose={() => setIsExtensionModalOpen(false)} />
     </header>
   );
 };

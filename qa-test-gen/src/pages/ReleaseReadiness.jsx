@@ -2,14 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from 'react-oidc-context';
 import { useProject } from '../context/ProjectContext';
 import {
-  TrendingUp, Shield, Globe, Award, Sparkles, RefreshCw,
-  CheckCircle, AlertTriangle, XCircle, Info, ChevronRight, Gauge
+  TrendingUp, Globe, Award, Sparkles, RefreshCw,
+  CheckCircle, AlertTriangle, XCircle, Info, ChevronRight
 } from 'lucide-react';
 
 // Total number of quality pillars the readiness score can draw from:
-// automation, accessibility, localization, performance, security.
+// automation, accessibility, localization.
 // Keep in sync with the per-pillar checks in mapReadinessProfile.
-const TOTAL_PILLARS = 5;
+const TOTAL_PILLARS = 3;
 
 const ReleaseReadiness = () => {
   const auth = useAuth();
@@ -27,8 +27,6 @@ const ReleaseReadiness = () => {
     if (profile.automation_health !== null) evaluatedCount++;
     if (profile.accessibility_health !== null) evaluatedCount++;
     if (profile.localization_health !== null) evaluatedCount++;
-    if (profile.performance_health !== null) evaluatedCount++;
-    if (profile.security_health !== null) evaluatedCount++;
 
     let confidenceLevel = 'UNAVAILABLE';
     if (profile.release_confidence >= 85) confidenceLevel = 'HIGH';
@@ -50,8 +48,6 @@ const ReleaseReadiness = () => {
     const auto = sources.automation;
     const a11y = sources.accessibility;
     const loc = sources.localization;
-    const perf = sources.performance;
-    const sec = sources.security;
 
     return {
       overallScore: profile.overall_quality_score ?? 0,
@@ -81,27 +77,6 @@ const ReleaseReadiness = () => {
         translationAccuracy: Math.round(loc.translation_accuracy * 10) / 10,
         missingKeys: loc.missing_keys || 0,
         overflowIssues: loc.overflow_issues || 0,
-      } : null,
-      performance: perf ? {
-        score: profile.performance_health,
-        lcp: perf.lcp_ms,
-        cls: perf.cls,
-        tbt: perf.tbt_ms,
-        ttfb: perf.ttfb_ms,
-      } : null,
-      security: sec ? {
-        score: profile.security_health,
-        vulnerabilitiesCount: sec.total_count || 0,
-        criticalCount: sec.critical_count || 0,
-        highCount: sec.high_count || 0,
-        mediumCount: sec.medium_count || 0,
-        lowCount: sec.low_count || 0,
-        healthScore: sec.health_score,
-        riskRating: sec.release_blocked
-          ? 'High'
-          : (sec.critical_count > 0 || sec.high_count > 0)
-            ? 'Medium'
-            : 'Low',
       } : null,
       recommendations
     };
@@ -236,7 +211,7 @@ const ReleaseReadiness = () => {
                 {data && getConfidenceBadge(data.confidenceLevel)}
               </div>
               <p className="summary-text">
-                {data?.summary || 'No evaluation stats available yet. Switch project contexts, run audits (Accessibility, Localization, Security), or trigger a Mock Quality Run above to instantly populate release readiness data!'}
+                {data?.summary || 'No evaluation stats available yet. Switch project contexts, run audits (Accessibility, Localization), or trigger automated tests in Test Runner to instantly populate release readiness data!'}
               </p>
               
               <div className="metrics-summary-chips">
@@ -368,83 +343,6 @@ const ReleaseReadiness = () => {
               </div>
             </div>
 
-            {/* Performance */}
-            <div className="pillar-card glass-panel">
-              <div className="pillar-header">
-                <div className="pillar-icon-wrapper amber">
-                  <Gauge size={20} />
-                </div>
-                <h4>Performance</h4>
-                <span className="pillar-score" style={{ color: getScoreColor(data?.performance?.score) }}>
-                  {formatScore(data?.performance?.score)}
-                </span>
-              </div>
-              <div className="pillar-body">
-                {data?.performance ? (
-                  <>
-                    <div className="progress-bar-bg">
-                      <div
-                        className="progress-bar-fill amber-bg"
-                        style={{ width: `${data.performance.score}%` }}
-                      ></div>
-                    </div>
-                    <div className="pillar-stats">
-                      <div className="stat-row">
-                        <span>LCP:</span>
-                        <strong>{data.performance.lcp == null ? '—' : (data.performance.lcp >= 1000 ? `${(data.performance.lcp / 1000).toFixed(1)} s` : `${data.performance.lcp} ms`)}</strong>
-                      </div>
-                      <div className="stat-row">
-                        <span>CLS:</span>
-                        <strong>{data.performance.cls == null ? '—' : data.performance.cls}</strong>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <p className="no-data-text">No performance scans found. Run a scan in the Performance Scanner to activate.</p>
-                )}
-              </div>
-            </div>
-
-            {/* Security */}
-            <div className="pillar-card glass-panel">
-              <div className="pillar-header">
-                <div className="pillar-icon-wrapper red">
-                  <Shield size={20} />
-                </div>
-                <h4>Security Scanner</h4>
-                <span className="pillar-score" style={{ color: getScoreColor(data?.security?.score) }}>
-                  {formatScore(data?.security?.score)}
-                </span>
-              </div>
-              <div className="pillar-body">
-                {data?.security ? (
-                  <>
-                    <div className="progress-bar-bg">
-                      <div 
-                        className="progress-bar-fill red-bg" 
-                        style={{ width: `${data.security.score}%` }}
-                      ></div>
-                    </div>
-                    <div className="pillar-stats">
-                      <div className="stat-row">
-                        <span>Vulnerabilities:</span>
-                        <strong className={data.security.vulnerabilitiesCount > 0 ? 'text-red' : ''}>
-                          {data.security.vulnerabilitiesCount} issues
-                        </strong>
-                      </div>
-                      <div className="stat-row">
-                        <span>Risk Rating:</span>
-                        <strong style={{ color: getScoreColor(100 - (data.security.vulnerabilitiesCount * 10)) }}>
-                          {data.security.riskRating}
-                        </strong>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <p className="no-data-text">No security scan summaries available. Scan the target URL in Security Scanner to activate.</p>
-                )}
-              </div>
-            </div>
           </div>
 
           {/* AI Recommended Release Gate Checklist */}

@@ -13,7 +13,33 @@ export class LocalLLM {
                  const controller = new AbortController();
                  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-                 let response;
+                  let contentPayload;
+                  if (Array.isArray(prompt)) {
+                      contentPayload = prompt.map(item => {
+                          if (item && item.inlineData) {
+                              return {
+                                  type: 'image_url',
+                                  image_url: {
+                                      url: `data:${item.inlineData.mimeType};base64,${item.inlineData.data}`
+                                  }
+                              };
+                          } else if (item && typeof item === 'object' && item.text) {
+                              return {
+                                  type: 'text',
+                                  text: item.text
+                              };
+                          } else {
+                              return {
+                                  type: 'text',
+                                  text: String(item)
+                              };
+                          }
+                      });
+                  } else {
+                      contentPayload = prompt;
+                  }
+
+                  let response;
                  try {
                      response = await fetch(`${this.endpoint}/chat/completions`, {
                          method: 'POST',
@@ -23,7 +49,7 @@ export class LocalLLM {
                          },
                          body: JSON.stringify({
                              model: model,
-                             messages: [{ role: 'user', content: prompt }],
+                             messages: [{ role: 'user', content: contentPayload }],
                              temperature: generationConfig?.temperature !== undefined ? generationConfig.temperature : 0.2,
                              // Only sent when a caller opts in — bounds output so slow
                              // local models finish predictably instead of running long.

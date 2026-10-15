@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import * as jiraService from '../services/jiraService.js';
-import { Vulnerability, Scan, Project } from '../models/index.js';
 import * as XLSXModule from 'xlsx';
 
 const XLSX = XLSXModule.default || XLSXModule;
@@ -197,89 +196,6 @@ router.post('/localization-defect', authenticateToken, async (req, res) => {
     } catch (err) {
         console.error('[Jira Route] Localization defect error:', err);
         res.status(500).json({ error: err.message || 'Failed to raise localization defect in JIRA.' });
-    }
-});
-
-/**
- * POST /api/jira/performance-defect
- * Raise a JIRA Bug for a performance finding (Lighthouse score + Core Web Vitals).
- */
-router.post('/performance-defect', authenticateToken, async (req, res) => {
-    try {
-        const { perf, projectName, scannedUrl } = req.body;
-        if (!perf || typeof perf !== 'object') {
-            return res.status(400).json({ error: 'perf payload is required.' });
-        }
-        const customConfig = {
-            url: req.headers['x-jira-url'],
-            email: req.headers['x-jira-email'],
-            token: req.headers['x-jira-token'],
-            projectKey: req.headers['x-jira-project-key'],
-        };
-        const result = await jiraService.createPerformanceDefect(perf, projectName, scannedUrl, customConfig);
-        res.json({ message: 'Performance defect raised in JIRA.', ...result });
-    } catch (err) {
-        console.error('[Jira Route] Performance defect error:', err);
-        res.status(500).json({ error: err.message || 'Failed to raise performance defect in JIRA.' });
-    }
-});
-
-/**
- * POST /api/jira/vulnerability-defect
- * Raise a JIRA Bug for a single security vulnerability and persist the
- * returned key onto the Vulnerability row so subsequent fetches show it
- * as already-logged.
- */
-router.post('/vulnerability-defect', authenticateToken, async (req, res) => {
-    try {
-        const { vulnerabilityId } = req.body;
-        if (!vulnerabilityId) {
-            return res.status(400).json({ error: 'vulnerabilityId is required.' });
-        }
-
-        // Fetch the vuln with scan → project so we know the project name and
-        // can verify ownership matches the calling user (defence-in-depth).
-        const vuln = await Vulnerability.findByPk(vulnerabilityId, {
-            include: [{
-                model: Scan,
-                as: 'scan',
-                include: [{ model: Project, as: 'project' }],
-            }],
-        });
-        if (!vuln) {
-            return res.status(404).json({ error: 'Vulnerability not found.' });
-        }
-        if (vuln.scan?.project?.owner_id !== req.user.id) {
-            return res.status(403).json({ error: 'Access denied.' });
-        }
-
-        const projectName = vuln.scan.project.name;
-
-        // Short-circuit if a ticket already exists — return the existing key
-        // so the UI just renders the "logged" badge without a redundant call.
-        if (vuln.jira_ticket_key) {
-            const jiraUrl = (req.headers['x-jira-url'] || '').trim();
-            const url = jiraUrl ? `${jiraUrl.replace(/\/$/, '')}/browse/${vuln.jira_ticket_key}` : null;
-            return res.json({ message: 'Ticket already exists.', key: vuln.jira_ticket_key, url });
-        }
-
-        const customConfig = {
-            url: req.headers['x-jira-url'],
-            email: req.headers['x-jira-email'],
-            token: req.headers['x-jira-token'],
-            projectKey: req.headers['x-jira-project-key'],
-        };
-
-        const result = await jiraService.createJiraTicket(vuln, projectName, customConfig);
-        if (!result?.key) {
-            return res.status(500).json({ error: 'Jira returned no ticket key.' });
-        }
-
-        await vuln.update({ jira_ticket_key: result.key });
-        res.json({ message: 'Vulnerability defect raised in JIRA.', key: result.key, url: result.url });
-    } catch (err) {
-        console.error('[Jira Route] Vulnerability defect error:', err);
-        res.status(500).json({ error: err.message || 'Failed to raise vulnerability defect in JIRA.' });
     }
 });
 

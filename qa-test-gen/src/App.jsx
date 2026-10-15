@@ -16,8 +16,7 @@ import FrameworkGenerator from './pages/FrameworkGenerator';
 import TestRunner from './pages/TestRunner';
 import LocalizationTester from './pages/LocalizationTester';
 import AccessibilityScanner from './pages/AccessibilityScanner';
-import SecurityScanner from './pages/SecurityScanner';
-import PerformanceScanner from './pages/PerformanceScanner';
+import McpAgentHub from './pages/McpAgentHub';
 import ReleaseReadiness from './pages/ReleaseReadiness';
 import ApiTestGenerator from './pages/ApiTestGenerator';
 import UsageDashboard from './pages/UsageDashboard';
@@ -29,7 +28,6 @@ const adminOnly = (el) => <ProtectedRoute requireRoles={['admin']}>{el}</Protect
 const kavitaOnly = (el) => <ProtectedRoute allowedEmails={['kavita.chonkar@aaseya.com']}>{el}</ProtectedRoute>;
 // Phase 1: feature pages require an active project on top of authentication.
 const scoped = (el) => authed(<RequireProject>{el}</RequireProject>);
-const scopedAdmin = (el) => adminOnly(<RequireProject>{el}</RequireProject>);
 
 function App() {
   return (
@@ -52,8 +50,7 @@ function App() {
               <Route path="/test-runner" element={scoped(<TestRunner />)} />
               <Route path="/localization" element={scoped(<LocalizationTester />)} />
               <Route path="/accessibility-scanner" element={scoped(<AccessibilityScanner />)} />
-              <Route path="/performance-scanner" element={scoped(<PerformanceScanner />)} />
-              <Route path="/security-scanner" element={scopedAdmin(<SecurityScanner />)} />
+              <Route path="/mcp-agent-hub" element={scoped(<McpAgentHub />)} />
               <Route path="/usage-dashboard" element={kavitaOnly(<UsageDashboard />)} />
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />

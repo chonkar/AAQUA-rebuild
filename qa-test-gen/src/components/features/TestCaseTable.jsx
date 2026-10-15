@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from 'react-oidc-context'; // Ensure auth is available
-import { AlertOctagon, Loader2, CheckCircle2, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertOctagon, Loader2, CheckCircle2, X, ChevronDown, ChevronRight, Database, Download } from 'lucide-react';
 import { useProject } from '../../context/ProjectContext';
 import { createApiClient } from '../../utils/apiClient';
+import { generateTestData } from '../../services/testDataService';
+import { exportToJSON, exportToExcel, exportToCSV } from '../../utils/exportUtils';
 
 const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
   const { selectedProject } = useProject();
@@ -26,6 +28,41 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
   const [actualResult, setActualResult] = useState('');
   const [isRaising, setIsRaising] = useState({});
   const [raisedBugs, setRaisedBugs] = useState({}); // mapping from tc.id -> bugKey or status
+
+  // Synthetic Test Data Generator states
+  const [activeTestDataTc, setActiveTestDataTc] = useState(null);
+  const [testDataCount, setTestDataCount] = useState(5);
+  const [isGeneratingData, setIsGeneratingData] = useState(false);
+  const [generatedData, setGeneratedData] = useState(null);
+  const [genDataError, setGenDataError] = useState(null);
+
+  const handleOpenTestDataModal = (tc) => {
+    setActiveTestDataTc(tc);
+    setTestDataCount(5);
+    setGeneratedData(null);
+    setGenDataError(null);
+  };
+
+  const handleGenerateTestData = async () => {
+    if (!activeTestDataTc) return;
+    setIsGeneratingData(true);
+    setGenDataError(null);
+    setGeneratedData(null);
+    try {
+      const prompt = `Generate realistic synthetic test data matching the scenario: "${activeTestDataTc.scenario}". Preconditions: "${activeTestDataTc.preconditions || 'None'}". Ensure the records include fields corresponding to: "${activeTestDataTc.testData || 'N/A'}".`;
+      const result = await generateTestData(prompt, 'prompt', testDataCount);
+      setGeneratedData(result.data);
+    } catch (err) {
+      console.error('[Synthetic Data Gen Error]', err);
+      setGenDataError(err.message || 'Failed to generate test data.');
+    } finally {
+      setIsGeneratingData(false);
+    }
+  };
+
+  const handleExportDataJSON = () => exportToJSON(generatedData, `test_data_${activeTestDataTc?.id || 'tc'}`);
+  const handleExportDataExcel = () => exportToExcel(generatedData, `test_data_${activeTestDataTc?.id || 'tc'}`, 'Test Data');
+  const handleExportDataCSV = () => exportToCSV(generatedData, `test_data_${activeTestDataTc?.id || 'tc'}`);
 
   // Editing state
   const [editMode, setEditMode] = useState({}); // rowId => boolean
@@ -323,7 +360,12 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
                           <button className="btn btn-secondary" onClick={() => handleCancel(tcId)}>Cancel</button>
                         </>
                       ) : (
-                        <button className="btn btn-primary" onClick={() => handleEdit(tcId, tc)}>Edit</button>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button className="btn btn-primary" onClick={() => handleEdit(tcId, tc)}>Edit</button>
+                          <button className="btn btn-secondary" onClick={() => handleOpenTestDataModal(tc)} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }} title="Generate Synthetic Test Data">
+                            <Database size={14} /> Data
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -425,6 +467,115 @@ const TestCaseTable = ({ testCases: propTestCases, onTestCasesChange }) => {
               <div className="modal-footer" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
                 <button className="btn btn-secondary" onClick={() => setActiveModalTc(null)}>Cancel</button>
                 <button className="btn btn-primary" onClick={handleRaiseDefect}>Raise Defect</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Synthetic Test Data Generation Modal */}
+        {activeTestDataTc && (
+          <div className="modal-backdrop">
+            <div className="modal-content glass-panel animate-fade-in" style={{ maxWidth: '650px', width: '90%', background: 'var(--bg-primary)' }}>
+              <div className="modal-header">
+                <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                  <Database size={20} color="var(--accent-primary)" />
+                  <span>Generate Test Data for {activeTestDataTc.id}</span>
+                </h4>
+                <button className="modal-close-btn" onClick={() => setActiveTestDataTc(null)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem', maxHeight: '70vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
+                <div style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
+                  <div style={{ marginBottom: '0.4rem' }}><strong>Scenario:</strong> {activeTestDataTc.scenario}</div>
+                  <div><strong>Expected Fields / Formats:</strong> <span style={{ color: 'var(--text-secondary)' }}>{activeTestDataTc.testData || 'N/A'}</span></div>
+                </div>
+
+                <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Record Count (1-100)</label>
+                    <input 
+                      type="number" 
+                      className="input-field" 
+                      min={1} 
+                      max={100} 
+                      value={testDataCount} 
+                      onChange={e => setTestDataCount(Math.min(100, Math.max(1, parseInt(e.target.value) || 5)))}
+                      disabled={isGeneratingData}
+                      style={{ margin: 0 }}
+                    />
+                  </div>
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={handleGenerateTestData} 
+                    disabled={isGeneratingData}
+                    style={{ height: '38px', marginTop: '1.2rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                  >
+                    {isGeneratingData ? (
+                      <>
+                        <Loader2 className="spin" size={16} />
+                        <span>Generating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Database size={16} />
+                        <span>Generate Data</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {genDataError && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fca5a5', background: 'rgba(239, 68, 68, 0.1)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--error)', fontSize: '0.85rem' }}>
+                    <AlertOctagon size={16} />
+                    <span>{genDataError}</span>
+                  </div>
+                )}
+
+                {generatedData && (
+                  <div className="animate-fade-in" style={{ marginTop: '0.5rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <h5 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Generated Preview ({generatedData.length} records)</h5>
+                      <div style={{ display: 'flex', gap: '0.4rem' }}>
+                        <button className="btn btn-secondary" onClick={handleExportDataJSON} style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', border: '1px solid var(--border-color)' }}>
+                          <Download size={12} /> JSON
+                        </button>
+                        <button className="btn btn-secondary" onClick={handleExportDataExcel} style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', border: '1px solid var(--border-color)' }}>
+                          <Download size={12} /> Excel
+                        </button>
+                        <button className="btn btn-secondary" onClick={handleExportDataCSV} style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', border: '1px solid var(--border-color)' }}>
+                          <Download size={12} /> CSV
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflowX: 'auto', padding: '0.5rem', maxHeight: '250px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                            {Object.keys(generatedData[0] || {}).map(key => (
+                              <th key={key} style={{ padding: '0.4rem', textAlign: 'left', color: 'var(--text-secondary)' }}>{key}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {generatedData.map((row, rIdx) => (
+                            <tr key={rIdx} style={{ borderBottom: rIdx === generatedData.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.05)' }}>
+                              {Object.values(row || {}).map((val, cIdx) => (
+                                <td key={cIdx} style={{ padding: '0.4rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '150px' }} title={String(val)}>
+                                  {typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val ?? '')}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                <button className="btn btn-secondary" onClick={() => setActiveTestDataTc(null)}>Close</button>
               </div>
             </div>
           </div>

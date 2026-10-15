@@ -84,28 +84,7 @@ services:
     networks:
       - aaqua-net
 
-  # ─── OWASP ZAP (Daemon Mode) ───────────────────────────
-  zap:
-    image: ghcr.io/zaproxy/zaproxy:stable
-    container_name: aaqua-zap
-    command: >
-      zap.sh -daemon -port 8080 -host 0.0.0.0 -config api.disablekey=true -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true -config connection.timeoutInSecs=120
-    ports:
-      - "8080:8080"
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/JSON/core/view/version/" ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 2G
+
 
 volumes:
   postgres_data:
