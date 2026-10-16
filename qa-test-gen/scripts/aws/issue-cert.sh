@@ -87,7 +87,7 @@ main() {
 
   if [ ! -d "$LE_DIR/live/$PUBLIC_HOSTNAME" ]; then
     local nginx_was_up=""
-    if docker ps --format '{{.Names}}' | grep -qx shared-nginx; then
+    if [ "$(docker inspect -f '{{.State.Running}}' shared-nginx 2>/dev/null || true)" = "true" ]; then
       nginx_was_up=1
       echo "==> Stopping shared-nginx to free port 80 for the first issuance"
       docker stop shared-nginx >/dev/null
