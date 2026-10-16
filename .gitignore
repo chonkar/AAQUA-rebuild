@@ -1,1 +1,6 @@
 .worktrees/
+
+# AWS deployment — never commit credentials or operator config
+*accessKeys*.csv
+*.pem
+qa-test-gen/scripts/aws/aws.env
