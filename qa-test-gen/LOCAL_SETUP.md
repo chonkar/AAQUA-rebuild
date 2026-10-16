@@ -1,6 +1,6 @@
 # AAQUA — Local Development Setup
 
-How to run the full AAQUA stack on a developer workstation. The frontend (Vite) and backend (Express) run directly on the host via `npm`; Postgres and OWASP ZAP run as containers via the `docker-compose.security.yml` infrastructure file.
+How to run the full AAQUA stack on a developer workstation. The frontend (Vite) and backend (Express) run directly on the host via `npm`; Postgres, Keycloak and Mailpit run as containers via the `docker-compose.security.yml` infrastructure file.
 
 > For deploying to a shared QA / staging server, see `DEPLOYMENT.md` instead — that uses the full Dockerized stack (`docker-compose.yml`).
 
@@ -12,7 +12,7 @@ How to run the full AAQUA stack on a developer workstation. The frontend (Vite) 
 |---|---|---|
 | Node.js | 20.x LTS | matches the Playwright base image used in production |
 | npm | 10.x | bundled with Node 20 |
-| Docker Desktop | latest | needed only for Postgres + ZAP |
+| Docker Desktop | latest | needed only for Postgres + Keycloak + Mailpit |
 | Git | any | |
 
 Verify:
@@ -31,7 +31,6 @@ Also reserve these host ports — make sure nothing else is bound to them:
 | 5173 | Vite dev server (frontend) |
 | 3001 | Express backend |
 | 5433 | Postgres (host → container 5432) |
-| 8080 | OWASP ZAP daemon |
 | 8082 | Keycloak (IAM) — login redirects land here |
 | 8025 | Mailpit web UI — view captured emails |
 | 1025 | Mailpit SMTP — Keycloak sends mail here over the docker network; host port is exposed for ad-hoc debugging |
@@ -75,24 +74,23 @@ VITE_KEYCLOAK_CLIENT_ID=aaqua-frontend
 
 ---
 
-## 4. Start Postgres + Keycloak + ZAP + Mailpit
+## 4. Start Postgres + Keycloak + Mailpit
 
 ```bash
 docker compose -f docker-compose.security.yml up -d
 ```
 
-This brings up four containers:
+This brings up three containers:
 
 - `aaqua-postgres` — Postgres 16, exposed on host **5433**. Hosts two schemas: `public` (app data) and `keycloak` (IAM data).
 - `aaqua-keycloak` — Keycloak 24 IAM, exposed on host **8082**. Auto-imports the realm config from `keycloak/aaseya-platform-realm.json`.
-- `aaqua-zap` — OWASP ZAP daemon on host **8080**, API key disabled for local dev.
 - `aaqua-mailpit` — Mailpit SMTP catcher. Web UI on host **8025**, SMTP on **1025**. Captures every email Keycloak sends (verify-email, password reset) without delivering to a real inbox. **Local-only — never deployed to QA / prod**, real SMTP is configured there.
 
-Wait until all four are healthy:
+Wait until all three are healthy:
 
 ```bash
 docker compose -f docker-compose.security.yml ps
-# STATUS should show "healthy" for postgres + keycloak + zap + mailpit
+# STATUS should show "healthy" for postgres + keycloak + mailpit
 ```
 
 > **Fresh-volume note.** The Postgres init script (`keycloak/init/01-keycloak-schema.sh`) only runs the first time the volume is created. If you're working with a pre-existing volume, run it once manually:
@@ -130,13 +128,13 @@ Expected log lines:
 🚀 AAQUA Server running on port 3001
 ```
 
-> If you see `⚠ Database connection failed — security features unavailable`, the DB isn't reachable. The server **keeps running** on purpose so the legacy non-security endpoints still work. Re-check that `aaqua-postgres` is healthy and that `DATABASE_URL` points at `localhost:5433`.
+> If you see `[DB] Connection failed: …` followed by `Server will continue without database`, the DB isn't reachable. The server **keeps running** on purpose so the stateless endpoints in `server/index.js` still work. Re-check that `aaqua-postgres` is healthy and that `DATABASE_URL` points at `localhost:5433`.
 
 Smoke test:
 
 ```bash
-curl http://localhost:3001/api/security/zap/health
-# {"status":"connected", ...}
+curl http://localhost:3001/api/runtime-info
+# {"hasDisplayServer":false,"isContainer":false,"platform":"win32"}
 ```
 
 ---
@@ -154,7 +152,7 @@ Vite serves on **http://localhost:5173**. The dev server proxies:
 - `/api/*` → `http://localhost:3001` (Express backend)
 - `/llm-api/*` → `https://llm.lab.aaseya.com` (browser LLM calls — bypasses CORS)
 
-Open http://localhost:5173 in a browser. You should see the AAQUA home page with the sidebar of features (Test Generator, Test Plan, Locator, Test Converter, Framework Generator, Test Runner, Localization, Accessibility, Security Scanner, etc.).
+Open http://localhost:5173 in a browser. You should see the AAQUA home page with the sidebar of features (Test Generator, Test Plan, Locator, Test Converter, Framework Generator, Test Runner, Localization, Accessibility, API Test Generator, MCP Agent Hub, etc.).
 
 ### 6.1 First-time login (one-shot per environment)
 
@@ -168,7 +166,7 @@ Authenticated routes will redirect you to Keycloak. The realm ships with two pre
 
 The realm JSON ships with `smtpServer` already pointing at the Mailpit container (host: `mailpit`, port: `1025`, no auth, no TLS). On a fresh Keycloak boot this is picked up automatically. **For an existing Keycloak DB** (the realm was already imported before Mailpit was wired in), apply it via the admin console: **Realm settings → Email** → Host `mailpit`, Port `1025`, From `no-reply@aaseya.local`, all TLS/auth toggles **OFF** → **Save** → **Test connection** (the test mail will arrive at http://localhost:8025).
 
-Now navigate to `http://localhost:5173/security-scanner`, log in as one of the admins:
+Now navigate to `http://localhost:5173/`, log in as one of the admins:
 1. Enter the temp password, get prompted to update it (UPDATE_PASSWORD action).
 2. Get prompted to verify email — Keycloak emits the verification mail; open http://localhost:8025, click the link inside the message preview to complete the action.
 3. You land back in the app with the email + Sign Out visible in the header.
@@ -182,11 +180,11 @@ Now navigate to `http://localhost:5173/security-scanner`, log in as one of the a
 | Frontend reaches backend | DevTools → Network → confirm calls to `/api/...` return 200 |
 | Browser-side LLM works | Open **Test Generator**, generate a case from a small input — output should populate without 401/403 |
 | Server-side LLM works | Open **Test Converter**, upload a tiny ZIP — conversion should run |
-| Postgres + ZAP wired | Open **Security Scanner**, hit the health endpoint; ZAP version should display |
+| Postgres wired | Create a project from `/services`; it should survive a backend restart |
 | Playwright as library | Open **Accessibility Scanner**, point at `https://example.com`, run scan |
 | Playwright as runner | Open **Test Runner**, upload a small Playwright project ZIP and run |
 | OIDC flow works | Visit a protected route in incognito → redirects to Keycloak → log in → returns to the app with the email visible in the Header |
-| Role gating works | Log in as a non-admin Keycloak user → `/security-scanner` shows a Forbidden screen |
+| Access gating works | Log in as a user not on the `/usage-dashboard` email allowlist (`src/App.jsx`) → it shows a Forbidden screen |
 | Email flow works | Trigger any Keycloak email (login as a user with `VERIFY_EMAIL`, or "Forgot password?") → message lands in Mailpit at http://localhost:8025 within 1s |
 
 ---
@@ -243,13 +241,10 @@ Two common causes:
 - Realm SMTP still points at an old config (e.g. Office 365 from a prior attempt). Admin console → **Realm settings → Email** → Host must be `mailpit`, all TLS/auth toggles OFF → **Save**, then **Test connection**.
 - Mailpit container isn't on the `aaqua-net` network. Check with `docker network inspect qa-test-gen_aaqua-net` — it should list `aaqua-mailpit` alongside `aaqua-keycloak`. If missing, `docker compose -f docker-compose.security.yml up -d mailpit`.
 
-**ZAP container restarts forever**
-ZAP is memory-hungry. Make sure Docker Desktop has at least 4 GB allocated (Settings → Resources). The compose file caps ZAP at 2 GB.
-
-**Port 5433 / 8080 / 5173 / 3001 already in use**
+**Port 5433 / 8082 / 5173 / 3001 already in use**
 On Windows: `netstat -ano | findstr :<port>` → `taskkill /PID <pid> /F`. On macOS/Linux: `lsof -i :<port>` → `kill <pid>`. If you can't free a port, change the host mapping in `docker-compose.security.yml` and update `.env` to match.
 
-**`temp_extract/` or `node_test_extract/` filling up**
+**`temp_extract/` or `temp_uploads/` filling up**
 These are leftovers from `/api/convert` and `/api/run-tests` runs. Safe to delete when no upload is in flight.
 
 ---
@@ -266,18 +261,19 @@ src/                  React + Vite frontend
 server/
   index.js            2000-line Express monolith (legacy endpoints)
   middleware/auth.js  Keycloak JWT verification via JWKS (jose)
-  routes/             modular AI Secure Engine routers (/api/security/*)
+  routes/             modular routers (projects, jira, readiness, mcp, recorder, events, llm)
   models/             Sequelize models (no User model — identity is Keycloak)
-  services/           ZAP, AI analysis, governance, Jira clients
+  services/           readiness, Jira, MCP, job store, API test generation
+  agents/             LangGraph test-gen and auto-heal agents
   utils/llmClient.js  server-side LocalLLM (mirrors src/utils/llmClient.js)
 keycloak/
   aaseya-platform-realm.json   Realm export imported on Keycloak boot
   init/01-keycloak-schema.sh   Postgres init: provisions `keycloak` schema + role
 scripts/
   migrate-drop-users-table.sql Cutover after switching to Keycloak (one-shot)
-docker-compose.security.yml   infra-only compose for local dev (Postgres + Keycloak + ZAP + Mailpit)
+docker-compose.security.yml   infra-only compose for local dev (Postgres + Keycloak + Mailpit)
 docker-compose.security.prod.yml  prod overlay (TLS-terminated upstream; no Mailpit)
 docker-compose.yml            full-stack compose for QA/prod — wires real SMTP, no Mailpit (see DEPLOYMENT.md)
 ```
 
-Read `CLAUDE.md` for architecture detail (two-process model, dual `LocalLLM` clients, `/api/security/*` subsystem, Playwright dual usage).
+Read `CLAUDE.md` for architecture detail (two-process model, dual `LocalLLM` clients, Phase 1 UI primitives, Playwright dual usage).

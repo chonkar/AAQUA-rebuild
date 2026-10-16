@@ -1,6 +1,6 @@
 # AAQUA — AI-Assisted QA Platform
 
-AAQUA is a React + Express platform that combines a suite of AI-driven QA tools (test generation, locator capture, framework conversion, accessibility / localization scanning, security scanning) behind a single SPA. Identity is provided by Keycloak; security scanning is powered by OWASP ZAP; the LLM backend is Aaseya's gateway.
+AAQUA is a React + Express platform that combines a suite of AI-driven QA tools (test case / test plan / test data generation, locator capture, framework conversion, API test generation, test running, accessibility / localization scanning, MCP Agent Hub) behind a single SPA, with a Release Readiness dashboard that aggregates their results. Identity is provided by Keycloak; the LLM backend is Aaseya's gateway.
 
 ## Quick links
 
@@ -11,20 +11,18 @@ AAQUA is a React + Express platform that combines a suite of AI-driven QA tools 
 | **Install the CI/CD runner on the GCP VM** (auto-deploy on push to `main`) | [`scripts/install-gitlab-runner.sh`](scripts/install-gitlab-runner.sh) — register a project runner in the GitLab UI first (Tags field MUST be set), then run the script with the generated token. See [`CLAUDE.md` gotcha #24](CLAUDE.md). |
 | Deploy to a QA / staging server (shared-infra model) | [`DEPLOYMENT.md`](DEPLOYMENT.md) and the executable plan at [`docs/superpowers/plans/2026-05-08-shared-infra-deployment.md`](docs/superpowers/plans/2026-05-08-shared-infra-deployment.md) |
 | Understand the deployment design | [`docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md`](docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md) |
-| Understand the AI Secure Engine subsystem (`/api/security/*`) | [`SECURITY_ENGINE_README.md`](SECURITY_ENGINE_README.md) |
 | Understand the architecture and codebase conventions | [`CLAUDE.md`](CLAUDE.md) |
 | Look up a deployment gotcha (HTTPS / mixed-content, self-signed cert + JWKS, DB secret file, role claim location, `/aaqua/` BASE_URL trap, GCP provisioning quirks, nginx upstream resolution, Keycloak realm reset, GitLab Runner UI form, `.env`-shadows-defaults, `docker restart` env-var freeze, `pg_dump`-before-destructive, IP-based QA deploy, etc.) | [`CLAUDE.md` § Deployment gotchas](CLAUDE.md#deployment-gotchas-learned-the-hard-way-during-the-qa-box-stand-up) (28 numbered gotchas as of 2026-07-15) |
 | **Bulk-import Keycloak users from CSV** (post-DB-loss recovery, team onboarding) | [`scripts/import-users.sh`](scripts/import-users.sh) + [`scripts/users-template.csv`](scripts/users-template.csv) — fill the CSV in Excel, `export KC_ADMIN_PW=...`, run the script on the VM. See `CLAUDE.md` § "Bulk user import via CSV". |
 
 ## Stack at a glance
 
-- **Frontend** — React 19 + Vite 7, OIDC via `react-oidc-context`, no UI framework (custom CSS variables + `lucide-react` icons).
-- **Backend** — Express 5 monolith (`server/index.js`) + a modular AI Secure Engine subsystem under `server/{routes,models,services,middleware}` mounted at `/api/security/*`.
+- **Frontend** — React 19 + Vite 7, OIDC via `react-oidc-context`, MUI for pages migrated in Phase 1, custom CSS variables + `lucide-react` icons on the rest.
+- **Backend** — Express 5 monolith (`server/index.js`) + modular Sequelize-backed routers under `server/{routes,models,services,middleware}` (projects, Jira, readiness, MCP, recorder, SSE events, LLM proxy).
 - **Identity** — Keycloak 24 (OIDC + OAuth2, PKCE), realm `aaseya-platform`. Express verifies tokens against Keycloak's JWKS using `jose`. No local user table.
 - **Database** — PostgreSQL 16, two schemas in one DB (`public` for app data, `keycloak` for IAM data).
-- **Security scanner** — OWASP ZAP daemon, controlled via REST.
 - **Browser automation** — Playwright (used both as an in-process library for accessibility / localization scans and as a subprocess runner for uploaded user test ZIPs). Both paths run headless by default; the Test Runner page exposes a per-user "Open browser while running tests" toggle when the host has a display server (`GET /api/runtime-info` gates the UI).
-- **Live scan logs** — ZAP scan and test-run output streams to the UI via cursor-based polling on the existing `*/status/:id` endpoints (`?since=<cursor>` returns the delta). Scan logs persist to a `Scan.logs` DB column so post-mortem viewing of completed scans works without keeping anything in memory.
+- **Live progress** — test-run output streams to the UI via cursor-based polling on `GET /api/run-status/:runId?since=<cursor>`; completed run logs are written to `temp_runner_logs/<runId>.log`. Phase 1 LLM generations stream over SSE instead (`/api/events/:jobId`).
 - **Local mail** — Mailpit container catches every email Keycloak emits during dev. Production uses real SMTP (configured in the Keycloak admin console).
 
 ## First-time install (3 steps)
@@ -32,7 +30,7 @@ AAQUA is a React + Express platform that combines a suite of AI-driven QA tools 
 ```bash
 git clone <repo-url> qa-test-gen && cd qa-test-gen
 npm install                                                # auto-fetches Playwright Chromium
-docker compose -f docker-compose.security.yml up -d        # Postgres, Keycloak, ZAP, Mailpit
+docker compose -f docker-compose.security.yml up -d        # Postgres, Keycloak, Mailpit
 cp .env.example .env                                       # then edit secrets
 npm run server   # terminal 1 — Express on :3001
 npm run dev      # terminal 2 — Vite on :5173
@@ -57,9 +55,9 @@ The runner uses `CI_JOB_TOKEN` (short-lived, per-job, GitLab-injected) for the r
 
 | File | Purpose | Use for |
 |---|---|---|
-| `docker-compose.security.yml` | Local dev infra: Postgres + Keycloak + ZAP + Mailpit, on the developer's laptop | `npm run dev` / `npm run server` workflow |
+| `docker-compose.security.yml` | Local dev infra: Postgres + Keycloak + Mailpit, on the developer's laptop | `npm run dev` / `npm run server` workflow |
 | `docker-compose.security.prod.yml` | Legacy prod overlay (older bundled-image deployment model) | Not used by the current shared-infra deployment |
-| `docker-compose.yml` | **AAQUA tenant compose** — `app` (backend-only, no in-image nginx) + `zap`. Joins external `shared-infra_default` network. | QA/prod, alongside the shared-infra stack at `/opt/shared-infra/` |
+| `docker-compose.yml` | **AAQUA tenant compose** — `app` only (backend, no in-image nginx). Joins external `shared-infra_default` network. | QA/prod, alongside the shared-infra stack at `/opt/shared-infra/` |
 | `scripts/shared-infra-template/docker-compose.yml` | **Shared infrastructure stack** — Postgres 17 + Keycloak 24 + Nginx 1.27, hosting one or many tenants by path-prefix routing. Lives at `/opt/shared-infra/` on the QA host. | One per host; AAQUA is currently the first/only tenant. |
 
 ## License
