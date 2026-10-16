@@ -26,4 +26,11 @@ test_userdata_creates_required_dirs_and_network() {
   assert_contains "$body" "certbot"
 }
 
+test_userdata_survives_dpkg_lock_and_reruns() {
+  body=$(cat "$UD")
+  assert_contains "$body" "DPkg::Lock::Timeout"
+  assert_contains "$body" "--yes"
+  assert_contains "$body" "sleep 15"
+}
+
 run_tests
