@@ -175,17 +175,19 @@ Add `*accessKeys*.csv`, `*.pem` and `qa-test-gen/scripts/aws/aws.env`.
 1. Install AWS CLI v2. `aws configure --profile aaqua-deploy` with the key from the CSV. Delete the CSV.
 2. `cp scripts/aws/aws.env.example scripts/aws/aws.env`, fill it in; run `scripts/aws/aws-provision.sh`. Note the Elastic IP.
 3. Create DNS A record `<domain>` → Elastic IP. Ask the owners of `git.lab.aaseya.com` and `llm.lab.aaseya.com` to allowlist the Elastic IP (if they filter by source IP).
-4. In GitLab: create a project deploy token (`read_repository`); create a project runner with tag `aaqua-deploy-aws` (fill the Tags field in the UI — gotcha #24).
-5. `GITLAB_DEPLOY_TOKEN_USER=… GITLAB_DEPLOY_TOKEN=… GITLAB_RUNNER_TOKEN=… scripts/aws/aws-bootstrap.sh`.
-6. SSH in. Populate `/opt/shared-infra/.env` from `.env.example` and generate `secrets/postgres_super_password.txt` (gotcha #16). Run `onboard-aaqua.sh` (over `ssh -t` — it prompts for the LLM key) with `AAQUA_REPO=/opt/aaqua/qa-test-gen` and `PUBLIC_BASE_URL=https://<domain>` (gotcha #14). Write `/opt/aaqua/qa-test-gen/.env` as `gitlab-runner` **before** onboarding — onboarding builds the SPA from it, and CI reads it. Onboarding publishes the SPA as root, so afterwards `chown -R gitlab-runner:gitlab-runner /opt/shared-infra/nginx/sites/aaqua` (gotcha #27).
-7. `sudo PUBLIC_HOSTNAME=<domain> LETSENCRYPT_EMAIL=<email> bash /opt/aaqua/qa-test-gen/scripts/aws/issue-cert.sh` (try `--staging` first if unsure).
-8. Start in dependency order — nginx resolves `aaqua-app` at config load and exits if it is missing (gotcha #17):
-   1. `cd /opt/shared-infra && docker compose up -d postgres keycloak`
+4. Scope host-specific GitLab CI/CD variables (`KEYCLOAK_REALM_URL`, `VITE_KEYCLOAK_URL`, …) to environment `gcp-qa` — do this before creating the runner/deploy token so nothing is briefly unscoped.
+5. In GitLab: create a project deploy token (`read_repository`); create a project runner with tag `aaqua-deploy-aws` (fill the Tags field in the UI — gotcha #24).
+6. `GITLAB_DEPLOY_TOKEN_USER=… GITLAB_DEPLOY_TOKEN=… GITLAB_RUNNER_TOKEN=… scripts/aws/aws-bootstrap.sh`.
+7. SSH in. Populate `/opt/shared-infra/.env` from `.env.example` and generate `secrets/postgres_super_password.txt` (gotcha #16). Run `onboard-aaqua.sh` (over `ssh -t` — it prompts for the LLM key) with `AAQUA_REPO=/opt/aaqua/qa-test-gen` and `PUBLIC_BASE_URL=https://<domain>` (gotcha #14). Write `/opt/aaqua/qa-test-gen/.env` as `gitlab-runner` **before** onboarding — onboarding builds the SPA from it, and CI reads it. Onboarding publishes the SPA as root, so afterwards `sudo chown -R gitlab-runner:gitlab-runner /opt/shared-infra/nginx/sites/aaqua` (gotcha #27).
+8. `sudo PUBLIC_HOSTNAME=<domain> LETSENCRYPT_EMAIL=<email> bash /opt/aaqua/qa-test-gen/scripts/aws/issue-cert.sh` (try `--staging` first if unsure).
+9. Start in dependency order — nginx resolves `aaqua-app` at config load and exits if it is missing (gotcha #17):
+   1. `cd /opt/shared-infra && sudo docker compose up -d postgres keycloak`
    2. `cd /opt/aaqua/qa-test-gen && sudo -u gitlab-runner bash scripts/publish-spa.sh && docker compose up -d --build app` (gotcha #27)
-   3. `cd /opt/shared-infra && docker compose up -d nginx`
-9. `import-users.sh` with the user CSV.
-10. Scope GitLab variables to `gcp-qa`. Push to `main`; confirm `deploy:aws` succeeds.
+   3. `cd /opt/shared-infra && sudo docker compose up -d nginx`
+   4. `sudo certbot renew --dry-run` to confirm the renewal path works before relying on it.
+10. `import-users.sh` with the user CSV.
 11. `scripts/aws/verify.sh`; log in through the browser.
+12. Only once the host is fully up and verified: set GitLab CI/CD variable `AWS_DEPLOY_ENABLED=true` (until then `deploy:aws` has no matching `rules` entry and is not even created in the pipeline). Push or re-run the pipeline and confirm `deploy:aws` is green.
 
 ## Error handling
 
@@ -193,6 +195,7 @@ Add `*accessKeys*.csv`, `*.pem` and `qa-test-gen/scripts/aws/aws.env`.
 - `aws-provision.sh` never deletes or modifies existing resources beyond starting a stopped instance, adding missing SG rules and associating an unassociated Elastic IP.
 - Long-running remote steps in `aws-bootstrap.sh` run under `nohup` with logs on the host when they can exceed an SSH session's lifetime (gotcha #19); the script polls the log.
 - `issue-cert.sh` refuses to call Let's Encrypt when DNS does not point at the instance.
+- Recovery: if first-boot user-data fails partway, re-run it on the host with `sudo bash /var/lib/cloud/instance/scripts/part-001` (log at `/var/log/aaqua-userdata.log`).
 
 ## Testing
 
