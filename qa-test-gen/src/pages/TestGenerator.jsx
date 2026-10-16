@@ -1,13 +1,44 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
+import { useAuth } from 'react-oidc-context';
+import {
+    Alert,
+    Box,
+    Button,
+    Chip,
+    Grid,
+    Paper,
+    Stack,
+    TextField,
+    Typography,
+    useMediaQuery,
+} from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import { DataGrid, useGridApiContext } from '@mui/x-data-grid';
+import AddIcon from '@mui/icons-material/Add';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import BugReportIcon from '@mui/icons-material/BugReport';
+import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
+import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
+import HistoryIcon from '@mui/icons-material/History';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import ToolWorkflow from '../components/workflow/ToolWorkflow';
+import GenerationProgress from '../components/workflow/GenerationProgress';
 import RequirementInput from '../components/features/RequirementInput';
-import TestCaseTable from '../components/features/TestCaseTable';
 import ExportControls from '../components/features/ExportControls';
+import RaiseDefectDialog from '../components/features/RaiseDefectDialog';
+import { useNotify } from '../components/common/NotificationProvider';
+import { useProject } from '../context/ProjectContext';
+import { createApiClient } from '../utils/apiClient';
 import { generateTestCases } from '../services/testCaseGenerationService';
 import { exportToExcel, exportToJSON } from '../utils/exportUtils';
-import { AlertCircle, Clock, Trash2, Calendar, FileText, ChevronRight, ChevronDown, X } from 'lucide-react';
-import { useProject } from '../context/ProjectContext';
-import { useAuth } from 'react-oidc-context';
-import { createApiClient } from '../utils/apiClient';
+
+// Wizard step order — the single source of truth for both the stepper and any
+// programmatic jump (`stepIndex('review')`). The steps array below is built
+// from this list, so no numeric step index is maintained by hand.
+const STEP_ORDER = ['input', 'generate', 'review', 'export'];
+const stepIndex = (key) => STEP_ORDER.indexOf(key);
 
 // Format an elapsed-seconds value as "12.3s" or "1m 05s".
 const fmtDuration = (s) => {
@@ -16,27 +47,87 @@ const fmtDuration = (s) => {
     return `${s.toFixed(1)}s`;
 };
 
-const TestGenerator = () => {
-    const { selectedProjectId } = useProject();
-    const auth = useAuth();
-    const api = createApiClient(() => auth.user?.access_token);
+// Columns hidden below the md breakpoint — the long-form context fields are
+// the first to go so the narrow layout keeps ID/scenario/steps/result legible.
+const NARROW_HIDDEN_COLUMNS = { preconditions: false, testData: false, testType: false, platform: false };
 
-    const [testCases, setTestCases] = useState([]);
+const EMPTY_FORM = {
+    requirement: '',
+    businessRules: '',
+    regressionContext: '',
+    techDetails: '',
+    manualStoryKey: '',
+    sourceType: 'manual',
+    jiraKey: '',
+};
+
+const ftId = (n) => `FT_${String(n).padStart(3, '0')}`;
+
+// Highest FT_nnn sequence number already present, so appended batches continue
+// the numbering instead of colliding with earlier ones.
+const maxFtNumber = (rows) => rows.reduce((max, tc) => {
+    if (!tc?.id || !String(tc.id).startsWith('FT_')) return max;
+    const num = parseInt(String(tc.id).replace('FT_', ''), 10);
+    return !isNaN(num) && num > max ? num : max;
+}, 0);
+
+const priorityColor = (priority) => {
+    const p = String(priority || '').split('-')[0].toLowerCase();
+    if (p === 'p1' || p === 'p2' || p === 'high' || p === 'critical') return 'error';
+    if (p === 'p3' || p === 'medium') return 'warning';
+    if (p === 'p4' || p === 'low') return 'success';
+    return 'default';
+};
+
+/**
+ * Multi-line edit cell. DataGrid's default string editor is a single-line
+ * input, which makes the long narrative fields (steps, preconditions,
+ * expected result) unusable — the legacy table used textareas for these.
+ * Enter is swallowed so it inserts a newline instead of committing the edit.
+ */
+function MultilineEditCell({ id, field, value }) {
+    const apiRef = useGridApiContext();
+    return (
+        <TextField
+            autoFocus
+            multiline
+            minRows={3}
+            maxRows={10}
+            fullWidth
+            size="small"
+            variant="standard"
+            value={value ?? ''}
+            onChange={(e) => apiRef.current.setEditCellValue({ id, field, value: e.target.value })}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.stopPropagation(); }}
+            sx={{ px: 1, '& .MuiInputBase-root': { fontSize: 13 } }}
+        />
+    );
+}
+
+const TestGenerator = () => {
+    const notify = useNotify();
+    const auth = useAuth();
+    const { selectedProjectId, selectedProject } = useProject();
+    const mui = useTheme();
+    const isDownMd = useMediaQuery(mui.breakpoints.down('md'));
+
+    // Wizard state
+    const [step, setStep] = useState(stepIndex('input'));
+    const [form, setForm] = useState(EMPTY_FORM);
     const [requirementHistory, setRequirementHistory] = useState([]);
+    const [testCases, setTestCases] = useState([]);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [streamText, setStreamText] = useState('');
     const [error, setError] = useState(null);
     const [genSeconds, setGenSeconds] = useState(null);
     const [lastBatchCount, setLastBatchCount] = useState(0);
+    const [expandRows, setExpandRows] = useState(false);
+    const [colVis, setColVis] = useState(() => (isDownMd ? NARROW_HIDDEN_COLUMNS : {}));
+    const [defectTarget, setDefectTarget] = useState(null);
+    const [actualResult, setActualResult] = useState('');
+    const [isRaising, setIsRaising] = useState({});
+    const [raisedBugs, setRaisedBugs] = useState({});
     const abortControllerRef = useRef(null);
-
-    // Form input states (lifted from RequirementInput to support reloading runs)
-    const [sourceType, setSourceType] = useState('manual');
-    const [jiraKey, setJiraKey] = useState('');
-    const [manualStoryKey, setManualStoryKey] = useState('');
-    const [requirement, setRequirement] = useState('');
-    const [businessRules, setBusinessRules] = useState('');
-    const [regressionContext, setRegressionContext] = useState('');
-    const [techDetails, setTechDetails] = useState('');
 
     // History tracking states
     const [historyStories, setHistoryStories] = useState([]);
@@ -45,6 +136,10 @@ const TestGenerator = () => {
     const [historyWarning, setHistoryWarning] = useState(null);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
+    const api = createApiClient(() => auth.user?.access_token);
+    const setField = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
+
+    // History API integration
     const fetchHistoryStories = async () => {
         if (!selectedProjectId || !api) return;
         setIsLoadingHistory(true);
@@ -74,23 +169,19 @@ const TestGenerator = () => {
         setGenSeconds(null);
         setLastBatchCount(run.test_cases?.length || 0);
 
-        // Restore all requirement parameters into the UI inputs
-        setRequirement(run.story_description || '');
-        setBusinessRules(run.business_rules || '');
-        setRegressionContext(run.regression_context || '');
-        setTechDetails(run.tech_details || '');
+        const isJira = /^[A-Z0-9]+-\d+$/i.test(run.story_key || '');
+        setForm({
+            requirement: run.story_description || '',
+            businessRules: run.business_rules || '',
+            regressionContext: run.regression_context || '',
+            techDetails: run.tech_details || '',
+            sourceType: isJira ? 'jira' : 'manual',
+            jiraKey: isJira ? (run.story_key || '') : '',
+            manualStoryKey: isJira ? '' : (run.story_key || ''),
+        });
 
-        // Determine if story key belongs to Jira key or manual input
-        const isJira = /^[A-Z0-9]+-\d+$/i.test(run.story_key);
-        if (isJira) {
-            setSourceType('jira');
-            setJiraKey(run.story_key);
-            setManualStoryKey('');
-        } else {
-            setSourceType('manual');
-            setManualStoryKey(run.story_key || '');
-            setJiraKey('');
-        }
+        notify.success(`Loaded ${run.test_cases?.length || 0} test cases from "${run.story_key}"`);
+        setStep(stepIndex('review'));
     };
 
     const handleDeleteRun = async (runId, storyKey) => {
@@ -99,8 +190,10 @@ const TestGenerator = () => {
             await api.del(`/api/testcase-history/run/${runId}`);
             fetchStoryRuns(storyKey);
             fetchHistoryStories();
+            notify.info('Run removed');
         } catch (err) {
             console.error('[Delete Run Error]', err);
+            notify.error('Failed to delete run');
         }
     };
 
@@ -112,12 +205,14 @@ const TestGenerator = () => {
             setActiveStoryKey('');
             setSelectedStoryRuns([]);
             fetchHistoryStories();
+            notify.info(`Deleted history for "${storyKey}"`);
         } catch (err) {
             console.error('[Delete Story Error]', err);
+            notify.error('Failed to delete story');
         }
     };
 
-    // Load history when project or auth state updates
+    // Load history when project or auth updates
     useEffect(() => {
         if (selectedProjectId && auth.isAuthenticated) {
             fetchHistoryStories();
@@ -129,56 +224,72 @@ const TestGenerator = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedProjectId, auth.isAuthenticated, auth.user?.access_token]);
 
+    // Breakpoint visibility handling
+    const [trackedNarrow, setTrackedNarrow] = useState(isDownMd);
+    if (isDownMd !== trackedNarrow) {
+        setTrackedNarrow(isDownMd);
+        setColVis(isDownMd ? NARROW_HIDDEN_COLUMNS : {});
+    }
+
     const handleCancel = () => {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
             abortControllerRef.current = null;
             setIsGenerating(false);
+            setStreamText((prev) => (prev ? `${prev}\n\n[Cancelled]` : '[Cancelled]'));
         }
     };
 
-    const handleGenerate = async (requirement, businessRules = '', regressionContext = '', techDetails = '', storyKey = '') => {
+    const handleGenerate = async () => {
+        if (!form.requirement.trim()) return;
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
         abortControllerRef.current = controller;
 
         setIsGenerating(true);
         setError(null);
+        setStreamText('');
         setGenSeconds(null);
         setHistoryWarning(null);
         const startedAt = performance.now();
         try {
-            const results = await generateTestCases(requirement, requirementHistory, businessRules, regressionContext, techDetails, controller.signal);
-            
-            let maxNum = 0;
-            testCases.forEach(tc => {
-                if (tc.id && tc.id.startsWith('FT_')) {
-                    const num = parseInt(tc.id.replace('FT_', ''), 10);
-                    if (!isNaN(num) && num > maxNum) {
-                        maxNum = num;
-                    }
-                }
+            const results = await generateTestCases({
+                requirement: form.requirement,
+                requirementHistory,
+                businessRules: form.businessRules,
+                regressionContext: form.regressionContext,
+                techDetails: form.techDetails,
+                onToken: (_token, full) => setStreamText(full),
+                signal: controller.signal,
             });
-            const reindexedResults = results.map((tc, idx) => ({
-                ...tc,
-                id: `FT_${String(maxNum + idx + 1).padStart(3, '0')}`
-            }));
 
-            setTestCases(prev => [...prev, ...reindexedResults]);
-            setRequirementHistory(prev => [...prev, requirement]);
-            setLastBatchCount(Array.isArray(results) ? results.length : 0);
+            const count = results.length;
+            let reindexedResults = [];
+            setTestCases((prev) => {
+                const startAt = maxFtNumber(prev);
+                reindexedResults = results.map((tc, idx) => ({ ...tc, id: ftId(startAt + idx + 1) }));
+                return [...prev, ...reindexedResults];
+            });
+            setRequirementHistory((prev) => [...prev, form.requirement]);
+            setLastBatchCount(count);
             setGenSeconds((performance.now() - startedAt) / 1000);
+            notify.success(`Generated ${count} test case${count === 1 ? '' : 's'}`);
+            setStep(stepIndex('review'));
 
             // Auto-save history run to backend
+            const activeStoryKey = (form.sourceType === 'jira' ? form.jiraKey?.trim() : form.manualStoryKey?.trim()) ||
+                form.requirement.trim().split(/\s+/).slice(0, 4).join(' ').replace(/[^a-zA-Z0-9 ]/g, '').trim() ||
+                `Manual Run - ${new Date().toLocaleDateString()}`;
+
             if (selectedProjectId && api) {
                 try {
                     const response = await api.post('/api/testcase-history', {
                         project_id: selectedProjectId,
-                        story_key: storyKey,
-                        story_description: requirement,
-                        business_rules: businessRules,
-                        regression_context: regressionContext,
-                        tech_details: techDetails,
+                        story_key: activeStoryKey,
+                        story_description: form.requirement,
+                        business_rules: form.businessRules,
+                        regression_context: form.regressionContext,
+                        tech_details: form.techDetails,
                         test_cases: reindexedResults
                     });
                     if (response?.warning) {
@@ -191,9 +302,10 @@ const TestGenerator = () => {
             }
         } catch (err) {
             if (err.name === 'AbortError') {
-                console.log("Cancelled");
+                notify.info('Generation cancelled');
             } else {
                 setError(err.message);
+                notify.error(`Generation failed: ${err.message}`);
             }
         } finally {
             if (abortControllerRef.current === controller) {
@@ -203,11 +315,166 @@ const TestGenerator = () => {
         }
     };
 
-    // Map to an ordered, human-labeled "Test Cases" sheet so a first-time
-    // reviewer can read it top-to-bottom (ID → context → detailed steps → result).
+    const handleClearContext = () => {
+        setRequirementHistory([]);
+        setTestCases([]);
+        setForm(EMPTY_FORM);
+        setStreamText('');
+        setGenSeconds(null);
+        setLastBatchCount(0);
+        setRaisedBugs({});
+        notify.info('Context cleared');
+    };
+
+    // ---------- Review grid ----------
+    const handleAddTestCase = () => {
+        let assigned;
+        setTestCases((prev) => {
+            assigned = ftId(maxFtNumber(prev) + 1);
+            return [...prev, {
+                id: assigned,
+                module: '',
+                feature: '',
+                scenario: '',
+                preconditions: '',
+                testData: '',
+                steps: [],
+                expectedResult: '',
+                priority: 'P3-Medium',
+                platform: '',
+                testType: 'Functional',
+            }];
+        });
+        notify.info(`${assigned} added — double-click a cell to edit it`);
+    };
+
+    const processRowUpdate = (newRow) => {
+        setTestCases((prev) => prev.map((tc) => (tc.id === newRow.id ? { ...tc, ...newRow } : tc)));
+        return newRow;
+    };
+
+    // ---------- JIRA defect logging (per test case) ----------
+    const openDefectDialog = (tc) => {
+        setDefectTarget(tc);
+        setActualResult(`Actual outcome deviated from expected: "${tc.expectedResult}"`);
+    };
+
+    const recordBug = (tcId, entry) => setRaisedBugs((prev) => {
+        const current = Array.isArray(prev[tcId]) ? prev[tcId] : [];
+        return { ...prev, [tcId]: [...current.filter((b) => b.success), entry] };
+    });
+
+    const handleRaiseDefect = async () => {
+        if (!defectTarget) return;
+        const tc = defectTarget;
+        const tcId = tc.id;
+        setDefectTarget(null);
+        setIsRaising((prev) => ({ ...prev, [tcId]: true }));
+
+        if (!auth.user?.access_token) {
+            console.warn('Defect integration unavailable – not logged in');
+            recordBug(tcId, { success: false, error: 'Not authenticated' });
+            setIsRaising((prev) => ({ ...prev, [tcId]: false }));
+            return;
+        }
+        try {
+            const data = await api.post('/api/jira/defect', {
+                testCase: tc,
+                actualResult,
+                projectName: selectedProject?.name || 'AAQUA Quality Run',
+            });
+            recordBug(tcId, { success: true, key: data.jiraKey });
+            notify.success(`Defect ${data.jiraKey} raised for ${tcId}`);
+        } catch (err) {
+            console.error('[Raise Defect Error]', err);
+            const msg = err?.data?.error || err.message || 'Unknown error';
+            recordBug(tcId, { success: false, error: msg });
+            notify.error(`Failed to raise defect for ${tcId}: ${msg}`);
+        } finally {
+            setIsRaising((prev) => ({ ...prev, [tcId]: false }));
+        }
+    };
+
+    const columns = useMemo(() => {
+        const multiline = {
+            editable: true,
+            renderEditCell: (params) => <MultilineEditCell {...params} />,
+        };
+        return [
+            { field: 'id', headerName: 'ID', width: 100, editable: false },
+            { field: 'module', headerName: 'Module', flex: 0.6, minWidth: 120, editable: true },
+            {
+                field: 'scenario',
+                headerName: 'Scenario',
+                flex: 1.2,
+                minWidth: 200,
+                ...multiline,
+            },
+            { field: 'preconditions', headerName: 'Preconditions', flex: 1, minWidth: 160, ...multiline },
+            { field: 'testData', headerName: 'Test Data', flex: 1, minWidth: 150, ...multiline },
+            {
+                field: 'steps',
+                headerName: 'Test Steps',
+                flex: 1.4,
+                minWidth: 220,
+                ...multiline,
+                valueGetter: (value, row) => (Array.isArray(row?.steps) ? row.steps.join('\n') : (row?.steps || '')),
+                valueSetter: (value, row) => ({ ...row, steps: String(value ?? '').split('\n') }),
+            },
+            { field: 'expectedResult', headerName: 'Expected Result', flex: 1, minWidth: 180, ...multiline },
+            {
+                field: 'priority',
+                headerName: 'Priority',
+                width: 130,
+                editable: true,
+                renderCell: (params) => (params.value
+                    ? <Chip size="small" label={params.value} color={priorityColor(params.value)} variant="outlined" />
+                    : null),
+            },
+            {
+                field: 'testType',
+                headerName: 'Type',
+                width: 130,
+                editable: true,
+                valueGetter: (value, row) => row?.testType || 'Functional',
+            },
+            { field: 'platform', headerName: 'Platform', width: 110, editable: true },
+            {
+                field: '__jira',
+                headerName: 'Jira Integration',
+                width: 200,
+                sortable: false,
+                filterable: false,
+                renderCell: (params) => {
+                    const tcId = params.row.id;
+                    const bugs = Array.isArray(raisedBugs[tcId]) ? raisedBugs[tcId] : [];
+                    const busy = !!isRaising[tcId];
+                    return (
+                        <Stack direction="row" spacing={0.5} sx={{ height: '100%', alignItems: 'center', flexWrap: 'wrap', gap: 0.5 }}>
+                            {bugs.map((bug, i) => (bug.success
+                                ? <Chip key={i} size="small" color="success" variant="outlined" label={bug.key} />
+                                : <Chip key={i} size="small" color="error" variant="outlined" label={`Err: ${bug.error}`} title={bug.error} />
+                            ))}
+                            <Button
+                                size="small"
+                                color="error"
+                                startIcon={<BugReportIcon fontSize="small" />}
+                                disabled={busy || !auth.user}
+                                onClick={() => openDefectDialog(params.row)}
+                            >
+                                {busy ? 'Logging…' : (bugs.some((b) => b.success) ? 'Log another' : 'Log Bug')}
+                            </Button>
+                        </Stack>
+                    );
+                },
+            },
+        ];
+    }, [raisedBugs, isRaising, auth.user]);
+
+    // ---------- Exports ----------
     const handleExportExcel = () => {
-        const rows = testCases.map((tc, i) => ({
-            'Test Case ID': tc.id || `FT_${String(i + 1).padStart(3, '0')}`,
+        const rows = testCases.map((tc) => ({
+            'Test Case ID': tc.id,
             'Module': tc.module || '',
             'Feature': tc.feature || '',
             'Scenario': tc.scenario || '',
@@ -223,247 +490,301 @@ const TestGenerator = () => {
     };
     const handleExportJSON = () => exportToJSON(testCases);
 
-    return (
-        <div className="test-generator">
-            <div className="page-header">
-                <h2>Functional Test Generator</h2>
-                <p>Transform your requirements into comprehensive functional test cases instantly.</p>
-            </div>
+    const inputStep = (
+        <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Transform your requirements into comprehensive functional test cases instantly.
+            </Typography>
 
             {historyWarning && (
-                <div className="warning-banner animate-fade-in" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                    <span>⚠️</span>
-                    <span style={{ flex: 1 }}>{historyWarning}</span>
-                    <button onClick={() => setHistoryWarning(null)} style={{ background: 'none', border: 'none', color: '#fef3c7', cursor: 'pointer', fontWeight: 'bold' }}><X size={16} /></button>
-                </div>
+                <Alert
+                    severity="warning"
+                    sx={{ mb: 2 }}
+                    onClose={() => setHistoryWarning(null)}
+                >
+                    {historyWarning}
+                </Alert>
             )}
 
-            <div className="test-generator-grid">
-                <div className="generator-main">
+            <Grid container spacing={3}>
+                <Grid item xs={12} lg={8}>
                     <RequirementInput
-                        onGenerate={handleGenerate}
+                        values={form}
+                        onChange={setField}
                         isGenerating={isGenerating}
-                        onCancel={handleCancel}
                         contextCount={requirementHistory.length}
-                        onClearContext={() => {
-                            setRequirementHistory([]);
-                            setTestCases([]);
-                            setRequirement('');
-                            setManualStoryKey('');
-                            setJiraKey('');
-                            setBusinessRules('');
-                            setRegressionContext('');
-                            setTechDetails('');
-                        }}
-                        sourceType={sourceType}
-                        setSourceType={setSourceType}
-                        jiraKey={jiraKey}
-                        setJiraKey={setJiraKey}
-                        manualStoryKey={manualStoryKey}
-                        setManualStoryKey={setManualStoryKey}
-                        requirement={requirement}
-                        setRequirement={setRequirement}
-                        businessRules={businessRules}
-                        setBusinessRules={setBusinessRules}
-                        regressionContext={regressionContext}
-                        setRegressionContext={setRegressionContext}
-                        techDetails={techDetails}
-                        setTechDetails={setTechDetails}
+                        onClearContext={handleClearContext}
                     />
-                </div>
+                </Grid>
+                <Grid item xs={12} lg={4}>
+                    <Paper
+                        variant="outlined"
+                        sx={{
+                            p: 2,
+                            height: '100%',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            minHeight: 380,
+                            bgcolor: 'background.paper',
+                            borderRadius: 2,
+                        }}
+                    >
+                        <Stack direction="row" alignItems="center" spacing={1} sx={{ pb: 1, mb: 1, borderBottom: 1, borderColor: 'divider' }}>
+                            <HistoryIcon fontSize="small" color="primary" />
+                            <Typography variant="subtitle1" fontWeight={600}>
+                                Saved Stories History
+                            </Typography>
+                        </Stack>
 
-                <div className="generator-sidebar">
-                    <div className="card history-card" style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: '380px' }}>
-                        <div className="history-header" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', marginBottom: '0.75rem' }}>
-                            <h3 style={{ fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', margin: 0 }}>
-                                <Clock size={16} /> Saved Stories History
-                            </h3>
-                        </div>
-
-                        <div className="history-warning-box" style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)', color: '#fcd34d', padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem', lineHeight: 1.4, marginBottom: '0.75rem' }}>
-                            ⚠️ <strong>Limit Notice:</strong> Up to 10 runs are stored per User Story. The 11th run automatically deletes the oldest.
-                        </div>
+                        <Alert severity="info" sx={{ mb: 1.5, py: 0.5, '& .MuiAlert-message': { fontSize: '0.75rem' } }}>
+                            Up to 10 runs are stored per User Story. The 11th run automatically deletes the oldest.
+                        </Alert>
 
                         {isLoadingHistory ? (
-                            <div style={{ textAlign: 'center', padding: '2rem 0', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                                Loading history...
-                            </div>
+                            <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary', fontSize: '0.85rem' }}>
+                                Loading history…
+                            </Box>
                         ) : historyStories.length === 0 ? (
-                            <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                            <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary', fontSize: '0.85rem' }}>
                                 No history saved yet. Generated runs will appear here automatically.
-                            </div>
+                            </Box>
                         ) : (
-                            <div className="history-list" style={{ overflowY: 'auto', flex: 1, maxHeight: '380px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            <Stack spacing={1} sx={{ overflowY: 'auto', flex: 1, maxHeight: 420 }}>
                                 {historyStories.map((story) => {
                                     const isExpanded = activeStoryKey === story.storyKey;
                                     return (
-                                        <div key={story.storyKey} style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: isExpanded ? 'rgba(255,255,255,0.02)' : 'transparent', overflow: 'hidden' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', cursor: 'pointer' }} onClick={() => isExpanded ? setActiveStoryKey('') : fetchStoryRuns(story.storyKey)}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', overflow: 'hidden', flex: 1 }}>
-                                                    {isExpanded ? <ChevronDown size={14} style={{ flexShrink: 0 }} /> : <ChevronRight size={14} style={{ flexShrink: 0 }} />}
-                                                    <div style={{ overflow: 'hidden' }}>
-                                                        <div style={{ fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={story.storyKey}>
+                                        <Box
+                                            key={story.storyKey}
+                                            sx={{
+                                                border: 1,
+                                                borderColor: 'divider',
+                                                borderRadius: 1,
+                                                bgcolor: isExpanded ? 'action.hover' : 'transparent',
+                                                overflow: 'hidden',
+                                            }}
+                                        >
+                                            <Stack
+                                                direction="row"
+                                                alignItems="center"
+                                                justifyContent="space-between"
+                                                sx={{ p: 1, cursor: 'pointer' }}
+                                                onClick={() => (isExpanded ? setActiveStoryKey('') : fetchStoryRuns(story.storyKey))}
+                                            >
+                                                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ overflow: 'hidden', flex: 1 }}>
+                                                    {isExpanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
+                                                    <Box sx={{ overflow: 'hidden' }}>
+                                                        <Typography variant="body2" fontWeight={600} noWrap title={story.storyKey}>
                                                             {story.storyKey}
-                                                        </div>
-                                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary" noWrap display="block">
                                                             {story.description}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '0.5rem' }}>
-                                                    <span style={{ fontSize: '0.7rem', background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', padding: '0.1rem 0.4rem', borderRadius: '10px', color: 'var(--text-secondary)' }}>
-                                                        {story.runCount}
-                                                    </span>
-                                                    <button 
+                                                        </Typography>
+                                                    </Box>
+                                                </Stack>
+                                                <Stack direction="row" alignItems="center" spacing={1} sx={{ ml: 1 }}>
+                                                    <Chip size="small" label={story.runCount} sx={{ height: 20, fontSize: '0.7rem' }} />
+                                                    <Button
+                                                        size="small"
+                                                        color="error"
+                                                        sx={{ minWidth: 'auto', p: 0.5 }}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             handleDeleteStory(story.storyKey);
-                                                        }} 
-                                                        style={{ background: 'none', border: 'none', color: '#ef4444', padding: '0.2rem', cursor: 'pointer', opacity: 0.7 }}
-                                                        className="hover-opacity-100"
+                                                        }}
                                                         title="Delete Story History"
                                                     >
-                                                        <Trash2 size={12} />
-                                                    </button>
-                                                </div>
-                                            </div>
+                                                        <DeleteOutlineIcon fontSize="small" />
+                                                    </Button>
+                                                </Stack>
+                                            </Stack>
 
                                             {isExpanded && (
-                                                <div style={{ background: 'rgba(0,0,0,0.15)', borderTop: '1px solid var(--border-color)', padding: '0.4rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                                <Box sx={{ bgcolor: 'action.selected', borderTop: 1, borderColor: 'divider', p: 1 }}>
                                                     {selectedStoryRuns.length === 0 ? (
-                                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', padding: '0.5rem 0' }}>Loading runs...</div>
+                                                        <Typography variant="caption" color="text.secondary" align="center" display="block">
+                                                            Loading runs…
+                                                        </Typography>
                                                     ) : (
-                                                        selectedStoryRuns.map((run, runIdx) => (
-                                                            <div key={run.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.75rem', padding: '0.25rem 0' }}>
-                                                                <span 
-                                                                    onClick={() => handleLoadRun(run)} 
-                                                                    style={{ cursor: 'pointer', color: 'var(--accent-secondary)', textDecoration: 'underline', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                                                                    title="Click to load these test cases"
+                                                        <Stack spacing={0.5}>
+                                                            {selectedStoryRuns.map((run, runIdx) => (
+                                                                <Stack
+                                                                    key={run.id}
+                                                                    direction="row"
+                                                                    alignItems="center"
+                                                                    justifyContent="space-between"
+                                                                    sx={{ fontSize: '0.75rem' }}
                                                                 >
-                                                                    Run {selectedStoryRuns.length - runIdx} ({new Date(run.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })})
-                                                                </span>
-                                                                <button 
-                                                                    onClick={() => handleDeleteRun(run.id, story.storyKey)}
-                                                                    style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0.1rem' }}
-                                                                    className="hover-text-danger"
-                                                                    title="Delete this run"
-                                                                >
-                                                                    <X size={10} />
-                                                                </button>
-                                                            </div>
-                                                        ))
+                                                                    <Typography
+                                                                        variant="caption"
+                                                                        onClick={() => handleLoadRun(run)}
+                                                                        sx={{
+                                                                            cursor: 'pointer',
+                                                                            color: 'primary.main',
+                                                                            textDecoration: 'underline',
+                                                                            overflow: 'hidden',
+                                                                            textOverflow: 'ellipsis',
+                                                                            whiteSpace: 'nowrap',
+                                                                            flex: 1,
+                                                                        }}
+                                                                        title="Click to load these test cases"
+                                                                    >
+                                                                        Run {selectedStoryRuns.length - runIdx} ({new Date(run.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })})
+                                                                    </Typography>
+                                                                    <Button
+                                                                        size="small"
+                                                                        color="inherit"
+                                                                        sx={{ minWidth: 'auto', p: 0.25, color: 'text.secondary', '&:hover': { color: 'error.main' } }}
+                                                                        onClick={() => handleDeleteRun(run.id, story.storyKey)}
+                                                                        title="Delete this run"
+                                                                    >
+                                                                        ×
+                                                                    </Button>
+                                                                </Stack>
+                                                            ))}
+                                                        </Stack>
                                                     )}
-                                                </div>
+                                                </Box>
                                             )}
-                                        </div>
+                                        </Box>
                                     );
                                 })}
-                            </div>
+                            </Stack>
                         )}
-                    </div>
-                </div>
-            </div>
+                    </Paper>
+                </Grid>
+            </Grid>
+        </Box>
+    );
 
+    const generateStep = (
+        <Box>
+            <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+                <Button
+                    variant="contained"
+                    startIcon={<AutoAwesomeIcon />}
+                    onClick={handleGenerate}
+                    disabled={isGenerating || !form.requirement.trim()}
+                >
+                    {isGenerating
+                        ? 'Analyzing & Generating…'
+                        : (testCases.length > 0 ? 'Generate More Test Cases' : 'Generate Test Cases')}
+                </Button>
+                {isGenerating && (
+                    <Button variant="outlined" color="error" onClick={handleCancel}>Cancel</Button>
+                )}
+            </Stack>
             {error && (
-                <div className="error-banner animate-fade-in">
-                    <AlertCircle size={20} />
-                    <span>{error}</span>
-                </div>
+                <Alert
+                    severity="error"
+                    sx={{ mb: 2 }}
+                    action={<Button color="inherit" size="small" onClick={handleGenerate}>Retry</Button>}
+                >
+                    {error}
+                </Alert>
+            )}
+            {!isGenerating && genSeconds != null && (
+                <Alert severity="success" sx={{ mb: 2 }}>
+                    Generated {lastBatchCount} test case{lastBatchCount === 1 ? '' : 's'} in {fmtDuration(genSeconds)}
+                </Alert>
+            )}
+            <GenerationProgress streamText={streamText || null} onRetry={handleGenerate} />
+        </Box>
+    );
+
+    const reviewStep = (
+        <Box>
+            {auth.isLoading && <Alert severity="info" sx={{ mb: 2 }}>Loading authentication…</Alert>}
+            {auth.error && <Alert severity="error" sx={{ mb: 2 }}>Authentication error: {auth.error.message}</Alert>}
+            {!auth.isLoading && !auth.user && (
+                <Alert severity="warning" sx={{ mb: 2 }}>
+                    You are not logged in – defect integration is disabled.
+                </Alert>
             )}
 
-            {testCases.length > 0 && (
-                <div className="results-section">
-                    {genSeconds != null && (
-                        <div className="gen-timing">
-                            <Clock size={14} />
-                            <span>Generated {lastBatchCount} test case{lastBatchCount === 1 ? '' : 's'} in {fmtDuration(genSeconds)}</span>
-                        </div>
-                    )}
-                    <ExportControls
-                        onExportExcel={handleExportExcel}
-                        onExportJSON={handleExportJSON}
-                        testCases={testCases}
-                        disabled={isGenerating}
+            <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                <Typography variant="h6" sx={{ mr: 'auto' }}>
+                    Generated Test Cases <Chip size="small" label={`${testCases.length} Cases`} sx={{ ml: 1 }} />
+                </Typography>
+                <Button
+                    size="small"
+                    startIcon={expandRows ? <UnfoldLessIcon /> : <UnfoldMoreIcon />}
+                    onClick={() => setExpandRows((v) => !v)}
+                >
+                    {expandRows ? 'Collapse rows' : 'Expand rows'}
+                </Button>
+                <Button size="small" variant="outlined" startIcon={<AddIcon />} onClick={handleAddTestCase}>
+                    Add Test Case
+                </Button>
+            </Stack>
+
+            {testCases.length === 0 ? (
+                <Alert severity="info">No test cases yet — generate some on the previous step.</Alert>
+            ) : (
+                <Box sx={{ height: 600, width: '100%' }}>
+                    <DataGrid
+                        rows={testCases}
+                        columns={columns}
+                        getRowId={(row) => row.id}
+                        disableRowSelectionOnClick
+                        processRowUpdate={processRowUpdate}
+                        onProcessRowUpdateError={(err) => notify.error(`Could not save edit: ${err.message}`)}
+                        columnVisibilityModel={colVis}
+                        onColumnVisibilityModelChange={setColVis}
+                        getRowHeight={expandRows ? () => 'auto' : undefined}
+                        initialState={{ pagination: { paginationModel: { pageSize: 25 } } }}
+                        pageSizeOptions={[10, 25, 50, 100]}
+                        sx={expandRows ? {
+                            '& .MuiDataGrid-cell': {
+                                whiteSpace: 'normal',
+                                wordBreak: 'break-word',
+                                alignItems: 'flex-start',
+                                py: 1,
+                            },
+                        } : undefined}
                     />
-                    <TestCaseTable testCases={testCases} onTestCasesChange={setTestCases} />
-                </div>
+                </Box>
             )}
 
-            <style>{`
-        .page-header {
-            margin-bottom: 2rem;
-        }
-        .page-header h2 {
-            font-size: 1.75rem;
-            margin-bottom: 0.5rem;
-        }
-        .page-header p {
-            color: var(--text-secondary);
-        }
-        .error-banner {
-          background: rgba(239, 68, 68, 0.1);
-          border: 1px solid var(--error);
-          color: #fca5a5;
-          padding: 1rem;
-          border-radius: var(--radius-md);
-          margin-top: 1.5rem;
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-        }
-        .results-section {
-          margin-top: 2rem;
-        }
-        .gen-timing {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.4rem;
-          margin-bottom: 0.75rem;
-          padding: 0.35rem 0.7rem;
-          font-size: 0.8rem;
-          font-weight: 600;
-          color: var(--accent-secondary);
-          background: rgba(59, 130, 246, 0.08);
-          border: 1px solid rgba(59, 130, 246, 0.25);
-          border-radius: 99px;
-        }
-        .test-generator-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 1.5rem;
-            align-items: start;
-            margin-bottom: 1.5rem;
-        }
-         @media (min-width: 1200px) {
-             .test-generator-grid {
-                 grid-template-columns: minmax(0, 2.2fr) minmax(280px, 1fr);
-             }
-         }
-        .history-card {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-md);
-            padding: 1.25rem;
-        }
-        .warning-banner {
-            background: rgba(245, 158, 11, 0.1);
-            border: 1px solid #f59e0b;
-            color: #fef3c7;
-            padding: 1rem;
-            border-radius: var(--radius-md);
-            margin-bottom: 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-        .hover-opacity-100:hover {
-            opacity: 1 !important;
-        }
-        .hover-text-danger:hover {
-            color: #ef4444 !important;
-        }
-      `}</style>
-        </div>
+            <RaiseDefectDialog
+                target={defectTarget}
+                projectName={selectedProject?.name || 'AAQUA Default Context'}
+                actualResult={actualResult}
+                onChange={setActualResult}
+                onSubmit={handleRaiseDefect}
+                onClose={() => setDefectTarget(null)}
+            />
+        </Box>
+    );
+
+    const exportStep = (
+        <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                {testCases.length} test case{testCases.length === 1 ? '' : 's'} ready to export or attach to a JIRA story.
+            </Typography>
+            <ExportControls
+                onExportExcel={handleExportExcel}
+                onExportJSON={handleExportJSON}
+                testCases={testCases}
+                disabled={isGenerating || testCases.length === 0}
+            />
+        </Box>
+    );
+
+    const stepDefs = {
+        input: { label: 'Input', content: inputStep, canAdvance: form.requirement.trim().length > 0 },
+        generate: { label: 'Generate', content: generateStep, canAdvance: testCases.length > 0 },
+        review: { label: 'Review', content: reviewStep, canAdvance: testCases.length > 0 },
+        export: { label: 'Export', content: exportStep },
+    };
+    const steps = STEP_ORDER.map((key) => ({ key, ...stepDefs[key] }));
+
+    return (
+        <ToolWorkflow
+            title="Functional Test Generator"
+            steps={steps}
+            activeStep={step}
+            onStepChange={setStep}
+        />
     );
 };
 

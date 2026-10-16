@@ -32,6 +32,65 @@ const JWKS = JWKS_URL
     : null;
 
 /**
+ * Raised for verification failures that carry their own HTTP semantics
+ * (identity provider unconfigured, audience mismatch) so callers can map them
+ * back to the exact status/message the middleware has always returned.
+ */
+export class AuthError extends Error {
+    constructor(status, message) {
+        super(message);
+        this.name = 'AuthError';
+        this.status = status;
+    }
+}
+
+/**
+ * Verify a Keycloak-issued JWT and return the user object, or throw.
+ *
+ * This is the transport-agnostic core of `authenticateToken` — extracted so
+ * flows that cannot use an Authorization header can still verify a token
+ * (e.g. the SSE endpoint at /api/events/:jobId, where the browser EventSource
+ * API forces the token onto a query param).
+ *
+ * Throws `AuthError` for configuration/claim failures and the raw `jose`
+ * errors (JWTExpired, JWTInvalid, ...) for signature/format failures, so
+ * callers can distinguish expired-vs-invalid the same way the middleware does.
+ *
+ * @param {string} token Raw JWT (no "Bearer " prefix).
+ * @returns {Promise<{id: string, email: string, name: string, username: string, roles: string[], raw: object}>}
+ */
+export async function verifyToken(token) {
+    if (!JWKS) {
+        throw new AuthError(503, 'Identity provider is not configured.');
+    }
+
+    const { payload } = await jwtVerify(token, JWKS, {
+        issuer: REALM_URL,
+    });
+
+    // Audience check: Keycloak puts the client ID in `azp` and may include it in `aud`.
+    // We accept either to handle both confidential-client and public-client tokens.
+    if (AUDIENCE) {
+        const aud = payload.aud;
+        const audOk = aud === AUDIENCE
+            || (Array.isArray(aud) && aud.includes(AUDIENCE))
+            || payload.azp === AUDIENCE;
+        if (!audOk) {
+            throw new AuthError(403, 'Token audience mismatch.');
+        }
+    }
+
+    return {
+        id: payload.sub,
+        email: payload.email,
+        name: payload.name || payload.preferred_username,
+        username: payload.preferred_username,
+        roles: payload.realm_access?.roles ?? [],
+        raw: payload,
+    };
+}
+
+/**
  * Express middleware: verify a Keycloak-issued JWT from the Authorization header.
  * On success, sets req.user = { id (sub), email, name, roles, raw }.
  */
@@ -50,30 +109,7 @@ export async function authenticateToken(req, res, next) {
     }
 
     try {
-        const { payload } = await jwtVerify(token, JWKS, {
-            issuer: REALM_URL,
-        });
-
-        // Audience check: Keycloak puts the client ID in `azp` and may include it in `aud`.
-        // We accept either to handle both confidential-client and public-client tokens.
-        if (AUDIENCE) {
-            const aud = payload.aud;
-            const audOk = aud === AUDIENCE
-                || (Array.isArray(aud) && aud.includes(AUDIENCE))
-                || payload.azp === AUDIENCE;
-            if (!audOk) {
-                return res.status(403).json({ error: 'Token audience mismatch.' });
-            }
-        }
-
-        req.user = {
-            id: payload.sub,
-            email: payload.email,
-            name: payload.name || payload.preferred_username,
-            username: payload.preferred_username,
-            roles: payload.realm_access?.roles ?? [],
-            raw: payload,
-        };
+        req.user = await verifyToken(token);
 
         // Log user activity asynchronously (Audit Trail)
         // Skip logging usage dashboard API requests to prevent logs clutter
@@ -95,6 +131,9 @@ export async function authenticateToken(req, res, next) {
 
         next();
     } catch (err) {
+        if (err instanceof AuthError) {
+            return res.status(err.status).json({ error: err.message });
+        }
         if (err instanceof joseErrors.JWTExpired) {
             return res.status(401).json({ error: 'Token expired. Please login again.' });
         }

@@ -13,7 +13,8 @@ AAQUA is a React + Express platform that combines a suite of AI-driven QA tools 
 | Understand the deployment design | [`docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md`](docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md) |
 | Understand the AI Secure Engine subsystem (`/api/security/*`) | [`SECURITY_ENGINE_README.md`](SECURITY_ENGINE_README.md) |
 | Understand the architecture and codebase conventions | [`CLAUDE.md`](CLAUDE.md) |
-| Look up a deployment gotcha (HTTPS / mixed-content, self-signed cert + JWKS, DB secret file, role claim location, `/aaqua/` BASE_URL trap, GCP provisioning quirks, nginx upstream resolution, Keycloak realm reset, GitLab Runner UI form, etc.) | [`CLAUDE.md` § Deployment gotchas](CLAUDE.md#deployment-gotchas-learned-the-hard-way-during-the-qa-box-stand-up) (24 numbered gotchas as of 2026-06-17) |
+| Look up a deployment gotcha (HTTPS / mixed-content, self-signed cert + JWKS, DB secret file, role claim location, `/aaqua/` BASE_URL trap, GCP provisioning quirks, nginx upstream resolution, Keycloak realm reset, GitLab Runner UI form, `.env`-shadows-defaults, `docker restart` env-var freeze, `pg_dump`-before-destructive, IP-based QA deploy, etc.) | [`CLAUDE.md` § Deployment gotchas](CLAUDE.md#deployment-gotchas-learned-the-hard-way-during-the-qa-box-stand-up) (28 numbered gotchas as of 2026-07-15) |
+| **Bulk-import Keycloak users from CSV** (post-DB-loss recovery, team onboarding) | [`scripts/import-users.sh`](scripts/import-users.sh) + [`scripts/users-template.csv`](scripts/users-template.csv) — fill the CSV in Excel, `export KC_ADMIN_PW=...`, run the script on the VM. See `CLAUDE.md` § "Bulk user import via CSV". |
 
 ## Stack at a glance
 

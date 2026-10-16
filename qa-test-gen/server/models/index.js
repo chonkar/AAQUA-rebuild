@@ -10,6 +10,7 @@ import AgentRun from './AgentRun.js';
 import McpLocatorLearning from './McpLocatorLearning.js';
 import TestCaseHistory from './TestCaseHistory.js';
 import TransientDownload from './TransientDownload.js';
+import Job from './Job.js';
 
 // ─── Associations ────────────────────────────────────────
 // User identity is owned by Keycloak; `owner_id` stores the
@@ -116,5 +117,6 @@ export {
     McpLocatorLearning,
     TestCaseHistory,
     TransientDownload,
+    Job,
     initDatabase,
 };

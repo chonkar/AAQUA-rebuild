@@ -40,6 +40,38 @@ export default defineConfig([
       }],
     },
   },
+  // Tests (vitest with `globals: true` in vitest.config.js — bare test/expect/vi,
+  // no imports — plus jsdom browser globals for the frontend suite).
+  {
+    files: ['tests/**/*.{js,jsx}'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        test: 'readonly',
+        it: 'readonly',
+        describe: 'readonly',
+        expect: 'readonly',
+        vi: 'readonly',
+        vitest: 'readonly',
+        suite: 'readonly',
+        beforeAll: 'readonly',
+        beforeEach: 'readonly',
+        afterAll: 'readonly',
+        afterEach: 'readonly',
+      },
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]|^_', argsIgnorePattern: '^_' }],
+    },
+  },
   // Backend (Node globals — process, Buffer, console, __dirname, etc.).
   {
     files: ['server/**/*.js', 'scripts/**/*.{js,cjs,mjs}'],

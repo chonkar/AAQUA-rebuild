@@ -21,6 +21,8 @@ import readinessRoutes from './routes/readinessRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import mcpRoutes from './routes/mcpRoutes.js';
 import recorderRoutes from './routes/recorderRoutes.js';
+import eventRoutes from './routes/eventRoutes.js';
+import llmRoutes from './routes/llmRoutes.js';
 import { calculateAndSaveReadiness } from './services/readinessService.js';
 import { parseSpec } from './services/apiSpecService.js';
 import { generateApiTestCases } from './services/apiTestGenService.js';
@@ -3668,6 +3670,12 @@ app.use('/api/admin/usage', securityRateLimiter, adminRoutes);
 app.use('/api/mcp', securityRateLimiter, mcpRoutes);
 app.use('/api/recorder', recorderRoutes);
 app.use('/api/mcp/recorder', recorderRoutes);
+
+// ─── Job progress stream (SSE) ────────────
+app.use('/api/events', eventRoutes);
+
+// ─── LLM streaming proxy ────────────
+app.use('/api/llm', llmRoutes);
 
 // POST /api/download/prepare: Cache binary file in PostgreSQL database (multi-instance safe)
 app.post('/api/download/prepare', async (req, res) => {
