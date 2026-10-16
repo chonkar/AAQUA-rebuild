@@ -180,6 +180,8 @@ export const generateTestCases = async ({
             onToken?.('', compose());
         };
 
+        const batchErrors = [];
+
         const queryBatchWithRetry = async (b, i, retriesLeft = 1) => {
             try {
                 resetPartial(i); // a retry restarts this batch's visible output
@@ -209,6 +211,7 @@ export const generateTestCases = async ({
                     console.log(`[AI Batch Retry] Retrying ${b.name} after error...`);
                     return await queryBatchWithRetry(b, i, retriesLeft - 1);
                 }
+                batchErrors.push(err.message);
                 // Out of retries: replace the partial text with the reason, so
                 // the pane shows which batch gave up rather than a truncated
                 // fragment that looks like it is still arriving.
@@ -226,7 +229,9 @@ export const generateTestCases = async ({
         let combinedCases = results.flat();
 
         if (combinedCases.length === 0) {
-            throw new Error("AI failed to generate any valid test cases. Please try again.");
+            const firstErr = batchErrors[0];
+            const msg = firstErr ? `AI generation failed: ${firstErr}` : "AI failed to generate any valid test cases. Please try again.";
+            throw new Error(msg);
         }
 
         // Re-index all test cases sequentially to ensure order and avoid ID duplicates
