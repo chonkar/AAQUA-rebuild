@@ -16,6 +16,8 @@ for job, tag, env in [("deploy:gcp", "aaqua-deploy", "gcp-qa"), ("deploy:aws", "
     assert j["extends"] == ".deploy", job
     assert j["tags"] == [tag], (job, j["tags"])
     assert j["environment"]["name"] == env, job
+assert "rules" not in c["deploy:gcp"], "deploy:gcp must keep inheriting .deploy's rules"
+assert c["deploy:aws"]["rules"] == [{"if": '$CI_COMMIT_BRANCH == "main" && $AWS_DEPLOY_ENABLED == "true"'}], "deploy:aws rules"
 assert "deploy" not in c, "old single job must be removed"
 EOF
 }

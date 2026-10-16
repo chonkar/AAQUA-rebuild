@@ -56,3 +56,5 @@ deploy:aws:
     - aaqua-deploy-aws
   environment:
     name: aws-qa
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $AWS_DEPLOY_ENABLED == "true"'
