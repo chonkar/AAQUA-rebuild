@@ -28,8 +28,18 @@ export AWS_PROFILE AWS_REGION
 : "${AAQUA_REPO_BRANCH:=main}"
 : "${UBUNTU_AMI_PARAM:=/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id}"
 
+# Git Bash rewrites native-exe arguments that look like absolute POSIX paths
+# (e.g. the SSM parameter name above, DeviceName=/dev/sda1) into Windows paths
+# unless path conversion is disabled.
+export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
+
+# aws.exe on Windows emits CRLF line endings; $(...) strips a trailing \r but
+# a redirect (create-key-pair > $KEY_FILE) or pipe keeps it. Callers run
+# `set -euo pipefail`, so aws's exit status still propagates through tr.
+aws() { command aws "$@" | tr -d '\r'; }
 
 # aws --output text prints "None" for a null result; normalise that to "".
 none_to_empty() { if [ "$1" = "None" ]; then printf ''; else printf '%s' "$1"; fi; }

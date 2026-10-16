@@ -90,6 +90,31 @@ test_refuses_placeholder_config() {
   assert_not_contains "$(cat "$SANDBOX/calls.log")" "create-"
 }
 
+test_crlf_none_is_normalised() {
+  setup
+  respond aws <<'EOF'
+--dry-run|254|An error occurred (DryRunOperation) when calling the RunInstances operation
+sts get-caller-identity|0|arn:aws:iam::111111111111:user/svc-appserver-deploy
+ssm get-parameter|0|ami-123
+describe-key-pairs|254|An error occurred (InvalidKeyPair.NotFound)
+create-key-pair|0|-----BEGIN OPENSSH PRIVATE KEY-----
+describe-security-groups|0|None\r
+create-security-group|0|sg-new
+describe-security-group-rules|0|0\r
+describe-instances --filters|0|None\r
+run-instances --image-id|0|i-new
+describe-addresses --filters|0|None\r
+allocate-address|0|eipalloc-new
+describe-addresses --allocation-ids|0|198.51.100.20
+EOF
+  bash "$AWS_DIR/aws-provision.sh" >/dev/null 2>&1
+  calls=$(cat "$SANDBOX/calls.log")
+  assert_contains "$calls" "create-security-group --group-name aaqua-host-sg"
+  assert_eq "$(grep -c authorize-security-group-ingress "$SANDBOX/calls.log")" "3"
+  assert_contains "$calls" "run-instances --image-id"
+  assert_contains "$calls" "associate-address --allocation-id eipalloc-new --instance-id i-new"
+}
+
 test_stops_before_creating_anything_when_launch_not_permitted() {
   setup
   respond aws <<'EOF'

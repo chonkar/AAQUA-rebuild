@@ -44,4 +44,31 @@ test_remote_uses_key_and_ubuntu_user() {
   assert_contains "$(cat "$SANDBOX/calls.log")" "ubuntu@198.51.100.1 true"
 }
 
+test_path_conversion_disabled() {
+  . "$AWS_DIR/lib.sh"
+  assert_eq "$MSYS_NO_PATHCONV" "1"
+}
+
+test_aws_output_crs_are_stripped() {
+  install_fake aws
+  respond aws <<'EOF'
+describe-instances --filters|0|i-abc\r
+x|0|foo\r
+EOF
+  . "$AWS_DIR/lib.sh"
+  assert_eq "$(find_instance_id)" "i-abc"
+  aws x > "$SANDBOX/out"
+  assert_eq "$(tr -dc '\r' < "$SANDBOX/out" | wc -c)" "0"
+}
+
+test_aws_exit_status_propagates_under_pipefail() {
+  install_fake aws
+  respond aws <<'EOF'
+boom|254|oops
+EOF
+  . "$AWS_DIR/lib.sh"
+  set -o pipefail
+  if aws boom >/dev/null; then fail "expected aws to return non-zero"; fi
+}
+
 run_tests
