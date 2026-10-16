@@ -16,7 +16,9 @@ preflight() {
   if [[ "$SSH_SOURCE_CIDR" == REPLACE-ME* ]]; then die "set SSH_SOURCE_CIDR in scripts/aws/aws.env"; fi
   if [[ "$PUBLIC_HOSTNAME" == REPLACE-ME* ]]; then die "set PUBLIC_HOSTNAME in scripts/aws/aws.env"; fi
   log "Profile $AWS_PROFILE, region $AWS_REGION"
-  log "Caller: $(aws sts get-caller-identity --query Arn --output text)"
+  local caller
+  caller=$(aws sts get-caller-identity --query Arn --output text) || die "AWS credentials not usable for profile $AWS_PROFILE"
+  log "Caller: $caller"
   AMI_ID=$(aws ssm get-parameter --name "$UBUNTU_AMI_PARAM" --query Parameter.Value --output text)
   log "Ubuntu 24.04 AMI: $AMI_ID"
   local out
@@ -31,6 +33,9 @@ ensure_key_pair() {
     log "Key pair $KEY_NAME exists"
     if [ ! -f "$KEY_FILE" ]; then log "WARN: $KEY_FILE not found locally — you need the original .pem to SSH in"; fi
   else
+    if [ -f "$KEY_FILE" ]; then
+      die "$KEY_FILE exists but key pair $KEY_NAME is missing in AWS — move the file aside or set KEY_FILE"
+    fi
     log "Creating key pair $KEY_NAME -> $KEY_FILE"
     mkdir -p "$(dirname "$KEY_FILE")"
     ( umask 077

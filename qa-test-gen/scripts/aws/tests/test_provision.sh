@@ -115,6 +115,20 @@ EOF
   assert_contains "$calls" "associate-address --allocation-id eipalloc-new --instance-id i-new"
 }
 
+test_refuses_to_overwrite_local_key_when_aws_pair_missing() {
+  setup
+  : > "$KEY_FILE"
+  respond aws <<'EOF'
+--dry-run|254|An error occurred (DryRunOperation) when calling the RunInstances operation
+sts get-caller-identity|0|arn:aws:iam::111111111111:user/svc-appserver-deploy
+ssm get-parameter|0|ami-123
+describe-key-pairs|254|An error occurred (InvalidKeyPair.NotFound)
+EOF
+  out=$(bash "$AWS_DIR/aws-provision.sh" 2>&1) && fail "expected non-zero exit"
+  assert_contains "$out" "$KEY_FILE exists but key pair aaqua-host is missing in AWS"
+  assert_not_contains "$(cat "$SANDBOX/calls.log")" "create-key-pair"
+}
+
 test_stops_before_creating_anything_when_launch_not_permitted() {
   setup
   respond aws <<'EOF'
