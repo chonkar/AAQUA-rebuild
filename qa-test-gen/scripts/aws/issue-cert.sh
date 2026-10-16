@@ -92,9 +92,11 @@ main() {
       echo "==> Stopping shared-nginx to free port 80 for the first issuance"
       docker stop shared-nginx >/dev/null
     fi
-    certbot certonly --standalone --non-interactive --agree-tos \
-      -m "$LETSENCRYPT_EMAIL" -d "$PUBLIC_HOSTNAME" "${staging[@]}" \
-      || { [ -n "$nginx_was_up" ] && docker start shared-nginx >/dev/null; die "certbot failed"; }
+    if ! certbot certonly --standalone --non-interactive --agree-tos \
+         -m "$LETSENCRYPT_EMAIL" -d "$PUBLIC_HOSTNAME" "${staging[@]}"; then
+      if [ -n "$nginx_was_up" ]; then docker start shared-nginx >/dev/null || true; fi
+      die "certbot failed"
+    fi
     if [ -n "$nginx_was_up" ]; then docker start shared-nginx >/dev/null; fi
   else
     echo "==> Certificate for $PUBLIC_HOSTNAME already present"
