@@ -20,11 +20,16 @@ INSTANCE_ID=$(find_instance_id)
 HOST=$(instance_public_ip "$INSTANCE_ID")
 [ -n "$HOST" ] || die "$INSTANCE_ID has no public IP yet — re-run aws-provision.sh"
 
+: "${SSH_WAIT_TRIES:=30}"
+: "${SSH_WAIT_SECONDS:=10}"
+
 log "Waiting for SSH on $HOST"
-for _ in $(seq 1 30); do
-  if remote "$HOST" true </dev/null; then break; fi
-  sleep 10
+ssh_ok=""
+for _ in $(seq 1 "$SSH_WAIT_TRIES"); do
+  if remote "$HOST" true </dev/null; then ssh_ok=1; break; fi
+  sleep "$SSH_WAIT_SECONDS"
 done
+[ -n "$ssh_ok" ] || die "SSH to $HOST failed after the wait — check KEY_FILE ($KEY_FILE), SSH_SOURCE_CIDR in the security group, and ~/.ssh/known_hosts (a reused Elastic IP changes the host key)"
 
 log "Waiting for first-boot user-data to finish"
 remote "$HOST" 'cloud-init status --wait >/dev/null || true; test -f /var/lib/aaqua/userdata.done' </dev/null \

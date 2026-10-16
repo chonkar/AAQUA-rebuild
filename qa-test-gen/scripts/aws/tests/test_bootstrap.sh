@@ -45,6 +45,17 @@ test_requires_deploy_token() {
   assert_fails bash "$AWS_DIR/aws-bootstrap.sh"
 }
 
+test_reports_clear_error_when_ssh_never_succeeds() {
+  setup
+  respond ssh <<'EOF'
+StrictHostKeyChecking|255|
+EOF
+  export SSH_WAIT_TRIES=2 SSH_WAIT_SECONDS=0
+  out=$(bash "$AWS_DIR/aws-bootstrap.sh" 2>&1) && fail "expected non-zero exit"
+  assert_contains "$out" "SSH to"
+  assert_not_contains "$out" "user-data did not finish"
+}
+
 test_fails_when_no_instance() {
   install_fake aws ssh scp
   export GITLAB_DEPLOY_TOKEN_USER=u GITLAB_DEPLOY_TOKEN=t
