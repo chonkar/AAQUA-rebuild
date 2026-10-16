@@ -1,5 +1,8 @@
 # Substituted at boot: ${AAQUA_LLM_API_KEY}
 
+# `location /aaqua/` does not match the bare prefix, so /aaqua would 404 without this.
+location = /aaqua { return 301 /aaqua/; }
+
 # AAQUA SPA — static bundle published by /opt/aaqua/scripts/publish-spa.sh.
 location /aaqua/ {
     alias /var/www/aaqua/;
