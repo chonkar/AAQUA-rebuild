@@ -26,7 +26,8 @@ export AWS_PROFILE AWS_REGION
 : "${PUBLIC_HOSTNAME:=REPLACE-ME}"
 : "${AAQUA_REPO_URL:=https://git.lab.aaseya.com/camunda/aaqua.git}"
 : "${AAQUA_REPO_BRANCH:=main}"
-: "${UBUNTU_AMI_PARAM:=/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id}"
+: "${UBUNTU_AMI_OWNER:=099720109477}"
+: "${UBUNTU_AMI_NAME:=ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*}"
 
 # Git Bash rewrites native-exe arguments that look like absolute POSIX paths
 # (e.g. the SSM parameter name above, DeviceName=/dev/sda1) into Windows paths

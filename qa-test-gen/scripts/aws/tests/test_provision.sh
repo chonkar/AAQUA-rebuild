@@ -13,7 +13,7 @@ test_reuses_everything_when_infra_exists() {
   respond aws <<'EOF'
 --dry-run|254|An error occurred (DryRunOperation) when calling the RunInstances operation
 sts get-caller-identity|0|arn:aws:iam::111111111111:user/svc-appserver-deploy
-ssm get-parameter|0|ami-123
+describe-images|0|ami-123
 describe-key-pairs|0|aaqua-host
 describe-security-groups|0|sg-123
 describe-security-group-rules|0|1
@@ -39,7 +39,7 @@ test_creates_everything_when_absent() {
   respond aws <<'EOF'
 --dry-run|254|An error occurred (DryRunOperation) when calling the RunInstances operation
 sts get-caller-identity|0|arn:aws:iam::111111111111:user/svc-appserver-deploy
-ssm get-parameter|0|ami-123
+describe-images|0|ami-123
 describe-key-pairs|254|An error occurred (InvalidKeyPair.NotFound)
 create-key-pair|0|-----BEGIN OPENSSH PRIVATE KEY-----
 describe-security-groups|0|None
@@ -71,7 +71,7 @@ test_starts_a_stopped_instance() {
   : > "$KEY_FILE"
   respond aws <<'EOF'
 --dry-run|254|DryRunOperation
-ssm get-parameter|0|ami-123
+describe-images|0|ami-123
 describe-security-groups|0|sg-123
 describe-security-group-rules|0|1
 describe-instances --filters|0|i-123
@@ -95,7 +95,7 @@ test_crlf_none_is_normalised() {
   respond aws <<'EOF'
 --dry-run|254|An error occurred (DryRunOperation) when calling the RunInstances operation
 sts get-caller-identity|0|arn:aws:iam::111111111111:user/svc-appserver-deploy
-ssm get-parameter|0|ami-123
+describe-images|0|ami-123
 describe-key-pairs|254|An error occurred (InvalidKeyPair.NotFound)
 create-key-pair|0|-----BEGIN OPENSSH PRIVATE KEY-----
 describe-security-groups|0|None\r
@@ -121,7 +121,7 @@ test_refuses_to_overwrite_local_key_when_aws_pair_missing() {
   respond aws <<'EOF'
 --dry-run|254|An error occurred (DryRunOperation) when calling the RunInstances operation
 sts get-caller-identity|0|arn:aws:iam::111111111111:user/svc-appserver-deploy
-ssm get-parameter|0|ami-123
+describe-images|0|ami-123
 describe-key-pairs|254|An error occurred (InvalidKeyPair.NotFound)
 EOF
   out=$(bash "$AWS_DIR/aws-provision.sh" 2>&1) && fail "expected non-zero exit"
@@ -129,11 +129,23 @@ EOF
   assert_not_contains "$(cat "$SANDBOX/calls.log")" "create-key-pair"
 }
 
+test_fails_fast_when_no_ami_found() {
+  setup
+  respond aws <<'EOF'
+--dry-run|254|An error occurred (DryRunOperation) when calling the RunInstances operation
+sts get-caller-identity|0|arn:aws:iam::111111111111:user/svc-appserver-deploy
+describe-images|0|None
+EOF
+  out=$(bash "$AWS_DIR/aws-provision.sh" 2>&1) && fail "expected non-zero exit"
+  assert_contains "$out" "no Ubuntu 24.04 AMI found"
+  assert_not_contains "$(cat "$SANDBOX/calls.log")" "create-"
+}
+
 test_stops_before_creating_anything_when_launch_not_permitted() {
   setup
   respond aws <<'EOF'
 --dry-run|254|An error occurred (UnauthorizedOperation)
-ssm get-parameter|0|ami-123
+describe-images|0|ami-123
 EOF
   out=$(bash "$AWS_DIR/aws-provision.sh" 2>&1) && fail "expected non-zero exit"
   assert_contains "$out" "launch permission check failed"

@@ -19,7 +19,10 @@ preflight() {
   local caller
   caller=$(aws sts get-caller-identity --query Arn --output text) || die "AWS credentials not usable for profile $AWS_PROFILE"
   log "Caller: $caller"
-  AMI_ID=$(aws ssm get-parameter --name "$UBUNTU_AMI_PARAM" --query Parameter.Value --output text)
+  AMI_ID=$(none_to_empty "$(aws ec2 describe-images --owners "$UBUNTU_AMI_OWNER" \
+    --filters "Name=name,Values=$UBUNTU_AMI_NAME" "Name=state,Values=available" \
+    --query 'sort_by(Images,&CreationDate)[-1].ImageId' --output text)")
+  [ -n "$AMI_ID" ] || die "no Ubuntu 24.04 AMI found for owner $UBUNTU_AMI_OWNER"
   log "Ubuntu 24.04 AMI: $AMI_ID"
   local out
   out=$(aws ec2 run-instances --dry-run --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" 2>&1) || true

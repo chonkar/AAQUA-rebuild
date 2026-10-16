@@ -6,6 +6,8 @@ test_defaults() {
   assert_eq "$AWS_REGION" "ap-southeast-2"
   assert_eq "$INSTANCE_TYPE" "m7i-flex.large"
   assert_eq "$AWS_PROFILE" "aaqua-deploy"
+  assert_eq "$UBUNTU_AMI_OWNER" "099720109477"
+  assert_eq "$UBUNTU_AMI_NAME" "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
 }
 
 test_aws_env_file_overrides_defaults() {

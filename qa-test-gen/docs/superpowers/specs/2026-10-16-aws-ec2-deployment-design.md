@@ -28,7 +28,7 @@ All in one region, default VPC. Default region `ap-southeast-2` (Sydney) — whe
 
 | Resource | Spec | Identified by |
 |---|---|---|
-| EC2 instance | `m7i-flex.large` (2 vCPU / 8 GB), Ubuntu 24.04 LTS (Canonical AMI via SSM public parameter), 30 GB gp3 root volume | Tag `Name=aaqua-host` |
+| EC2 instance | `m7i-flex.large` (2 vCPU / 8 GB), Ubuntu 24.04 LTS (newest Canonical-owned (`099720109477`) `ubuntu-noble-24.04-amd64-server-*` image, found via `ec2:DescribeImages` — the IAM user is denied `ssm:GetParameter`), 30 GB gp3 root volume | Tag `Name=aaqua-host` |
 | Elastic IP | Associated with the instance | Tag `Name=aaqua-host-eip` |
 | Security group | Inbound 80/tcp + 443/tcp from `0.0.0.0/0`; 22/tcp from `SSH_SOURCE_CIDR` only. Nothing else (Postgres tooling port 5443 is published by the shared-infra compose but blocked here). | Group name `aaqua-host-sg` |
 | Key pair | Created if absent; private key written to `~/.ssh/aaqua-host.pem` (chmod 600) on the workstation | Key name `aaqua-host` |
