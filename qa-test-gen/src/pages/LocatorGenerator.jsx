@@ -4,6 +4,7 @@ import { exportToJSON, exportToExcel } from '../utils/exportUtils';
 import { Target, Search, Copy, Download, Code, Globe, AlertCircle, Loader2 } from 'lucide-react';
 import { useProject } from '../context/ProjectContext';
 import UrlScopeWarning from '../components/common/UrlScopeWarning';
+import ExtensionInstallModal from '../components/common/ExtensionInstallModal';
 
 // BASE_URL-prefixed relative path. See src/services/testRunnerService.js for why.
 // Hardcoded http://localhost:3001 worked in dev but 404'd in QA (browser bypasses the Vite proxy in prod).
@@ -33,6 +34,7 @@ const LocatorGenerator = () => {
 
     // Custom Extension connection state
     const [isExtensionInstalled, setIsExtensionInstalled] = useState(false);
+    const [showExtensionModal, setShowExtensionModal] = useState(false);
 
     const handleLaunchBrowser = async () => {
         setIsGenerating(true);
@@ -435,9 +437,26 @@ const LocatorGenerator = () => {
                                             ⚡ Pull Active Browser Cookies
                                         </button>
                                     ) : (
-                                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
-                                            💡 Install AAQUA Extension to pull cookies
-                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowExtensionModal(true)}
+                                            style={{
+                                                background: 'rgba(59, 130, 246, 0.12)',
+                                                border: '1px solid rgba(59, 130, 246, 0.3)',
+                                                color: '#60a5fa',
+                                                padding: '0.35rem 0.75rem',
+                                                borderRadius: 'var(--radius-md)',
+                                                fontSize: '0.75rem',
+                                                cursor: 'pointer',
+                                                fontWeight: '600',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.35rem',
+                                                marginLeft: 'auto'
+                                            }}
+                                        >
+                                            🧩 Download / Install AAQUA Extension
+                                        </button>
                                     )}
                                 </div>
 
@@ -1023,6 +1042,7 @@ const LocatorGenerator = () => {
                 .spin { animation: spin 1s linear infinite; }
                 @keyframes spin { 100% { transform: rotate(360deg); } }
             `}</style>
+            <ExtensionInstallModal isOpen={showExtensionModal} onClose={() => setShowExtensionModal(false)} />
         </div>
     );
 };

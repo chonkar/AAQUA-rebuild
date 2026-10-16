@@ -26,8 +26,7 @@ import { useNotify } from '../components/common/NotificationProvider';
 import { createApiClient } from '../utils/apiClient';
 import { generateTestPlan, TEST_PLAN_SECTIONS } from '../services/testPlanService';
 import { asBlob } from 'html-docx-js-typescript';
-import * as FileSaverModule from 'file-saver';
-const saveAs = FileSaverModule.saveAs || FileSaverModule.default || FileSaverModule || FileSaverModule.saveAs;
+import { downloadBlob } from '../utils/exportUtils';
 
 // Wizard step order — the single source of truth for both the stepper and any
 // programmatic jump (`stepIndex('review')`). The steps array below is built
@@ -228,9 +227,8 @@ const TestPlanGenerator = () => {
             `;
 
             const blob = await asBlob(fullHtml);
-            // Reuse the value the Export step shows as a caption, so the promised
-            // filename and the delivered one can never drift apart.
-            saveAs(blob, docxFileName);
+            const docxBlob = new Blob([blob], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            await downloadBlob(docxBlob, docxFileName);
             notify.success(`Downloaded ${docxFileName}`);
         } catch (err) {
             console.error('Export Error:', err);

@@ -48,6 +48,3 @@ services:
     # No host port — proxy reaches Keycloak via the internal `aaqua-net` network.
     ports: []
 
-  zap:
-    # ZAP is dev/CI tooling, not part of the production user-facing surface.
-    profiles: ["dev-only"]

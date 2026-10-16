@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from 'react-oidc-context';
 import { createApiClient } from '../../utils/apiClient';
 import { Loader2, RotateCcw, AlertCircle } from 'lucide-react';
@@ -7,17 +7,8 @@ import { Loader2, RotateCcw, AlertCircle } from 'lucide-react';
  * Requirement capture: manual free text or a fetched JIRA story description,
  * plus optional advanced context fields.
  *
- * Controlled by the parent: the four content fields live in `values` and are
- * written back through `onChange(field, value)`. This is deliberate — the page
- * hosts this component inside a ToolWorkflow step, and step content unmounts
- * on step change, so any field state kept locally would be lost when the user
- * navigates to Generate and back. Only transient UI state (which source tab is
- * open, the JIRA key being typed, whether the advanced panel is expanded)
- * stays local.
- *
- * The generate action itself is NOT here — the hosting wizard owns it (its
- * Generate step has the button, the cancel control and the progress pane), so
- * this component is purely requirement capture.
+ * Controlled by the parent: the content fields live in `values` and are
+ * written back through `onChange(field, value)`.
  */
 const RequirementInput = ({
     isGenerating,
@@ -25,21 +16,68 @@ const RequirementInput = ({
     onClearContext,
     values = {},
     onChange,
+    // Optional direct props for backwards-compatibility or direct binding
+    sourceType: propSourceType,
+    setSourceType: propSetSourceType,
+    jiraKey: propJiraKey,
+    setJiraKey: propSetJiraKey,
+    manualStoryKey: propManualStoryKey,
+    setManualStoryKey: propSetManualStoryKey,
+    requirement: propRequirement,
+    setRequirement: propSetRequirement,
+    businessRules: propBusinessRules,
+    setBusinessRules: propSetBusinessRules,
+    regressionContext: propRegressionContext,
+    setRegressionContext: propSetRegressionContext,
+    techDetails: propTechDetails,
+    setTechDetails: propSetTechDetails,
+    onGenerate,
 }) => {
     const auth = useAuth();
     const api = createApiClient(() => auth.user?.access_token);
 
-    const [sourceType, setSourceType] = useState('manual'); // 'manual' | 'jira'
-    const [jiraKey, setJiraKey] = useState('');
+    const [internalSourceType, setInternalSourceType] = useState('manual'); // 'manual' | 'jira'
+    const [internalJiraKey, setInternalJiraKey] = useState('');
+    const [internalManualStoryKey, setInternalManualStoryKey] = useState('');
     const [isFetchingJira, setIsFetchingJira] = useState(false);
     const [jiraError, setJiraError] = useState(null);
     const [showAdvanced, setShowAdvanced] = useState(false);
 
-    const requirement = values.requirement ?? '';
-    const businessRules = values.businessRules ?? '';
-    const regressionContext = values.regressionContext ?? '';
-    const techDetails = values.techDetails ?? '';
-    const setField = (field, value) => onChange?.(field, value);
+    const sourceType = values.sourceType ?? propSourceType ?? internalSourceType;
+    const jiraKey = values.jiraKey ?? propJiraKey ?? internalJiraKey;
+    const manualStoryKey = values.manualStoryKey ?? propManualStoryKey ?? internalManualStoryKey;
+
+    const requirement = values.requirement ?? propRequirement ?? '';
+    const businessRules = values.businessRules ?? propBusinessRules ?? '';
+    const regressionContext = values.regressionContext ?? propRegressionContext ?? '';
+    const techDetails = values.techDetails ?? propTechDetails ?? '';
+
+    const setField = (field, value) => {
+        onChange?.(field, value);
+        if (field === 'requirement') propSetRequirement?.(value);
+        if (field === 'businessRules') propSetBusinessRules?.(value);
+        if (field === 'regressionContext') propSetRegressionContext?.(value);
+        if (field === 'techDetails') propSetTechDetails?.(value);
+        if (field === 'sourceType') {
+            propSetSourceType?.(value);
+            setInternalSourceType(value);
+        }
+        if (field === 'jiraKey') {
+            propSetJiraKey?.(value);
+            setInternalJiraKey(value);
+        }
+        if (field === 'manualStoryKey') {
+            propSetManualStoryKey?.(value);
+            setInternalManualStoryKey(value);
+        }
+    };
+
+    // Auto-expand advanced configuration panel if any of the values are populated (e.g. from loading history)
+    useEffect(() => {
+        if (businessRules?.trim() || regressionContext?.trim() || techDetails?.trim()) {
+            setShowAdvanced(true);
+        }
+    }, [businessRules, regressionContext, techDetails]);
 
     const handleFetchJiraStory = async () => {
         if (!jiraKey.trim()) return;
@@ -66,8 +104,9 @@ const RequirementInput = ({
                 {/* Source Selector Toggles */}
                 <div className="source-selector-tabs" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
                     <button
+                        type="button"
                         className={`tab-btn ${sourceType === 'manual' ? 'active' : ''}`}
-                        onClick={() => setSourceType('manual')}
+                        onClick={() => setField('sourceType', 'manual')}
                         style={{
                             background: sourceType === 'manual' ? 'rgba(109, 40, 217, 0.15)' : 'transparent',
                             color: sourceType === 'manual' ? 'var(--accent-primary)' : 'var(--text-secondary)',
@@ -83,8 +122,9 @@ const RequirementInput = ({
                         📝 Manual Input
                     </button>
                     <button
+                        type="button"
                         className={`tab-btn ${sourceType === 'jira' ? 'active' : ''}`}
-                        onClick={() => setSourceType('jira')}
+                        onClick={() => setField('sourceType', 'jira')}
                         style={{
                             background: sourceType === 'jira' ? 'rgba(109, 40, 217, 0.15)' : 'transparent',
                             color: sourceType === 'jira' ? 'var(--accent-primary)' : 'var(--text-secondary)',
@@ -110,11 +150,12 @@ const RequirementInput = ({
                                 className="input-field"
                                 placeholder="JIRA Issue Key (e.g. QA-123)"
                                 value={jiraKey}
-                                onChange={(e) => setJiraKey(e.target.value)}
+                                onChange={(e) => setField('jiraKey', e.target.value)}
                                 disabled={isFetchingJira}
                                 style={{ margin: 0, flex: 1 }}
                             />
                             <button
+                                type="button"
                                 className="btn btn-secondary"
                                 onClick={handleFetchJiraStory}
                                 disabled={isFetchingJira || !jiraKey.trim()}
@@ -139,6 +180,22 @@ const RequirementInput = ({
                     </div>
                 )}
 
+                {/* Manual Story Name Input */}
+                {sourceType === 'manual' && (
+                    <div className="manual-story-key animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginBottom: '1.25rem' }}>
+                        <label className="input-label" style={{ marginBottom: '0.25rem' }}>User Story Name / Identifier</label>
+                        <input
+                            type="text"
+                            className="input-field"
+                            placeholder="e.g. User Login Flow, QA-101, or Search Filter"
+                            value={manualStoryKey}
+                            onChange={(e) => setField('manualStoryKey', e.target.value)}
+                            disabled={isGenerating}
+                            style={{ margin: 0 }}
+                        />
+                    </div>
+                )}
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
                     <label className="input-label" style={{ marginBottom: 0 }}>Describe your feature or requirement</label>
                     {contextCount > 0 && (
@@ -146,7 +203,21 @@ const RequirementInput = ({
                             <span style={{ fontSize: '0.75rem', background: 'rgba(59, 130, 246, 0.1)', color: '#60a5fa', padding: '0.2rem 0.6rem', borderRadius: '1rem', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
                                 Context: {contextCount} previous
                             </span>
-                            <button onClick={() => onClearContext?.()} title="Start clean with no context" style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: 0 }} className="hover-text-white">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    onClearContext?.();
+                                    setField('requirement', '');
+                                    setField('manualStoryKey', '');
+                                    setField('jiraKey', '');
+                                    setField('businessRules', '');
+                                    setField('regressionContext', '');
+                                    setField('techDetails', '');
+                                }}
+                                title="Start clean with no context"
+                                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: 0 }}
+                                className="hover-text-white"
+                            >
                                 <RotateCcw size={12} />
                                 Clear
                             </button>
@@ -160,6 +231,7 @@ const RequirementInput = ({
                     onChange={(e) => setField('requirement', e.target.value)}
                     rows={6}
                     disabled={isGenerating}
+                    spellCheck={false}
                 />
 
                 {/* Advanced Configuration Toggle */}
@@ -195,6 +267,7 @@ const RequirementInput = ({
                                     rows={2}
                                     disabled={isGenerating}
                                     style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.1)' }}
+                                    spellCheck={false}
                                 />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
@@ -207,6 +280,7 @@ const RequirementInput = ({
                                     rows={2}
                                     disabled={isGenerating}
                                     style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.1)' }}
+                                    spellCheck={false}
                                 />
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
@@ -219,6 +293,7 @@ const RequirementInput = ({
                                     rows={2}
                                     disabled={isGenerating}
                                     style={{ margin: 0, fontSize: '0.85rem', background: 'rgba(0,0,0,0.1)' }}
+                                    spellCheck={false}
                                 />
                             </div>
                         </div>
@@ -237,13 +312,24 @@ const RequirementInput = ({
           text-transform: uppercase;
           letter-spacing: 0.5px;
         }
-        
         .textarea-premium {
           resize: vertical;
           min-height: 120px;
           font-size: 1rem;
           line-height: 1.6;
-          background: rgba(0, 0, 0, 0.2);
+          background: #ffffff;
+          color: #0f172a;
+          border: 1px solid var(--border-color);
+        }
+        .textarea-premium:focus {
+          border-color: var(--border-focus);
+          box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+          outline: none;
+        }
+        .textarea-premium:disabled {
+          background: #e2e8f0;
+          color: #64748b;
+          cursor: not-allowed;
         }
         
         .action-row {

@@ -19,9 +19,10 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { Sparkles, ShieldCheck, Sun, Moon, LogIn, LogOut, User as UserIcon, Plus, Link2 } from 'lucide-react';
+import { Sparkles, ShieldCheck, Sun, Moon, LogIn, LogOut, User as UserIcon, Plus, Link2, Puzzle } from 'lucide-react';
 import { useAuth } from 'react-oidc-context';
 import { useProject } from '../../context/ProjectContext';
+import ExtensionInstallModal from './ExtensionInstallModal';
 
 // theme/toggleTheme are owned by App.jsx (via the useTheme hook) and threaded
 // down through Layout, rather than called here directly, so the MUI
@@ -45,6 +46,7 @@ const Header = ({ theme = 'dark', toggleTheme = () => {} }) => {
 
   // JIRA Settings Modal States
   const [isJiraModalOpen, setIsJiraModalOpen] = useState(false);
+  const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
   const [jiraUrl, setJiraUrl] = useState('');
   const [jiraEmail, setJiraEmail] = useState('');
   const [jiraToken, setJiraToken] = useState('');
@@ -79,10 +81,10 @@ const Header = ({ theme = 'dark', toggleTheme = () => {} }) => {
     e.preventDefault();
     try {
       const config = {
-        url: jiraUrl.trim(),
+        url: jiraUrl.trim().replace(/\/+$/, ''),
         email: jiraEmail.trim(),
         token: jiraToken.trim(),
-        projectKey: jiraProjectKey.trim(),
+        projectKey: jiraProjectKey.trim().toUpperCase(),
       };
       window.localStorage.setItem('aaqua_jira_config', JSON.stringify(config));
       setIsJiraModalOpen(false);
@@ -214,18 +216,33 @@ const Header = ({ theme = 'dark', toggleTheme = () => {} }) => {
         <Box sx={{ flexGrow: 1 }} />
 
         {auth.isAuthenticated && (
-          <Tooltip title="Configure Personal JIRA Integration">
-            <Button
-              size="small"
-              variant={hasJiraConfig ? 'outlined' : 'text'}
-              color={hasJiraConfig ? 'success' : 'inherit'}
-              onClick={openJiraModal}
-              startIcon={<Link2 size={15} />}
-              sx={{ borderRadius: 99, display: { xs: 'none', sm: 'inline-flex' } }}
-            >
-              Jira
-            </Button>
-          </Tooltip>
+          <>
+            <Tooltip title="Download & Install AAQUA Chrome Extension">
+              <Button
+                size="small"
+                variant="outlined"
+                color="primary"
+                onClick={() => setIsExtensionModalOpen(true)}
+                startIcon={<Puzzle size={15} />}
+                sx={{ borderRadius: 99, display: { xs: 'none', sm: 'inline-flex' }, mr: 1 }}
+              >
+                Extension
+              </Button>
+            </Tooltip>
+
+            <Tooltip title="Configure Personal JIRA Integration">
+              <Button
+                size="small"
+                variant={hasJiraConfig ? 'outlined' : 'text'}
+                color={hasJiraConfig ? 'success' : 'inherit'}
+                onClick={openJiraModal}
+                startIcon={<Link2 size={15} />}
+                sx={{ borderRadius: 99, display: { xs: 'none', sm: 'inline-flex' } }}
+              >
+                Jira
+              </Button>
+            </Tooltip>
+          </>
         )}
 
         <Tooltip title="Toggle Theme">
@@ -410,6 +427,8 @@ const Header = ({ theme = 'dark', toggleTheme = () => {} }) => {
           </DialogActions>
         </form>
       </Dialog>
+
+      <ExtensionInstallModal isOpen={isExtensionModalOpen} onClose={() => setIsExtensionModalOpen(false)} />
     </>
   );
 };

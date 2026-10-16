@@ -8,7 +8,7 @@ const router = Router();
  * GET /api/readiness/:projectId
  * Fetch the latest Release Readiness Profile for a project, plus the raw
  * source rows so the UI can render real per-dimension numbers (test counts,
- * vulnerability counts, etc.) instead of values derived from the aggregate
+ * violation counts, etc.) instead of values derived from the aggregate
  * health score.
  */
 router.get('/:projectId', authenticateToken, async (req, res) => {
@@ -19,7 +19,6 @@ router.get('/:projectId', authenticateToken, async (req, res) => {
             readinessService.fetchLatestSources(projectId),
         ]);
 
-        const gov = sources.scan?.governance;
         res.json({
             profile,
             sources: {
@@ -47,27 +46,6 @@ router.get('/:projectId', authenticateToken, async (req, res) => {
                     overflow_issues: sources.localization.overflow_issues,
                     scanned_url: sources.localization.scanned_url,
                     execution_date: sources.localization.execution_date,
-                } : null,
-                performance: sources.performance ? {
-                    performance_score: sources.performance.performance_score,
-                    lcp_ms: sources.performance.lcp_ms,
-                    cls: sources.performance.cls,
-                    tbt_ms: sources.performance.tbt_ms,
-                    ttfb_ms: sources.performance.ttfb_ms,
-                    scanned_url: sources.performance.scanned_url,
-                    execution_date: sources.performance.execution_date,
-                } : null,
-                security: gov ? {
-                    health_score: gov.health_score,
-                    critical_count: gov.critical_count,
-                    high_count: gov.high_count,
-                    medium_count: gov.medium_count,
-                    low_count: gov.low_count,
-                    info_count: gov.info_count,
-                    total_count: gov.total_count,
-                    release_blocked: gov.release_blocked,
-                    scan_type: sources.scan.scan_type,
-                    completed_at: sources.scan.completed_at,
                 } : null,
             },
         });

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { fn, col, where as sqWhere, Op } from 'sequelize';
-import { Project, Scan, GovernanceMetric } from '../models/index.js';
+import { Project } from '../models/index.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { validateTargetUrl } from '../middleware/urlValidator.js';
 
@@ -59,21 +59,13 @@ router.post('/', authenticateToken, validateTargetUrl, async (req, res) => {
 
 /**
  * GET /api/projects
- * List user's projects with latest scan info
+ * List user's projects
  */
 router.get('/', authenticateToken, async (req, res) => {
     try {
         const projects = await Project.findAll({
             where: { owner_id: req.user.id },
             order: [['created_at', 'DESC']],
-            include: [{
-                model: Scan,
-                as: 'scans',
-                attributes: ['id', 'scan_type', 'status', 'completed_at', 'created_at'],
-                order: [['created_at', 'DESC']],
-                limit: 1,
-                separate: true,
-            }],
         });
 
         res.json({ projects });
@@ -85,25 +77,12 @@ router.get('/', authenticateToken, async (req, res) => {
 
 /**
  * GET /api/projects/:id
- * Get project details with scan history
+ * Get project details
  */
 router.get('/:id', authenticateToken, async (req, res) => {
     try {
         const project = await Project.findOne({
             where: { id: req.params.id, owner_id: req.user.id },
-            include: [{
-                model: Scan,
-                as: 'scans',
-                attributes: ['id', 'scan_type', 'status', 'started_at', 'completed_at', 'progress'],
-                order: [['created_at', 'DESC']],
-                limit: 30,
-                separate: true,
-                include: [{
-                    model: GovernanceMetric,
-                    as: 'governance',
-                    attributes: ['total_count', 'critical_count', 'high_count', 'release_blocked'],
-                }],
-            }],
         });
 
         if (!project) {

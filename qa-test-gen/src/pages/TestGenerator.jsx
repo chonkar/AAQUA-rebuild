@@ -1,10 +1,12 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useAuth } from 'react-oidc-context';
 import {
     Alert,
     Box,
     Button,
     Chip,
+    Grid,
+    Paper,
     Stack,
     TextField,
     Typography,
@@ -17,6 +19,10 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
+import HistoryIcon from '@mui/icons-material/History';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import ToolWorkflow from '../components/workflow/ToolWorkflow';
 import GenerationProgress from '../components/workflow/GenerationProgress';
 import RequirementInput from '../components/features/RequirementInput';
@@ -45,7 +51,15 @@ const fmtDuration = (s) => {
 // the first to go so the narrow layout keeps ID/scenario/steps/result legible.
 const NARROW_HIDDEN_COLUMNS = { preconditions: false, testData: false, testType: false, platform: false };
 
-const EMPTY_FORM = { requirement: '', businessRules: '', regressionContext: '', techDetails: '' };
+const EMPTY_FORM = {
+    requirement: '',
+    businessRules: '',
+    regressionContext: '',
+    techDetails: '',
+    manualStoryKey: '',
+    sourceType: 'manual',
+    jiraKey: '',
+};
 
 const ftId = (n) => `FT_${String(n).padStart(3, '0')}`;
 
@@ -93,14 +107,11 @@ function MultilineEditCell({ id, field, value }) {
 const TestGenerator = () => {
     const notify = useNotify();
     const auth = useAuth();
-    const { selectedProject } = useProject();
+    const { selectedProjectId, selectedProject } = useProject();
     const mui = useTheme();
     const isDownMd = useMediaQuery(mui.breakpoints.down('md'));
 
-    // Every piece of user-visible state lives here, not inside a step's
-    // content: ToolWorkflow unmounts the previous step on navigation, so
-    // anything held below this component would be lost on Back/Next.
-    // Index into STEP_ORDER; jumps elsewhere go through stepIndex(key).
+    // Wizard state
     const [step, setStep] = useState(stepIndex('input'));
     const [form, setForm] = useState(EMPTY_FORM);
     const [requirementHistory, setRequirementHistory] = useState([]);
@@ -118,14 +129,102 @@ const TestGenerator = () => {
     const [raisedBugs, setRaisedBugs] = useState({});
     const abortControllerRef = useRef(null);
 
+    // History tracking states
+    const [historyStories, setHistoryStories] = useState([]);
+    const [selectedStoryRuns, setSelectedStoryRuns] = useState([]);
+    const [activeStoryKey, setActiveStoryKey] = useState('');
+    const [historyWarning, setHistoryWarning] = useState(null);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
     const api = createApiClient(() => auth.user?.access_token);
     const setField = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
 
-    // Low-priority columns collapse on narrow viewports rather than forcing a
-    // horizontal scroll through eleven columns. Applied with React's documented
-    // "adjusting state during render" pattern (not an effect) so the grid never
-    // paints one frame with the wrong column set; the user's own toggles via
-    // onColumnVisibilityModelChange survive until the breakpoint actually flips.
+    // History API integration
+    const fetchHistoryStories = async () => {
+        if (!selectedProjectId || !api) return;
+        setIsLoadingHistory(true);
+        try {
+            const data = await api.get(`/api/testcase-history/stories?project_id=${selectedProjectId}`);
+            setHistoryStories(data.stories || []);
+        } catch (err) {
+            console.error('[Fetch Stories Error]', err);
+        } finally {
+            setIsLoadingHistory(false);
+        }
+    };
+
+    const fetchStoryRuns = async (storyKey) => {
+        if (!selectedProjectId || !api || !storyKey) return;
+        try {
+            const data = await api.get(`/api/testcase-history/story/${encodeURIComponent(storyKey)}/runs?project_id=${selectedProjectId}`);
+            setSelectedStoryRuns(data.runs || []);
+            setActiveStoryKey(storyKey);
+        } catch (err) {
+            console.error('[Fetch Runs Error]', err);
+        }
+    };
+
+    const handleLoadRun = (run) => {
+        setTestCases(run.test_cases || []);
+        setGenSeconds(null);
+        setLastBatchCount(run.test_cases?.length || 0);
+
+        const isJira = /^[A-Z0-9]+-\d+$/i.test(run.story_key || '');
+        setForm({
+            requirement: run.story_description || '',
+            businessRules: run.business_rules || '',
+            regressionContext: run.regression_context || '',
+            techDetails: run.tech_details || '',
+            sourceType: isJira ? 'jira' : 'manual',
+            jiraKey: isJira ? (run.story_key || '') : '',
+            manualStoryKey: isJira ? '' : (run.story_key || ''),
+        });
+
+        notify.success(`Loaded ${run.test_cases?.length || 0} test cases from "${run.story_key}"`);
+        setStep(stepIndex('review'));
+    };
+
+    const handleDeleteRun = async (runId, storyKey) => {
+        if (!api) return;
+        try {
+            await api.del(`/api/testcase-history/run/${runId}`);
+            fetchStoryRuns(storyKey);
+            fetchHistoryStories();
+            notify.info('Run removed');
+        } catch (err) {
+            console.error('[Delete Run Error]', err);
+            notify.error('Failed to delete run');
+        }
+    };
+
+    const handleDeleteStory = async (storyKey) => {
+        if (!selectedProjectId || !api) return;
+        if (!window.confirm(`Are you sure you want to delete all history runs for "${storyKey}"?`)) return;
+        try {
+            await api.del(`/api/testcase-history/story/${encodeURIComponent(storyKey)}?project_id=${selectedProjectId}`);
+            setActiveStoryKey('');
+            setSelectedStoryRuns([]);
+            fetchHistoryStories();
+            notify.info(`Deleted history for "${storyKey}"`);
+        } catch (err) {
+            console.error('[Delete Story Error]', err);
+            notify.error('Failed to delete story');
+        }
+    };
+
+    // Load history when project or auth updates
+    useEffect(() => {
+        if (selectedProjectId && auth.isAuthenticated) {
+            fetchHistoryStories();
+        } else {
+            setHistoryStories([]);
+            setActiveStoryKey('');
+            setSelectedStoryRuns([]);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedProjectId, auth.isAuthenticated, auth.user?.access_token]);
+
+    // Breakpoint visibility handling
     const [trackedNarrow, setTrackedNarrow] = useState(isDownMd);
     if (isDownMd !== trackedNarrow) {
         setTrackedNarrow(isDownMd);
@@ -137,7 +236,6 @@ const TestGenerator = () => {
             abortControllerRef.current.abort();
             abortControllerRef.current = null;
             setIsGenerating(false);
-            // Mark the pane so a half-streamed batch doesn't read as still running.
             setStreamText((prev) => (prev ? `${prev}\n\n[Cancelled]` : '[Cancelled]'));
         }
     };
@@ -152,6 +250,7 @@ const TestGenerator = () => {
         setError(null);
         setStreamText('');
         setGenSeconds(null);
+        setHistoryWarning(null);
         const startedAt = performance.now();
         try {
             const results = await generateTestCases({
@@ -164,22 +263,43 @@ const TestGenerator = () => {
                 signal: controller.signal,
             });
 
-            // Async completion must use functional setState — the user may
-            // mutate state mid-run (Review is reachable while a generation is
-            // still streaming, so rows can be edited or added before this
-            // resolves, and a stale closure would silently drop those edits).
-            // The FT_ numbering continues from whatever is in the table at
-            // merge time, so the re-indexing lives inside the updater too.
             const count = results.length;
+            let reindexedResults = [];
             setTestCases((prev) => {
                 const startAt = maxFtNumber(prev);
-                return [...prev, ...results.map((tc, idx) => ({ ...tc, id: ftId(startAt + idx + 1) }))];
+                reindexedResults = results.map((tc, idx) => ({ ...tc, id: ftId(startAt + idx + 1) }));
+                return [...prev, ...reindexedResults];
             });
             setRequirementHistory((prev) => [...prev, form.requirement]);
             setLastBatchCount(count);
             setGenSeconds((performance.now() - startedAt) / 1000);
             notify.success(`Generated ${count} test case${count === 1 ? '' : 's'}`);
             setStep(stepIndex('review'));
+
+            // Auto-save history run to backend
+            const activeStoryKey = (form.sourceType === 'jira' ? form.jiraKey?.trim() : form.manualStoryKey?.trim()) ||
+                form.requirement.trim().split(/\s+/).slice(0, 4).join(' ').replace(/[^a-zA-Z0-9 ]/g, '').trim() ||
+                `Manual Run - ${new Date().toLocaleDateString()}`;
+
+            if (selectedProjectId && api) {
+                try {
+                    const response = await api.post('/api/testcase-history', {
+                        project_id: selectedProjectId,
+                        story_key: activeStoryKey,
+                        story_description: form.requirement,
+                        business_rules: form.businessRules,
+                        regression_context: form.regressionContext,
+                        tech_details: form.techDetails,
+                        test_cases: reindexedResults
+                    });
+                    if (response?.warning) {
+                        setHistoryWarning(response.warning);
+                    }
+                    fetchHistoryStories();
+                } catch (saveErr) {
+                    console.error('[History Save Error]', saveErr);
+                }
+            }
         } catch (err) {
             if (err.name === 'AbortError') {
                 notify.info('Generation cancelled');
@@ -207,11 +327,6 @@ const TestGenerator = () => {
     };
 
     // ---------- Review grid ----------
-    // Every row that enters state is given its `id` here (or in
-    // handleGenerate's updater), which is what lets the grid consume
-    // `testCases` directly: a row without an id would be un-editable
-    // (processRowUpdate matches on id) and could collide with another row on
-    // export.
     const handleAddTestCase = () => {
         let assigned;
         setTestCases((prev) => {
@@ -356,9 +471,7 @@ const TestGenerator = () => {
         ];
     }, [raisedBugs, isRaising, auth.user]);
 
-    // ---------- Exports (formats unchanged from the legacy page) ----------
-    // Map to an ordered, human-labeled "Test Cases" sheet so a first-time
-    // reviewer can read it top-to-bottom (ID → context → detailed steps → result).
+    // ---------- Exports ----------
     const handleExportExcel = () => {
         const rows = testCases.map((tc) => ({
             'Test Case ID': tc.id,
@@ -378,18 +491,169 @@ const TestGenerator = () => {
     const handleExportJSON = () => exportToJSON(testCases);
 
     const inputStep = (
-        <>
+        <Box>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Transform your requirements into comprehensive functional test cases instantly.
             </Typography>
-            <RequirementInput
-                values={form}
-                onChange={setField}
-                isGenerating={isGenerating}
-                contextCount={requirementHistory.length}
-                onClearContext={handleClearContext}
-            />
-        </>
+
+            {historyWarning && (
+                <Alert
+                    severity="warning"
+                    sx={{ mb: 2 }}
+                    onClose={() => setHistoryWarning(null)}
+                >
+                    {historyWarning}
+                </Alert>
+            )}
+
+            <Grid container spacing={3}>
+                <Grid item xs={12} lg={8}>
+                    <RequirementInput
+                        values={form}
+                        onChange={setField}
+                        isGenerating={isGenerating}
+                        contextCount={requirementHistory.length}
+                        onClearContext={handleClearContext}
+                    />
+                </Grid>
+                <Grid item xs={12} lg={4}>
+                    <Paper
+                        variant="outlined"
+                        sx={{
+                            p: 2,
+                            height: '100%',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            minHeight: 380,
+                            bgcolor: 'background.paper',
+                            borderRadius: 2,
+                        }}
+                    >
+                        <Stack direction="row" alignItems="center" spacing={1} sx={{ pb: 1, mb: 1, borderBottom: 1, borderColor: 'divider' }}>
+                            <HistoryIcon fontSize="small" color="primary" />
+                            <Typography variant="subtitle1" fontWeight={600}>
+                                Saved Stories History
+                            </Typography>
+                        </Stack>
+
+                        <Alert severity="info" sx={{ mb: 1.5, py: 0.5, '& .MuiAlert-message': { fontSize: '0.75rem' } }}>
+                            Up to 10 runs are stored per User Story. The 11th run automatically deletes the oldest.
+                        </Alert>
+
+                        {isLoadingHistory ? (
+                            <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary', fontSize: '0.85rem' }}>
+                                Loading history…
+                            </Box>
+                        ) : historyStories.length === 0 ? (
+                            <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary', fontSize: '0.85rem' }}>
+                                No history saved yet. Generated runs will appear here automatically.
+                            </Box>
+                        ) : (
+                            <Stack spacing={1} sx={{ overflowY: 'auto', flex: 1, maxHeight: 420 }}>
+                                {historyStories.map((story) => {
+                                    const isExpanded = activeStoryKey === story.storyKey;
+                                    return (
+                                        <Box
+                                            key={story.storyKey}
+                                            sx={{
+                                                border: 1,
+                                                borderColor: 'divider',
+                                                borderRadius: 1,
+                                                bgcolor: isExpanded ? 'action.hover' : 'transparent',
+                                                overflow: 'hidden',
+                                            }}
+                                        >
+                                            <Stack
+                                                direction="row"
+                                                alignItems="center"
+                                                justifyContent="space-between"
+                                                sx={{ p: 1, cursor: 'pointer' }}
+                                                onClick={() => (isExpanded ? setActiveStoryKey('') : fetchStoryRuns(story.storyKey))}
+                                            >
+                                                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ overflow: 'hidden', flex: 1 }}>
+                                                    {isExpanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
+                                                    <Box sx={{ overflow: 'hidden' }}>
+                                                        <Typography variant="body2" fontWeight={600} noWrap title={story.storyKey}>
+                                                            {story.storyKey}
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary" noWrap display="block">
+                                                            {story.description}
+                                                        </Typography>
+                                                    </Box>
+                                                </Stack>
+                                                <Stack direction="row" alignItems="center" spacing={1} sx={{ ml: 1 }}>
+                                                    <Chip size="small" label={story.runCount} sx={{ height: 20, fontSize: '0.7rem' }} />
+                                                    <Button
+                                                        size="small"
+                                                        color="error"
+                                                        sx={{ minWidth: 'auto', p: 0.5 }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDeleteStory(story.storyKey);
+                                                        }}
+                                                        title="Delete Story History"
+                                                    >
+                                                        <DeleteOutlineIcon fontSize="small" />
+                                                    </Button>
+                                                </Stack>
+                                            </Stack>
+
+                                            {isExpanded && (
+                                                <Box sx={{ bgcolor: 'action.selected', borderTop: 1, borderColor: 'divider', p: 1 }}>
+                                                    {selectedStoryRuns.length === 0 ? (
+                                                        <Typography variant="caption" color="text.secondary" align="center" display="block">
+                                                            Loading runs…
+                                                        </Typography>
+                                                    ) : (
+                                                        <Stack spacing={0.5}>
+                                                            {selectedStoryRuns.map((run, runIdx) => (
+                                                                <Stack
+                                                                    key={run.id}
+                                                                    direction="row"
+                                                                    alignItems="center"
+                                                                    justifyContent="space-between"
+                                                                    sx={{ fontSize: '0.75rem' }}
+                                                                >
+                                                                    <Typography
+                                                                        variant="caption"
+                                                                        onClick={() => handleLoadRun(run)}
+                                                                        sx={{
+                                                                            cursor: 'pointer',
+                                                                            color: 'primary.main',
+                                                                            textDecoration: 'underline',
+                                                                            overflow: 'hidden',
+                                                                            textOverflow: 'ellipsis',
+                                                                            whiteSpace: 'nowrap',
+                                                                            flex: 1,
+                                                                        }}
+                                                                        title="Click to load these test cases"
+                                                                    >
+                                                                        Run {selectedStoryRuns.length - runIdx} ({new Date(run.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })})
+                                                                    </Typography>
+                                                                    <Button
+                                                                        size="small"
+                                                                        color="inherit"
+                                                                        sx={{ minWidth: 'auto', p: 0.25, color: 'text.secondary', '&:hover': { color: 'error.main' } }}
+                                                                        onClick={() => handleDeleteRun(run.id, story.storyKey)}
+                                                                        title="Delete this run"
+                                                                    >
+                                                                        ×
+                                                                    </Button>
+                                                                </Stack>
+                                                            ))}
+                                                        </Stack>
+                                                    )}
+                                                </Box>
+                                            )}
+                                        </Box>
+                                    );
+                                })}
+                            </Stack>
+                        )}
+                    </Paper>
+                </Grid>
+            </Grid>
+        </Box>
     );
 
     const generateStep = (

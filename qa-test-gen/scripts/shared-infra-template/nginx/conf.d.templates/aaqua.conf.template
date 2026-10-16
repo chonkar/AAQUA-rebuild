@@ -26,6 +26,17 @@ location /aaqua/api/ {
     proxy_send_timeout 300s;
 }
 
+# noVNC live virtual browser stream (WebSockets)
+location /aaqua/vnc/ {
+    proxy_pass         http://aaqua-app:6080/;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade           $http_upgrade;
+    proxy_set_header   Connection        "upgrade";
+    proxy_set_header   Host              $host;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+
 # LLM proxy with Authorization injection from /run/shared-secrets/aaqua/llm_api_key.txt.
 location /aaqua/llm-api/ {
     proxy_pass            https://llm.lab.aaseya.com/;

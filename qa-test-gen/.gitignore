@@ -45,6 +45,8 @@ temp_test/
 temp_runner_uploads/
 node_test_extract/
 verify_proj_extracted/
+temp_runner/
+temp_screenshots/
 
 # ─── Tooling / debug noise ───────────────────────────────
 .claude/

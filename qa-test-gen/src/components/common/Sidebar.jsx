@@ -12,7 +12,7 @@ import {
 } from '@mui/material';
 import {
   Settings, HelpCircle, Database, Target, ShieldCheck, Layers, Globe, PersonStanding,
-  RefreshCw, LayoutDashboard, FileCode, FileText, Webhook, Gauge, Users, Lock,
+  RefreshCw, LayoutDashboard, FileCode, FileText, Webhook, Gauge, Users, Lock, Bot,
 } from 'lucide-react';
 import { useProject } from '../../context/ProjectContext';
 import { useAuth } from 'react-oidc-context';
@@ -32,8 +32,7 @@ const SERVICE_ITEMS = [
   { to: '/test-runner', icon: RefreshCw, label: 'Test Runner' },
   { to: '/localization', icon: Globe, label: 'Localization Tester' },
   { to: '/accessibility-scanner', icon: PersonStanding, label: 'Accessibility Scanner' },
-  { to: '/performance-scanner', icon: Gauge, label: 'Performance Scanner' },
-  { to: '/security-scanner', icon: ShieldCheck, label: 'Security Scanner' },
+  { to: '/mcp-agent-hub', icon: Bot, label: 'MCP Agent Hub' },
 ];
 
 const itemSx = {
