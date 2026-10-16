@@ -38,6 +38,8 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 FROM mcr.microsoft.com/playwright:v1.58.0-jammy
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# Build-time only: keeps apt (tzdata via openjdk/maven) from prompting for a timezone and hanging the build.
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
