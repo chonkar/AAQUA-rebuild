@@ -16,6 +16,15 @@ AAQUA is a React + Express platform that combines a suite of AI-driven QA tools 
 | Look up a deployment gotcha (HTTPS / mixed-content, self-signed cert + JWKS, DB secret file, role claim location, `/aaqua/` BASE_URL trap, GCP provisioning quirks, nginx upstream resolution, Keycloak realm reset, GitLab Runner UI form, `.env`-shadows-defaults, `docker restart` env-var freeze, `pg_dump`-before-destructive, IP-based QA deploy, etc.) | [`CLAUDE.md` § Deployment gotchas](CLAUDE.md#deployment-gotchas-learned-the-hard-way-during-the-qa-box-stand-up) (28 numbered gotchas as of 2026-07-15) |
 | **Bulk-import Keycloak users from CSV** (post-DB-loss recovery, team onboarding) | [`scripts/import-users.sh`](scripts/import-users.sh) + [`scripts/users-template.csv`](scripts/users-template.csv) — fill the CSV in Excel, `export KC_ADMIN_PW=...`, run the script on the VM. See `CLAUDE.md` § "Bulk user import via CSV". |
 
+## Deployments
+
+| Environment | URL | Host | Status (2026-10-16) |
+|---|---|---|---|
+| QA — GCP | `https://8.231.124.161/aaqua/` (self-signed, IP-based) | `aaqua-host`, GCP `asia-south1-a` | Was unreachable from the office on 2026-10-16 — check before relying on it |
+| QA — AWS | `https://aaqua.aaseya.com/aaqua/` · admin `https://aaqua.aaseya.com/auth/admin/` | `aaqua-host` (`i-0840cd3fa6811772a`), AWS `ap-southeast-2`, Elastic IP `13.239.104.177` | Stack up, 44 users imported. DNS A record pending — until it exists, add `13.239.104.177 aaqua.aaseya.com` to your hosts file and accept the temporary self-signed certificate |
+
+Credentials are never kept in the repo: the Keycloak `superadmin` password lives in `/opt/shared-infra/.env` on each host. Host facts, the AWS runbook and the lessons from the first AWS rollout are in [`CLAUDE.md` § AWS EC2 deployment](CLAUDE.md).
+
 ## Stack at a glance
 
 - **Frontend** — React 19 + Vite 7, OIDC via `react-oidc-context`, MUI for pages migrated in Phase 1, custom CSS variables + `lucide-react` icons on the rest.
@@ -48,7 +57,7 @@ The canonical repo lives at `https://git.lab.aaseya.com/camunda/aaqua` (migrated
 3. `docker compose up -d --build app` rebuilds the AAQUA backend image and swaps the container
 4. Re-copies the shared-infra nginx templates from the repo into `/opt/shared-infra/` and reloads `shared-nginx`
 
-Setup is one-shot via [`scripts/install-gitlab-runner.sh`](scripts/install-gitlab-runner.sh) (runs on the GCP VM, registers a `gitlab-runner` system-user service with tag `aaqua-deploy`). See [`CLAUDE.md` gotcha #24](CLAUDE.md) for the full runner architecture including the GitLab Runner 16+ auth-token model trap (the UI form is the source of truth — fill in the Tags field or the runner stays idle).
+Setup is one-shot via [`scripts/install-gitlab-runner.sh`](scripts/install-gitlab-runner.sh) (runs on the GCP VM, registers a `gitlab-runner` system-user service with tag `aaqua-deploy`). The same steps run on the AWS host as a second job: `.gitlab-ci.yml` defines `deploy:gcp` (runner tag `aaqua-deploy`) and `deploy:aws` (runner tag `aaqua-deploy-aws`), both extending `.deploy`. `deploy:aws` is only created when the GitLab CI/CD variable `AWS_DEPLOY_ENABLED` is `true`, so it stays off until the AWS host is verified. Host-specific variables must be scoped to the `gcp-qa` / `aws-qa` environments. See [`CLAUDE.md` gotcha #24](CLAUDE.md) for the full runner architecture including the GitLab Runner 16+ auth-token model trap (the UI form is the source of truth — fill in the Tags field or the runner stays idle).
 
 The runner uses `CI_JOB_TOKEN` (short-lived, per-job, GitLab-injected) for the repo fetch — **no PAT lives on the VM**. Concurrency is pinned to 1 (publish-spa.sh's `rm -rf $TARGET` before `docker cp` would race under parallel deploys).
 
