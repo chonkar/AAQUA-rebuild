@@ -17,6 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Look up a deployment gotcha (HTTPS, PKCE, Keycloak proxy headers, BASE_URL prefix, GCP provisioning, nginx upstream resolution, etc.) | `qa-test-gen/CLAUDE.md` § Deployment gotchas (22 numbered items) |
 | Stand up a local dev environment | `qa-test-gen/LOCAL_SETUP.md` |
 | Deploy to QA / production | `qa-test-gen/DEPLOYMENT.md` + `qa-test-gen/CLAUDE.md` § Production deployment |
+| Deploy / operate the AWS EC2 host (Sydney), or look up its IDs and the first-rollout lessons | `qa-test-gen/CLAUDE.md` § AWS EC2 deployment (runbook, current host, AWS gotchas) |
 
 ## Architecture at the highest level
 
