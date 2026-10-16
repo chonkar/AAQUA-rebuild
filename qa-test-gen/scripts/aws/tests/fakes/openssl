@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# openssl test double: `s_client` emits a dummy cert blob; `x509` prints $FAKE_OPENSSL_X509.
+printf 'openssl %s\n' "$*" >> "$SANDBOX/calls.log"
+cat > /dev/null
+case "$*" in
+  *s_client*) echo "-----BEGIN CERTIFICATE-----" ;;
+  *x509*)     printf '%b\n' "${FAKE_OPENSSL_X509:-}" ;;
+esac

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Generic test double. Logs argv to $SANDBOX/calls.log, captures piped stdin to
+# $SANDBOX/stdin.<name>.log, and answers from $SANDBOX/responses/<name>.
+# Response lines: <argv substring>|<exit code>|<stdout (printf %b)>. First match wins.
+name="$(basename "$0")"
+printf '%s %s\n' "$name" "$*" >> "$SANDBOX/calls.log"
+if [ ! -t 0 ]; then cat >> "$SANDBOX/stdin.$name.log"; fi
+resp="$SANDBOX/responses/$name"
+if [ -f "$resp" ]; then
+  while IFS='|' read -r pat code out; do
+    [ -n "$pat" ] || continue
+    case "$*" in
+      *"$pat"*) printf '%b\n' "$out"; exit "$code" ;;
+    esac
+  done < "$resp"
+fi
+echo "None"

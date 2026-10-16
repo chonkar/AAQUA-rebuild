@@ -92,6 +92,7 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/conf.d.templates:/etc/nginx/templates:ro
       - ./nginx/sites:/var/www:ro
+      - ./nginx/acme:/var/lib/acme:ro          # Let's Encrypt HTTP-01 webroot (outside the ro /var/www mount)
       - ./secrets:/run/shared-secrets:ro
       - ./nginx/10-load-tenant-secrets.envsh:/docker-entrypoint.d/10-load-tenant-secrets.envsh:ro
     tmpfs:
@@ -108,8 +109,10 @@ services:
 
 networks:
   default:
+    # Pre-created by the host bootstrap (aws-ec2-userdata.sh / gcp-vm-startup.sh).
+    # `external: true` stops Compose refusing an unlabelled network (CLAUDE.md gotcha #15).
     name: shared-infra_default
-    driver: bridge
+    external: true
 
 volumes:
   postgres_data:

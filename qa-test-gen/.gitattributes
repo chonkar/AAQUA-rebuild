@@ -11,6 +11,8 @@
 *.conf      text eol=lf
 *.template  text eol=lf
 Dockerfile  text eol=lf
+scripts/aws/tests/fakes/*  text eol=lf
+scripts/aws/*.env.example  text eol=lf
 
 # Per-component dotfiles often executed at boot — always LF.
 .env.example  text eol=lf
