@@ -8,6 +8,7 @@ AAQUA is a React + Express platform that combines a suite of AI-driven QA tools 
 |---|---|
 | Run the stack on your laptop | [`LOCAL_SETUP.md`](LOCAL_SETUP.md) |
 | **Provision a fresh GCP VM from scratch** (cloud-init Docker install, repo clone, shared-infra seed) | [`scripts/gcp-provision.sh`](scripts/gcp-provision.sh) — edit the `CONFIGURE ME` block at the top, then run from your workstation. Pair with `scripts/gcp-vm-startup.sh`. |
+| **Provision / deploy on AWS EC2** (Sydney, alongside GCP) | [`scripts/aws/`](scripts/aws/) — copy `aws.env.example` to `aws.env`, run `aws-provision.sh`, then follow [`CLAUDE.md` § AWS EC2 deployment](CLAUDE.md). |
 | **Install the CI/CD runner on the GCP VM** (auto-deploy on push to `main`) | [`scripts/install-gitlab-runner.sh`](scripts/install-gitlab-runner.sh) — register a project runner in the GitLab UI first (Tags field MUST be set), then run the script with the generated token. See [`CLAUDE.md` gotcha #24](CLAUDE.md). |
 | Deploy to a QA / staging server (shared-infra model) | [`DEPLOYMENT.md`](DEPLOYMENT.md) and the executable plan at [`docs/superpowers/plans/2026-05-08-shared-infra-deployment.md`](docs/superpowers/plans/2026-05-08-shared-infra-deployment.md) |
 | Understand the deployment design | [`docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md`](docs/superpowers/specs/2026-05-08-shared-infra-deployment-design.md) |
@@ -58,7 +59,7 @@ The runner uses `CI_JOB_TOKEN` (short-lived, per-job, GitLab-injected) for the r
 | `docker-compose.security.yml` | Local dev infra: Postgres + Keycloak + Mailpit, on the developer's laptop | `npm run dev` / `npm run server` workflow |
 | `docker-compose.security.prod.yml` | Legacy prod overlay (older bundled-image deployment model) | Not used by the current shared-infra deployment |
 | `docker-compose.yml` | **AAQUA tenant compose** — `app` only (backend, no in-image nginx). Joins external `shared-infra_default` network. | QA/prod, alongside the shared-infra stack at `/opt/shared-infra/` |
-| `scripts/shared-infra-template/docker-compose.yml` | **Shared infrastructure stack** — Postgres 17 + Keycloak 24 + Nginx 1.27, hosting one or many tenants by path-prefix routing. Lives at `/opt/shared-infra/` on the QA host. | One per host; AAQUA is currently the first/only tenant. |
+| `scripts/shared-infra-template/docker-compose.yml` | **Shared infrastructure stack** — Postgres 17 + Keycloak 24 + Nginx 1.27, hosting one or many tenants by path-prefix routing. Lives at `/opt/shared-infra/` on the QA host. | One per host (GCP QA box and AWS EC2 box). Expects the shared-infra_default network to exist (created by the host bootstrap). |
 
 ## License
 

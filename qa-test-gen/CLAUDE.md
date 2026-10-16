@@ -186,6 +186,33 @@ The QA VM at `aaqua-host` (GCP `asia-south1-a`, external IP `8.231.124.161`) is 
 ### `docker-compose.security.yml` is local-dev only
 The local-dev compose still exists and runs Postgres + Keycloak + Mailpit on the developer's laptop. It is **NOT** the same model as the shared-infra QA stack — it uses the older "two schemas in one DB" Postgres pattern and includes Mailpit (which has no place in QA/prod). The two are intentionally allowed to drift.
 
+### AWS EC2 deployment (alongside GCP, as of 2026-10-16)
+Spec: `docs/superpowers/specs/2026-10-16-aws-ec2-deployment-design.md`. Scripts in `scripts/aws/`, configured by a gitignored `scripts/aws/aws.env` (copy `aws.env.example`). Region `ap-southeast-2`, `m7i-flex.large` (free-plan eligible; 1 GB micro sizes cannot run the stack). Tests: `bash scripts/aws/tests/run.sh` (plain bash, PATH-injected doubles for aws/ssh/scp/curl/getent/openssl — no AWS calls).
+
+- **Secrets never go in user-data or tags.** Both are readable with `ec2:Describe*`. `aws-bootstrap.sh` pipes the GitLab deploy token and runner token over SSH stdin to `remote/clone-repo.sh` / `remote/install-runner.sh`; the clone authenticates via `GIT_CONFIG_*` env vars, so the token is neither in argv nor `.git/config`.
+- **One runner tag per host.** GCP runner = `aaqua-deploy`, AWS runner = `aaqua-deploy-aws`; `.gitlab-ci.yml` has `deploy:gcp` and `deploy:aws` extending `.deploy`. A shared tag would deploy each push to whichever runner grabbed it.
+- **Scope host-specific GitLab CI/CD variables** (`KEYCLOAK_REALM_URL`, `VITE_KEYCLOAK_URL`, …) to environment `gcp-qa` or `aws-qa`. Unscoped variables are exported into both jobs and override `.env` (gotcha #25) — the AWS box would build against GCP's Keycloak.
+- **TLS** is Let's Encrypt via `scripts/aws/issue-cert.sh` on the host: first issuance with `certbot --standalone` (stops shared-nginx briefly), renewals through the `/.well-known/acme-challenge/` location on :80 (webroot `/opt/shared-infra/nginx/acme` ↔ `/var/lib/acme` in nginx), deploy hook copies to `secrets/tls/aaqua.{crt,key}` and reloads nginx. It refuses to run until DNS points at the instance.
+
+Runbook (each script is idempotent):
+1. Install AWS CLI v2; `aws configure --profile aaqua-deploy` with the IAM user's key; delete the key CSV.
+2. `cp scripts/aws/aws.env.example scripts/aws/aws.env`; fill `SSH_SOURCE_CIDR`, `PUBLIC_HOSTNAME`, `LETSENCRYPT_EMAIL`; run `scripts/aws/aws-provision.sh`.
+3. DNS A record → printed Elastic IP. Ask owners of `git.lab.aaseya.com` / `llm.lab.aaseya.com` to allowlist it.
+4. GitLab: Settings → Repository → Deploy tokens (`read_repository`); Settings → CI/CD → Runners → new project runner with Tags `aaqua-deploy-aws` (gotcha #24).
+5. `GITLAB_DEPLOY_TOKEN_USER=… GITLAB_DEPLOY_TOKEN=… GITLAB_RUNNER_TOKEN=… scripts/aws/aws-bootstrap.sh`
+6. `ssh -t -i ~/.ssh/aaqua-host.pem ubuntu@<ip>`, then, in this order:
+   1. Populate `/opt/shared-infra/.env` from `.env.example` (`KC_HOSTNAME=<domain>`, `KC_PUBLIC_BASE_URL=https://<domain>`, passwords from `openssl rand -base64 32`) and `secrets/postgres_super_password.txt` (gotcha #16).
+   2. Write the tenant `.env` **as `gitlab-runner`** (CI reads it) and **before onboarding** (onboarding builds the SPA from it): `printf 'VITE_KEYCLOAK_URL=https://<domain>/auth
+KEYCLOAK_REALM_URL=https://<domain>/auth/realms/aaseya-platform
+' | sudo -u gitlab-runner tee /opt/aaqua/qa-test-gen/.env`
+   3. `sudo AAQUA_REPO=/opt/aaqua/qa-test-gen PUBLIC_BASE_URL=https://<domain> AAQUA_DB_PASSWORD=<same as .env> bash /opt/shared-infra/scripts/onboard-aaqua.sh` (prompts for the LLM key).
+   4. `sudo chown -R gitlab-runner:gitlab-runner /opt/shared-infra/nginx/sites/aaqua` — onboarding publishes the SPA as root (gotcha #27).
+7. `sudo PUBLIC_HOSTNAME=<domain> LETSENCRYPT_EMAIL=<email> bash /opt/aaqua/qa-test-gen/scripts/aws/issue-cert.sh --staging`, then again without `--staging`.
+8. Start in dependency order (gotcha #17): `cd /opt/shared-infra && docker compose up -d postgres keycloak`; `cd /opt/aaqua/qa-test-gen && sudo -u gitlab-runner docker compose up -d --build app`; `cd /opt/shared-infra && docker compose up -d nginx`.
+9. `scripts/import-users.sh` with the user CSV.
+10. Scope GitLab variables to `gcp-qa`; push to `main`; confirm `deploy:aws` is green.
+11. `scripts/aws/verify.sh` from the workstation; log in through the browser.
+
 ## Conventions worth noting
 
 - ESM throughout (`"type": "module"` in `package.json`). Server uses `import` syntax with explicit `.js` extensions.
