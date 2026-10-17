@@ -49,6 +49,8 @@ deploy:gcp:
     - aaqua-deploy
   environment:
     name: gcp-qa
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $GCP_DEPLOY_ENABLED == "true"'
 
 deploy:aws:
   extends: .deploy
@@ -57,4 +59,4 @@ deploy:aws:
   environment:
     name: aws-qa
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" && $AWS_DEPLOY_ENABLED == "true"'
+    - if: '$CI_COMMIT_BRANCH == "main"'

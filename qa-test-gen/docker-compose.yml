@@ -28,6 +28,7 @@ services:
       DB_LOGGING: "false"
       VITE_LLM_ENDPOINT: https://llm.lab.aaseya.com/v1
       VITE_LLM_MODEL: gemma-4
+      VITE_LLM_API_KEY: ${VITE_LLM_API_KEY:-}
       KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-https://8.231.124.161/auth/realms/aaseya-platform}
       # Backend JWKS fetch URL. Defaults to the docker-internal Keycloak so the self-signed
       # TLS cert on the public IP doesn't need to be trusted by the backend container.
