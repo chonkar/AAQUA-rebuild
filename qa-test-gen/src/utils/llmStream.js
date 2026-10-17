@@ -49,7 +49,18 @@ export async function streamLLM({ prompt, maxTokens, temperature, reasoningEffor
     body: JSON.stringify({ prompt, maxTokens, temperature, reasoningEffort }),
     signal,
   })
-  if (!res.ok) throw new Error(`LLM request failed: ${res.status}`)
+  if (!res.ok) {
+    let msg = `LLM request failed: ${res.status}`
+    try {
+      const errJson = await res.json()
+      if (errJson?.error) {
+        msg = `${errJson.error}${errJson.detail ? `: ${errJson.detail}` : ''}`
+      }
+    } catch {
+      // Fall back to status text if body is not JSON
+    }
+    throw new Error(msg)
+  }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()

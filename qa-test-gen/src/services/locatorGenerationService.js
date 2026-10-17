@@ -1,15 +1,7 @@
-import { LocalLLM as GoogleGenerativeAI } from "../utils/llmClient";
+import { streamLLM } from "../utils/llmStream";
 import { generateBoilerplateLocators } from "../utils/locatorUtils";
 
-const API_KEY = import.meta.env.VITE_LLM_API_KEY;
-const LLM_ENDPOINT = import.meta.env.VITE_LLM_ENDPOINT;
-const MODEL_NAME = import.meta.env.VITE_LLM_MODEL || "gemma-4";
-
 export const generateLocators = async (htmlContent) => {
-    if (!API_KEY) {
-        throw new Error("API Key is missing. Please check your .env file.");
-    }
-
     if (!htmlContent || !htmlContent.trim()) {
         throw new Error("Please provide valid HTML content.");
     }
@@ -40,12 +32,6 @@ export const generateLocators = async (htmlContent) => {
 };
 
 const improveLocatorsWithAI = async (htmlContent, weakLocators) => {
-    const genAI = new GoogleGenerativeAI(API_KEY, LLM_ENDPOINT);
-    const model = genAI.getGenerativeModel({ 
-        model: MODEL_NAME, 
-        generationConfig: { reasoningEffort: 'low' } 
-    });
-
     const elementsData = weakLocators.map(l => ({
         element: l.element,
         type: l.type,
@@ -87,7 +73,7 @@ const improveLocatorsWithAI = async (htmlContent, weakLocators) => {
           "css": "<improved stable css selector>",
           "xpath": "<improved stable xpath>",
           "playwright": "<improved modern Playwright code snippet, e.g. page.getByRole('button', { name: 'Submit' }) or page.locator('#id')>",
-          "selenium": "<improved Selenium locator statement, e.g. By.id('id') or By.cssSelector('[data-testid="test"]')>",
+          "selenium": "<improved Selenium locator statement, e.g. By.id('id') or By.cssSelector('[data-testid=\"test\"]')>",
           "confidence": <number between 0.7 and 0.95>,
           "reason": "<explanation of improvement>",
           "source": "AI"
@@ -96,9 +82,11 @@ const improveLocatorsWithAI = async (htmlContent, weakLocators) => {
         OUTPUT THE JSON ARRAY WRAPPED IN A MARKDOWN \`\`\`json CODE BLOCK. DO NOT INCLUDE ANY ADDITIONAL CONVERSATIONAL TEXT.
     `;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    let text = response.text();
+    let text = await streamLLM({
+        prompt,
+        reasoningEffort: 'low',
+        temperature: 0.2,
+    });
 
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
 

@@ -1,3 +1,4 @@
+import fs from 'fs';
 import dotenv from 'dotenv';
 import { Router } from 'express';
 import { authenticateToken } from '../middleware/auth.js';
@@ -6,14 +7,19 @@ dotenv.config();
 
 const router = Router();
 
-// Env resolution mirrors server/utils/llmClient.js and every call site in
-// server/index.js exactly (VITE_* names, same defaults) — NOT the
-// LLM_ENDPOINT/LLM_API_KEY/LLM_MODEL names from the original plan sketch, so
-// this proxy works against the existing .env unchanged. Non-VITE names are
-// accepted as a secondary fallback in case a future deploy sets those instead.
-const LLM_ENDPOINT = process.env.VITE_LLM_ENDPOINT || process.env.LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
-const LLM_MODEL = process.env.VITE_LLM_MODEL || process.env.LLM_MODEL || 'gemma-4';
-const API_KEY = process.env.VITE_LLM_API_KEY || process.env.LLM_API_KEY;
+function resolveApiKey() {
+    if (process.env.VITE_LLM_API_KEY) return process.env.VITE_LLM_API_KEY;
+    if (process.env.LLM_API_KEY) return process.env.LLM_API_KEY;
+    try {
+        if (fs.existsSync('/run/secrets/llm_api_key')) {
+            return fs.readFileSync('/run/secrets/llm_api_key', 'utf8').trim();
+        }
+        if (fs.existsSync('/opt/shared-infra/secrets/aaqua/llm_api_key.txt')) {
+            return fs.readFileSync('/opt/shared-infra/secrets/aaqua/llm_api_key.txt', 'utf8').trim();
+        }
+    } catch {}
+    return undefined;
+}
 
 // gpt-oss and friends accept only these three levels; anything else is a
 // client bug worth surfacing as a 400 rather than forwarding upstream.
@@ -53,17 +59,20 @@ router.post('/generate', authenticateToken, async (req, res) => {
     }
 
     const clampedMaxTokens = clampMaxTokens(maxTokens ?? DEFAULT_MAX_TOKENS);
+    const endpoint = process.env.VITE_LLM_ENDPOINT || process.env.LLM_ENDPOINT || 'https://llm.lab.aaseya.com/v1';
+    const model = process.env.VITE_LLM_MODEL || process.env.LLM_MODEL || 'gemma-4';
+    const apiKey = resolveApiKey();
 
     let upstream;
     try {
-        upstream = await fetch(`${LLM_ENDPOINT}/chat/completions`, {
+        upstream = await fetch(`${endpoint}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...(API_KEY && { Authorization: `Bearer ${API_KEY}` }),
+                ...(apiKey && { Authorization: `Bearer ${apiKey}` }),
             },
             body: JSON.stringify({
-                model: LLM_MODEL,
+                model,
                 messages: [{ role: 'user', content: prompt }],
                 max_tokens: clampedMaxTokens,
                 ...(temperature !== undefined && { temperature }),
@@ -72,11 +81,13 @@ router.post('/generate', authenticateToken, async (req, res) => {
             }),
         });
     } catch (err) {
+        console.error('[LLM Proxy] Connection failed to', endpoint, err?.message);
         return res.status(502).json({ error: 'LLM upstream unreachable', detail: err?.message });
     }
 
     if (!upstream.ok) {
         const detail = await upstream.text().catch(() => '');
+        console.error('[LLM Proxy] Upstream returned error:', upstream.status, detail.slice(0, 500));
         return res.status(502).json({ error: `LLM upstream ${upstream.status}`, detail: detail.slice(0, 500) });
     }
 

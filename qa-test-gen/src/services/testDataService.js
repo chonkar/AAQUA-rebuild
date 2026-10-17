@@ -1,10 +1,6 @@
 
-import { LocalLLM as GoogleGenerativeAI } from "../utils/llmClient";
+import { streamLLM } from "../utils/llmStream";
 import { faker } from '@faker-js/faker';
-
-const API_KEY = import.meta.env.VITE_LLM_API_KEY;
-const LLM_ENDPOINT = import.meta.env.VITE_LLM_ENDPOINT;
-const MODEL_NAME = import.meta.env.VITE_LLM_MODEL || "gemma-4";
 
 // Strict validation helper
 const isValidJSON = (str) => {
@@ -116,11 +112,7 @@ const processHybridData = (data) => {
     };
 };
 
-export const generateTestData = async (input, mode = 'prompt', count = 5) => {
-    if (!API_KEY) {
-        throw new Error("API Key is missing.");
-    }
-
+export const generateTestData = async (input, mode = 'prompt', count = 5, signal) => {
     // STRICT VALIDATION for Schema Mode
     if (mode === 'schema') {
         if (!isValidJSON(input)) {
@@ -129,12 +121,6 @@ export const generateTestData = async (input, mode = 'prompt', count = 5) => {
     }
 
     try {
-        const genAI = new GoogleGenerativeAI(API_KEY, LLM_ENDPOINT);
-        const model = genAI.getGenerativeModel({ 
-            model: MODEL_NAME, 
-            generationConfig: { reasoningEffort: 'low' } 
-        });
-
         let promptContext = "";
 
         if (mode === 'schema') {
@@ -176,9 +162,12 @@ export const generateTestData = async (input, mode = 'prompt', count = 5) => {
             For specific business logic or fields not covered above, generate realistic values yourself.
         `;
 
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let text = response.text();
+        const text = await streamLLM({
+            prompt,
+            reasoningEffort: 'low',
+            temperature: 0.2,
+            signal,
+        });
 
         const rawData = extractTestData(text);
 
