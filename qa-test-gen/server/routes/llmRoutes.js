@@ -7,17 +7,31 @@ dotenv.config();
 
 const router = Router();
 
+function isValidKey(k) {
+    if (!k || typeof k !== 'string') return false;
+    const trimmed = k.trim();
+    if (trimmed.length < 15) return false;
+    if (trimmed.includes('replace-with') || trimmed.includes('your-api-key') || trimmed.endsWith('-key')) return false;
+    return true;
+}
+
 function resolveApiKey() {
-    if (process.env.VITE_LLM_API_KEY) return process.env.VITE_LLM_API_KEY;
-    if (process.env.LLM_API_KEY) return process.env.LLM_API_KEY;
+    const candidates = [
+        process.env.VITE_LLM_API_KEY,
+        process.env.LLM_API_KEY,
+    ];
     try {
         if (fs.existsSync('/run/secrets/llm_api_key')) {
-            return fs.readFileSync('/run/secrets/llm_api_key', 'utf8').trim();
+            candidates.push(fs.readFileSync('/run/secrets/llm_api_key', 'utf8').trim());
         }
         if (fs.existsSync('/opt/shared-infra/secrets/aaqua/llm_api_key.txt')) {
-            return fs.readFileSync('/opt/shared-infra/secrets/aaqua/llm_api_key.txt', 'utf8').trim();
+            candidates.push(fs.readFileSync('/opt/shared-infra/secrets/aaqua/llm_api_key.txt', 'utf8').trim());
         }
     } catch {}
+
+    for (const c of candidates) {
+        if (isValidKey(c)) return c.trim();
+    }
     return undefined;
 }
 
