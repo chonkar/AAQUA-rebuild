@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from 'react-oidc-context';
-import { Globe, Play, Search, AlertTriangle, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
+import { Globe, Play, Search, AlertTriangle, CheckCircle, Loader2, AlertCircle, Monitor } from 'lucide-react';
 import { launchBrowser, capturePage, startLocalizationAnalysis, getLocalizationStatus } from '../services/localizationService';
 import { useProject } from '../context/ProjectContext';
 import { createApiClient } from '../utils/apiClient';
 import JiraDefectButton from '../components/features/JiraDefectButton';
 import UrlScopeWarning from '../components/common/UrlScopeWarning';
+import LiveBrowserViewer from '../components/common/LiveBrowserViewer';
 
 const API_URL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
@@ -51,6 +52,13 @@ const LocalizationTester = () => {
     // issues have no stable id — reset on every analyze run so badges don't
     // leak across scans.
     const [jiraState, setJiraState] = useState({});
+    const [activeTab, setActiveTab] = useState('browser');
+    const [runtimeInfo, setRuntimeInfo] = useState(null);
+    const [isLaunching, setIsLaunching] = useState(false);
+
+    useEffect(() => {
+        fetch(`${API_URL}/runtime-info`).then(r => r.json()).then(setRuntimeInfo).catch(() => {});
+    }, []);
 
     // Listeners for Chrome Extension connection & cookie responses
     useEffect(() => {
@@ -104,7 +112,8 @@ const LocalizationTester = () => {
 
     const handleLaunch = async () => {
         setError(null);
-        setIsBrowserActive(false);
+        setIsLaunching(true);
+        setActiveTab('browser'); // Immediately focus browser tab so viewer is visible
         try {
             let cookies = [];
             if (useCookies && cookieInput.trim()) {
@@ -116,11 +125,15 @@ const LocalizationTester = () => {
                 }
             }
 
-            await launchBrowser(url, browserType, cookies, selectedProjectId || null);
+            await launchBrowser(url, browserType, cookies, selectedProjectId || null, true);
             setIsBrowserActive(true);
             setCurrentBrowserUrl(url);
+            setActiveTab('browser');
         } catch (err) {
             setError(err.message || "Failed to launch browser. Ensure server is running.");
+            setIsBrowserActive(false);
+        } finally {
+            setIsLaunching(false);
         }
     };
 
@@ -285,10 +298,18 @@ const LocalizationTester = () => {
                             />
                             <button
                                 onClick={handleLaunch}
-                                disabled={!url || isBrowserActive}
+                                disabled={!url || isBrowserActive || isLaunching}
                                 className="btn btn-primary"
                             >
-                                <Play size={16} /> Launch
+                                {isLaunching ? (
+                                    <>
+                                        <Loader2 className="spin" size={16} /> Launching Inside...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Play size={16} /> Launch
+                                    </>
+                                )}
                             </button>
                         </div>
                         <UrlScopeWarning url={url} />
@@ -475,6 +496,15 @@ const LocalizationTester = () => {
                             </div>
 
                             <button
+                                type="button"
+                                onClick={() => setActiveTab('browser')}
+                                className="btn btn-secondary btn-sm"
+                                style={{ width: '100%', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontWeight: '600' }}
+                            >
+                                <Monitor size={15} /> Focus Live Browser Window
+                            </button>
+
+                            <button
                                 onClick={handleCloseBrowser}
                                 className="btn btn-danger btn-sm"
                                 style={{ width: '100%', padding: '0.5rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: '600' }}
@@ -507,8 +537,30 @@ const LocalizationTester = () => {
                 </div>
 
                 <div className="results-panel">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                        <h3 style={{ margin: 0 }}>Analysis Results</h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                        <div className="tabs" style={{ display: 'flex', gap: '0.5rem', margin: 0 }}>
+                            <button
+                                className={`tab-btn ${activeTab === 'browser' ? 'active' : ''}`}
+                                onClick={() => setActiveTab('browser')}
+                            >
+                                <Monitor size={16} /> Live Browser {isBrowserActive && (
+                                    <span className="tab-count badge-success" style={{ background: '#10b981', color: '#fff' }}>
+                                        LIVE
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                className={`tab-btn ${activeTab === 'issues' ? 'active' : ''}`}
+                                onClick={() => setActiveTab('issues')}
+                            >
+                                Detected Issues {issues.length > 0 && (
+                                    <span className="tab-count badge-error" style={{ background: '#3b82f6', color: '#fff' }}>
+                                        {issues.length}
+                                    </span>
+                                )}
+                            </button>
+                        </div>
+
                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                         {chunkCount > 1 && (
                             <span style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', padding: '0.25rem 0.75rem', borderRadius: '999px', fontSize: '0.8rem' }}>
@@ -529,36 +581,56 @@ const LocalizationTester = () => {
                         )}
                         </div>
                     </div>
-                    {issues.length === 0 && !isAnalyzing ? (
-                        <div className="empty-state">
-                            <CheckCircle size={48} className="text-muted" />
-                            <p>No issues detected yet. Start analysis.</p>
+
+                    {activeTab === 'browser' && (
+                        <div className="live-browser-tab-pane animate-fade-in" style={{ marginTop: '0.75rem' }}>
+                            <LiveBrowserViewer 
+                                title="Localization Live Browser Window" 
+                                subtitle={runtimeInfo?.hasVnc ? "Virtual Desktop (DISPLAY=:99) — Live Interactive Session" : "Embedded Live Session • Click & Type Directly Inside"}
+                                isExecuting={isBrowserActive || isLaunching || isAnalyzing} 
+                                pollEndpoint={`${API_URL}/browser/live-screen`}
+                                hasVnc={runtimeInfo?.hasVnc}
+                                hasDisplayServer={runtimeInfo?.hasDisplayServer}
+                                isHeaded={false}
+                                height="560px"
+                            />
                         </div>
-                    ) : (
-                        <div className="issues-list">
-                            {issues.map((issue, idx) => {
-                                const issueKey = `loc-${idx}`;
-                                return (
-                                    <div key={issueKey} className="issue-card">
-                                        <div className="issue-header">
-                                            <span className="badge-warning">LEAK</span>
-                                            <span className="context">{issue.context}</span>
-                                            <div style={{ marginLeft: 'auto' }}>
-                                                <JiraDefectButton
-                                                    state={jiraState[issueKey]}
-                                                    onClick={() => logJiraDefect(issue, issueKey)}
-                                                />
+                    )}
+
+                    {activeTab === 'issues' && (
+                        <>
+                            {issues.length === 0 && !isAnalyzing ? (
+                                <div className="empty-state">
+                                    <CheckCircle size={48} className="text-muted" />
+                                    <p>No issues detected yet. Start analysis.</p>
+                                </div>
+                            ) : (
+                                <div className="issues-list">
+                                    {issues.map((issue, idx) => {
+                                        const issueKey = `loc-${idx}`;
+                                        return (
+                                            <div key={issueKey} className="issue-card">
+                                                <div className="issue-header">
+                                                    <span className="badge-warning">LEAK</span>
+                                                    <span className="context">{issue.context}</span>
+                                                    <div style={{ marginLeft: 'auto' }}>
+                                                        <JiraDefectButton
+                                                            state={jiraState[issueKey]}
+                                                            onClick={() => logJiraDefect(issue, issueKey)}
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div className="issue-body">
+                                                    <div className="original">"{issue.original}"</div>
+                                                    <div className="arrow">→</div>
+                                                    <div className="suggestion">{issue.suggestion}</div>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div className="issue-body">
-                                            <div className="original">"{issue.original}"</div>
-                                            <div className="arrow">→</div>
-                                            <div className="suggestion">{issue.suggestion}</div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
             </div>

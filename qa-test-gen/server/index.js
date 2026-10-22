@@ -1542,23 +1542,28 @@ app.post('/api/browser/launch', async (req, res) => {
         }
 
         console.log(`Launching interactive browser for: ${url}`);
-        // Default headless so this works in the deployed container (which has
-        // no display server). Local devs can opt out with HEADLESS=false in
-        // .env to keep the historic headed-Chromium workflow for cookie/HTML
-        // capture from the Setup Wizard.
-        const { browserType, cookies } = req.body;
-        const launchHeadless = process.env.HEADLESS !== 'false';
+        // Default headless: true so the interactive browser runs embedded inside AAQUA
+        // without popping up an external detached OS desktop window on the user's screen.
+        // Explicit headless: false in req.body is respected if an external desktop window is requested.
+        const { browserType, cookies, headless } = req.body;
+        const launchHeadless = headless !== undefined ? !!headless : true;
         const launcher = getBrowserLauncher(browserType);
         const launchOptions = {
             headless: launchHeadless,
         };
         if (browserType?.toLowerCase() === 'chromium' || !browserType) {
-            launchOptions.args = ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox', '--disable-gpu'];
+            launchOptions.args = [
+                '--no-sandbox', 
+                '--disable-dev-shm-usage', 
+                '--disable-setuid-sandbox', 
+                '--disable-gpu',
+                '--window-size=1280,800'
+            ];
         }
         activeBrowser = await launcher.launch(launchOptions);
 
         activeContext = await activeBrowser.newContext({
-            viewport: null, // maximize viewport
+            viewport: { width: 1280, height: 800 },
             ignoreHTTPSErrors: true
         });
 
@@ -1608,7 +1613,7 @@ app.post('/api/browser/launch', async (req, res) => {
         }
 
         activePage = await activeContext.newPage();
-        await activePage.goto(url);
+        await activePage.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
         res.json({ message: 'Browser launched' });
     } catch (error) {
@@ -1682,6 +1687,164 @@ app.post('/api/browser/navigate', async (req, res) => {
         res.status(500).json({ error: 'Failed to navigate', details: error.message });
     }
 });
+
+// GET /api/browser/live-screen — Real-time frame capture for Accessibility & Localization Live Browser Viewers
+app.get('/api/browser/live-screen', async (req, res) => {
+    if (!activePage || activePage.isClosed()) {
+        return res.status(404).json({ error: 'No active browser page' });
+    }
+    try {
+        const screenshot = await activePage.screenshot({ type: 'jpeg', quality: 75 });
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.send(screenshot);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to capture screenshot', detail: err.message });
+    }
+});
+
+// Interactive Click Coordinate on Active Browser
+app.post('/api/browser/click-coordinate', async (req, res) => {
+    if (!activePage || activePage.isClosed()) {
+        return res.status(400).json({ error: 'No active browser page' });
+    }
+    const { x, y } = req.body;
+    try {
+        await activePage.mouse.click(Number(x), Number(y));
+        await activePage.waitForTimeout(150);
+
+        // Extract element info at point for interactive Quick-Fill HUD
+        let elementInfo = null;
+        try {
+            elementInfo = await activePage.evaluate(({ px, py }) => {
+                let el = document.elementFromPoint(px, py);
+                if (!el) el = document.activeElement;
+                if (!el) return null;
+
+                let inputEl = null;
+                const active = document.activeElement;
+                if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT' || active.isContentEditable)) {
+                    inputEl = active;
+                } else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable) {
+                    inputEl = el;
+                } else if (el.closest('label')) {
+                    const label = el.closest('label');
+                    if (label.control) inputEl = label.control;
+                    else inputEl = label.querySelector('input, textarea, select');
+                } else if (el.querySelector('input, textarea, select')) {
+                    inputEl = el.querySelector('input, textarea, select');
+                } else if (el.closest('input, textarea, select, [contenteditable="true"]')) {
+                    inputEl = el.closest('input, textarea, select, [contenteditable="true"]');
+                }
+
+                const targetEl = inputEl || el;
+                const tag = targetEl.tagName ? targetEl.tagName.toLowerCase() : '';
+                const isInput = tag === 'input' || tag === 'textarea' || tag === 'select' || targetEl.isContentEditable;
+
+                if (isInput && typeof targetEl.focus === 'function') {
+                    targetEl.focus();
+                }
+
+                let sel = '';
+                if (targetEl.id) sel = '#' + targetEl.id;
+                else if (targetEl.name) sel = `${tag}[name="${targetEl.name}"]`;
+                else if (targetEl.placeholder) sel = `${tag}[placeholder="${targetEl.placeholder}"]`;
+
+                return {
+                    tagName: tag,
+                    isInput,
+                    type: targetEl.type || 'text',
+                    name: targetEl.name || '',
+                    id: targetEl.id || '',
+                    placeholder: targetEl.placeholder || '',
+                    value: targetEl.value !== undefined ? targetEl.value : (targetEl.innerText || ''),
+                    selector: sel
+                };
+            }, { px: Number(x), py: Number(y) }).catch(() => null);
+        } catch {
+            // Element evaluation fallback
+        }
+
+        const screenshot = await activePage.screenshot({ type: 'jpeg', quality: 75 }).catch(() => null);
+        const liveScreenshot = screenshot ? `data:image/jpeg;base64,${screenshot.toString('base64')}` : null;
+        res.json({ success: true, url: activePage.url(), liveScreenshot, elementInfo });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Interactive Typing on Active Browser
+app.post('/api/browser/type-text', async (req, res) => {
+    if (!activePage || activePage.isClosed()) {
+        return res.status(400).json({ error: 'No active browser page' });
+    }
+    const { text, key } = req.body;
+    try {
+        if (key) {
+            await activePage.keyboard.press(key);
+        } else if (text) {
+            await activePage.keyboard.type(text);
+        }
+        await activePage.waitForTimeout(100);
+        const screenshot = await activePage.screenshot({ type: 'jpeg', quality: 75 }).catch(() => null);
+        const liveScreenshot = screenshot ? `data:image/jpeg;base64,${screenshot.toString('base64')}` : null;
+        res.json({ success: true, liveScreenshot });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Interactive Key Press on Active Browser
+app.post('/api/browser/press-key', async (req, res) => {
+    if (!activePage || activePage.isClosed()) {
+        return res.status(400).json({ error: 'No active browser page' });
+    }
+    const { key } = req.body;
+    try {
+        if (key) {
+            await activePage.keyboard.press(key);
+        }
+        await activePage.waitForTimeout(100);
+        const screenshot = await activePage.screenshot({ type: 'jpeg', quality: 75 }).catch(() => null);
+        const liveScreenshot = screenshot ? `data:image/jpeg;base64,${screenshot.toString('base64')}` : null;
+        res.json({ success: true, liveScreenshot });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Interactive Field Fill on Active Browser
+app.post('/api/browser/fill-field', async (req, res) => {
+    if (!activePage || activePage.isClosed()) {
+        return res.status(400).json({ error: 'No active browser page' });
+    }
+    const { selector, value } = req.body;
+    try {
+        if (selector) {
+            await activePage.fill(selector, String(value || ''));
+        } else {
+            await activePage.keyboard.type(String(value || ''));
+        }
+        await activePage.waitForTimeout(100);
+        const screenshot = await activePage.screenshot({ type: 'jpeg', quality: 75 }).catch(() => null);
+        const liveScreenshot = screenshot ? `data:image/jpeg;base64,${screenshot.toString('base64')}` : null;
+        res.json({ success: true, liveScreenshot });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Active Browser Status
+app.get('/api/browser/status', async (req, res) => {
+    const isActive = !!(activePage && !activePage.isClosed());
+    res.json({
+        isActive,
+        url: isActive ? activePage.url() : null,
+        title: isActive ? await activePage.title().catch(() => '') : null,
+        browserType: activeBrowser ? 'chromium' : null
+    });
+});
+
 // Scrape endpoint (POST to accept body with cookies) - Headless Mode
 app.post('/api/scrape', async (req, res) => {
     const { url, cookies, browserType, html } = req.body;

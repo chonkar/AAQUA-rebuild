@@ -13,6 +13,9 @@ export class LocalLLM {
      getGenerativeModel({ model, generationConfig }) {
          return {
              generateContent: async (prompt) => {
+                 if (!this.apiKey || !this.apiKey.startsWith('sk-')) {
+                     throw new Error('LLM API key missing or invalid: check VITE_LLM_API_KEY');
+                 }
                  const response = await fetch(`${this.endpoint}/chat/completions`, {
                      method: 'POST',
                      headers: {

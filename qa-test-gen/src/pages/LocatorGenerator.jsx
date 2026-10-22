@@ -5,6 +5,7 @@ import { Target, Search, Copy, Download, Code, Globe, AlertCircle, Loader2 } fro
 import { useProject } from '../context/ProjectContext';
 import UrlScopeWarning from '../components/common/UrlScopeWarning';
 import ExtensionInstallModal from '../components/common/ExtensionInstallModal';
+import LiveBrowserViewer from '../components/common/LiveBrowserViewer';
 
 // BASE_URL-prefixed relative path. See src/services/testRunnerService.js for why.
 // Hardcoded http://localhost:3001 worked in dev but 404'd in QA (browser bypasses the Vite proxy in prod).
@@ -54,7 +55,7 @@ const LocatorGenerator = () => {
             const response = await fetch(`${API_URL}/browser/launch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: urlInput, browserType, cookies, projectId: selectedProjectId || null })
+                body: JSON.stringify({ url: urlInput, browserType, cookies, projectId: selectedProjectId || null, headless: true })
             });
 
             if (!response.ok) {
@@ -616,6 +617,17 @@ const LocatorGenerator = () => {
                                     Go
                                 </button>
                             </div>
+                        </div>
+
+                        <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+                            <LiveBrowserViewer 
+                                title="Interactive Browser Window"
+                                subtitle="Embedded Live Session • Click & Type Directly Inside"
+                                isExecuting={isBrowserActive}
+                                pollEndpoint={`${API_URL}/browser/live-screen`}
+                                isHeaded={false}
+                                height="480px"
+                            />
                         </div>
 
                         <button

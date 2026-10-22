@@ -39,6 +39,10 @@ export class LocalLLM {
                       contentPayload = prompt;
                   }
 
+                  if (!this.apiKey || !this.apiKey.startsWith('sk-')) {
+                      throw new Error('LLM API key missing or invalid: check VITE_LLM_API_KEY');
+                  }
+
                   let response;
                  try {
                      response = await fetch(`${this.endpoint}/chat/completions`, {

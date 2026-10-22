@@ -77,6 +77,10 @@ router.post('/generate', authenticateToken, async (req, res) => {
     const model = process.env.VITE_LLM_MODEL || process.env.LLM_MODEL || 'gemma-4';
     const apiKey = resolveApiKey();
 
+    if (!apiKey || !apiKey.startsWith('sk-')) {
+        return res.status(401).json({ error: 'LLM API key missing or invalid: check VITE_LLM_API_KEY' });
+    }
+
     let upstream;
     try {
         upstream = await fetch(`${endpoint}/chat/completions`, {

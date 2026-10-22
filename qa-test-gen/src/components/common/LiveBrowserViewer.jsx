@@ -52,7 +52,7 @@ const LiveBrowserViewer = ({
 
     // Interactive Viewport Click Handler with exact letterbox/aspect-ratio math
     const handleViewportClick = async (e) => {
-        if (!runId) return;
+        if (!runId && !pollEndpoint) return;
         const img = e.currentTarget;
         const rect = img.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return;
@@ -106,11 +106,19 @@ const LiveBrowserViewer = ({
 
         setIsInteracting(true);
         const basePath = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+        const isBrowserApi = pollEndpoint && pollEndpoint.includes('/browser/');
         try {
-            const res = await fetch(`${basePath}/api/recorder/click-coordinate`, {
+            const clickUrl = isBrowserApi
+                ? `${basePath}/api/browser/click-coordinate`
+                : `${basePath}/api/recorder/click-coordinate`;
+            const payload = isBrowserApi
+                ? { x: clickX, y: clickY }
+                : { sessionId: runId, x: clickX, y: clickY };
+
+            const res = await fetch(clickUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId: runId, x: clickX, y: clickY })
+                body: JSON.stringify(payload)
             });
             if (res.ok) {
                 const data = await res.json();
@@ -140,21 +148,28 @@ const LiveBrowserViewer = ({
             return;
         }
 
-        if (!runId) return;
+        if (!runId && !pollEndpoint) return;
 
         if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Backspace'].includes(e.key)) {
             e.preventDefault();
         }
 
         const basePath = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+        const isBrowserApi = pollEndpoint && pollEndpoint.includes('/browser/');
         if (['Enter', 'Tab', 'Backspace', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
             await handleSendKey(e.key);
         } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
             try {
-                const res = await fetch(`${basePath}/api/recorder/type-text`, {
+                const typeUrl = isBrowserApi
+                    ? `${basePath}/api/browser/type-text`
+                    : `${basePath}/api/recorder/type-text`;
+                const payload = isBrowserApi
+                    ? { text: e.key }
+                    : { sessionId: runId, text: e.key };
+                const res = await fetch(typeUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionId: runId, text: e.key })
+                    body: JSON.stringify(payload)
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -166,18 +181,22 @@ const LiveBrowserViewer = ({
 
     // Direct Field Fill Handler (from Quick-Fill HUD)
     const handleDirectFill = async (val) => {
-        if (!runId || val === undefined) return;
+        if ((!runId && !pollEndpoint) || val === undefined) return;
         setIsInteracting(true);
         const basePath = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+        const isBrowserApi = pollEndpoint && pollEndpoint.includes('/browser/');
         try {
-            const res = await fetch(`${basePath}/api/recorder/fill-field`, {
+            const fillUrl = isBrowserApi
+                ? `${basePath}/api/browser/fill-field`
+                : `${basePath}/api/recorder/fill-field`;
+            const payload = isBrowserApi
+                ? { selector: activeField?.selector || '', value: val }
+                : { sessionId: runId, selector: activeField?.selector || '', value: val };
+
+            const res = await fetch(fillUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sessionId: runId,
-                    selector: activeField?.selector || '',
-                    value: val
-                })
+                body: JSON.stringify(payload)
             });
             if (res.ok) {
                 const data = await res.json();
@@ -257,14 +276,22 @@ const LiveBrowserViewer = ({
     // Quick text entry handler for in-viewer typing
     const handleSendText = async (e) => {
         if (e) e.preventDefault();
-        if (!quickText || !runId) return;
+        if (!quickText || (!runId && !pollEndpoint)) return;
         setIsInteracting(true);
         const basePath = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+        const isBrowserApi = pollEndpoint && pollEndpoint.includes('/browser/');
         try {
-            const res = await fetch(`${basePath}/api/recorder/type-text`, {
+            const typeUrl = isBrowserApi
+                ? `${basePath}/api/browser/type-text`
+                : `${basePath}/api/recorder/type-text`;
+            const payload = isBrowserApi
+                ? { text: quickText }
+                : { sessionId: runId, text: quickText };
+
+            const res = await fetch(typeUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId: runId, text: quickText })
+                body: JSON.stringify(payload)
             });
             if (res.ok) {
                 const data = await res.json();
@@ -277,14 +304,22 @@ const LiveBrowserViewer = ({
 
     // Keypress handler for in-viewer keyboard
     const handleSendKey = async (key) => {
-        if (!runId) return;
+        if (!runId && !pollEndpoint) return;
         setIsInteracting(true);
         const basePath = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+        const isBrowserApi = pollEndpoint && pollEndpoint.includes('/browser/');
         try {
-            const res = await fetch(`${basePath}/api/recorder/press-key`, {
+            const keyUrl = isBrowserApi
+                ? `${basePath}/api/browser/type-text`
+                : `${basePath}/api/recorder/press-key`;
+            const payload = isBrowserApi
+                ? { key }
+                : { sessionId: runId, key };
+
+            const res = await fetch(keyUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId: runId, key })
+                body: JSON.stringify(payload)
             });
             if (res.ok) {
                 const data = await res.json();
@@ -327,7 +362,7 @@ const LiveBrowserViewer = ({
 
     // 2. High-frequency local frame polling and tab synchronization
     useEffect(() => {
-        if (!isExecuting || !runId) {
+        if (!isExecuting || (!runId && !pollEndpoint)) {
             return;
         }
 
@@ -339,7 +374,7 @@ const LiveBrowserViewer = ({
         );
 
         let isMounted = true;
-        const interval = setInterval(() => {
+        const fetchFrame = () => {
             fetch(`${targetEndpoint}?t=${Date.now()}`)
                 .then(res => {
                     if (res.ok) return res.blob();
@@ -356,26 +391,33 @@ const LiveBrowserViewer = ({
                     }
                 })
                 .catch(() => {});
-        }, 500);
+        };
+
+        // Fetch first frame immediately for instant feedback
+        fetchFrame();
+        const interval = setInterval(fetchFrame, 400);
 
         // Synchronize open tabs periodically
-        const tabInterval = setInterval(() => {
-            if (!runId || !isMounted) return;
-            fetch(`${basePath}/api/recorder/tabs/${runId}`)
-                .then(r => r.ok ? r.json() : null)
-                .then(data => {
-                    if (data && data.tabs && data.tabs.length > 0 && isMounted) {
-                        setBrowserTabs(data.tabs);
-                        if (data.activeTab !== undefined) setActiveTabIndex(data.activeTab);
-                    }
-                })
-                .catch(() => {});
-        }, 1000);
+        let tabInterval = null;
+        if (runId) {
+            tabInterval = setInterval(() => {
+                if (!isMounted) return;
+                fetch(`${basePath}/api/recorder/tabs/${runId}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(data => {
+                        if (data && data.tabs && data.tabs.length > 0 && isMounted) {
+                            setBrowserTabs(data.tabs);
+                            if (data.activeTab !== undefined) setActiveTabIndex(data.activeTab);
+                        }
+                    })
+                    .catch(() => {});
+            }, 1000);
+        }
 
         return () => {
             isMounted = false;
             clearInterval(interval);
-            clearInterval(tabInterval);
+            if (tabInterval) clearInterval(tabInterval);
         };
     }, [isExecuting, runId, pollEndpoint]);
 
@@ -986,12 +1028,12 @@ const LiveBrowserViewer = ({
                                         boxShadow: isExecuting ? '0 0 8px #22c55e' : 'none'
                                     }} 
                                 />
-                                <span>{isInteracting ? '● DISPATCHING...' : (runId ? '● CLICK OR TYPE ON SCREEN • MULTI-TAB READY' : (isExecuting ? '● LIVE CDP STREAM' : '● FINAL FRAME CAPTURED'))}</span>
+                                <span>{isInteracting ? '● DISPATCHING...' : ((runId || pollEndpoint) ? '● CLICK OR TYPE ON SCREEN • LIVE EMBEDDED SESSION' : (isExecuting ? '● LIVE CDP STREAM' : '● FINAL FRAME CAPTURED'))}</span>
                             </div>
                         </div>
 
                         {/* Interactive In-Viewer Typing Bar */}
-                        {runId && (
+                        {(runId || pollEndpoint) && (
                             <div style={{
                                 padding: '6px 12px',
                                 background: '#111827',
@@ -1101,31 +1143,35 @@ const LiveBrowserViewer = ({
                                 width: '64px',
                                 height: '64px',
                                 borderRadius: '50%',
-                                background: isHeaded ? 'rgba(34, 197, 94, 0.15)' : 'rgba(99, 102, 241, 0.15)',
-                                border: isHeaded ? '1px solid rgba(34, 197, 94, 0.4)' : '1px solid rgba(99, 102, 241, 0.4)',
+                                background: pollEndpoint ? 'rgba(56, 189, 248, 0.15)' : (isHeaded ? 'rgba(34, 197, 94, 0.15)' : 'rgba(99, 102, 241, 0.15)'),
+                                border: pollEndpoint ? '1px solid rgba(56, 189, 248, 0.4)' : (isHeaded ? '1px solid rgba(34, 197, 94, 0.4)' : '1px solid rgba(99, 102, 241, 0.4)'),
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                color: isHeaded ? '#22c55e' : '#818cf8',
-                                boxShadow: isHeaded ? '0 0 25px rgba(34, 197, 94, 0.3)' : '0 0 24px rgba(99, 102, 241, 0.25)'
+                                color: pollEndpoint ? '#38bdf8' : (isHeaded ? '#22c55e' : '#818cf8'),
+                                boxShadow: pollEndpoint ? '0 0 25px rgba(56, 189, 248, 0.3)' : (isHeaded ? '0 0 25px rgba(34, 197, 94, 0.3)' : '0 0 24px rgba(99, 102, 241, 0.25)')
                             }}
                         >
-                            {isHeaded ? <Monitor size={30} /> : <RefreshCw size={28} className="spin" />}
+                            {pollEndpoint ? <RefreshCw size={28} className="spin" /> : (isHeaded ? <Monitor size={30} /> : <RefreshCw size={28} className="spin" />)}
                         </div>
                         <div style={{ maxWidth: '480px' }}>
-                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '12px', background: isHeaded ? 'rgba(34, 197, 94, 0.12)' : 'rgba(99, 102, 241, 0.12)', border: isHeaded ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(99, 102, 241, 0.3)', color: isHeaded ? '#22c55e' : '#a5b4fc', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.6rem' }}>
-                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isHeaded ? '#22c55e' : '#818cf8', boxShadow: '0 0 6px currentColor' }} />
-                                {isHeaded ? 'HEADED MODE ACTIVE' : 'HEADLESS EXECUTION'}
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 10px', borderRadius: '12px', background: pollEndpoint ? 'rgba(56, 189, 248, 0.12)' : (isHeaded ? 'rgba(34, 197, 94, 0.12)' : 'rgba(99, 102, 241, 0.12)'), border: pollEndpoint ? '1px solid rgba(56, 189, 248, 0.3)' : (isHeaded ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(99, 102, 241, 0.3)'), color: pollEndpoint ? '#38bdf8' : (isHeaded ? '#22c55e' : '#a5b4fc'), fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.6rem' }}>
+                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: pollEndpoint ? '#38bdf8' : (isHeaded ? '#22c55e' : '#818cf8'), boxShadow: '0 0 6px currentColor' }} />
+                                {pollEndpoint ? 'EMBEDDED LIVE BROWSER' : (isHeaded ? 'HEADED MODE ACTIVE' : 'HEADLESS EXECUTION')}
                             </div>
                             <h3 style={{ margin: '0 0 0.4rem 0', fontSize: '1.15rem', fontWeight: 600 }}>
-                                {isHeaded 
-                                    ? `${framework ? framework.toUpperCase() + ' ' : ''}Browser Launched on Desktop` 
-                                    : 'Executing Tests in Background'}
+                                {pollEndpoint
+                                    ? 'Launching Browser Inside AAQUA...'
+                                    : (isHeaded 
+                                        ? `${framework ? framework.toUpperCase() + ' ' : ''}Browser Launched on Desktop` 
+                                        : 'Executing Tests in Background')}
                             </h3>
                             <p style={{ margin: '0 0 1rem 0', fontSize: '0.84rem', color: '#94a3b8', lineHeight: 1.55 }}>
-                                {isHeaded 
-                                    ? 'The browser window has opened directly on your desktop screen. You can watch tests interact with the page in real-time. Any test screenshots or failure captures will automatically stream here.' 
-                                    : 'Tests are running in background headless mode. Step/failure screenshots will render here when captured.'}
+                                {pollEndpoint
+                                    ? 'Opening page and streaming viewport directly into this window. You can interact, click, and navigate inside.'
+                                    : (isHeaded 
+                                        ? 'The browser window has opened directly on your desktop screen. You can watch tests interact with the page in real-time. Any test screenshots or failure captures will automatically stream here.' 
+                                        : 'Tests are running in background headless mode. Step/failure screenshots will render here when captured.')}
                             </p>
 
                             {!isHeaded && onToggleHeaded && (

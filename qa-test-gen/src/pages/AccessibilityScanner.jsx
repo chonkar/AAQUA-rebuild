@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from 'react-oidc-context';
-import { Play, Search, AlertTriangle, CheckCircle, ExternalLink, Loader2, User, Sparkles, BrainCircuit, XCircle, Globe, AlertCircle } from 'lucide-react';
+import { Play, Search, AlertTriangle, CheckCircle, ExternalLink, Loader2, User, Sparkles, BrainCircuit, XCircle, Globe, AlertCircle, Monitor } from 'lucide-react';
 import { launchBrowser } from '../services/accessibilityService';
 import { useProject } from '../context/ProjectContext';
 import { createApiClient } from '../utils/apiClient';
 import JiraDefectButton from '../components/features/JiraDefectButton';
 import UrlScopeWarning from '../components/common/UrlScopeWarning';
+import LiveBrowserViewer from '../components/common/LiveBrowserViewer';
 
 // Heuristic scan phases. The backend runs synchronously with no progress
 // stream, so we model the work it actually does (axe injection → rules →
@@ -55,8 +56,14 @@ const AccessibilityScanner = () => {
     // Per-issue JIRA logging state. Keys are `${source}-${id}` (e.g. axe-color-contrast, ai-3).
     // Values: { status: 'idle'|'logging'|'logged'|'error', key?, url?, error? }
     const [jiraState, setJiraState] = useState({});
+    const [runtimeInfo, setRuntimeInfo] = useState(null);
+    const [isLaunching, setIsLaunching] = useState(false);
     const scanStartRef = useRef(0);
     const scanTickRef = useRef(null);
+
+    useEffect(() => {
+        fetch(`${API_URL}/runtime-info`).then(r => r.json()).then(setRuntimeInfo).catch(() => {});
+    }, []);
 
     // Drive the heuristic progress bar while a scan is in flight. Phases
     // advance based on elapsed wall time against their `durationMs`, and
@@ -173,7 +180,8 @@ const AccessibilityScanner = () => {
 
     const handleLaunch = async () => {
         setError(null);
-        setIsBrowserActive(false);
+        setIsLaunching(true);
+        setActiveTab('browser'); // Immediately open and focus embedded browser tab
         try {
             let cookies = [];
             if (useCookies && cookieInput.trim()) {
@@ -185,11 +193,15 @@ const AccessibilityScanner = () => {
                 }
             }
 
-            await launchBrowser(url, browserType, cookies, selectedProjectId || null);
+            await launchBrowser(url, browserType, cookies, selectedProjectId || null, true);
             setIsBrowserActive(true);
             setCurrentBrowserUrl(url);
+            setActiveTab('browser');
         } catch (err) {
             setError(err.message || "Failed to launch browser. Ensure server is running.");
+            setIsBrowserActive(false);
+        } finally {
+            setIsLaunching(false);
         }
     };
 
@@ -343,10 +355,18 @@ const AccessibilityScanner = () => {
                             />
                             <button
                                 onClick={handleLaunch}
-                                disabled={!url || isBrowserActive}
+                                disabled={!url || isBrowserActive || isLaunching}
                                 className="btn btn-primary"
                             >
-                                <Play size={16} /> Launch
+                                {isLaunching ? (
+                                    <>
+                                        <Loader2 className="spin" size={16} /> Launching Inside...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Play size={16} /> Launch
+                                    </>
+                                )}
                             </button>
                         </div>
                         <UrlScopeWarning url={url} />
@@ -520,6 +540,15 @@ const AccessibilityScanner = () => {
                             </div>
 
                             <button
+                                type="button"
+                                onClick={() => setActiveTab('browser')}
+                                className="btn btn-secondary btn-sm"
+                                style={{ width: '100%', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontWeight: '600' }}
+                            >
+                                <Monitor size={15} /> Focus Live Browser Window
+                            </button>
+
+                            <button
                                 onClick={handleCloseBrowser}
                                 className="btn btn-danger btn-sm"
                                 style={{ width: '100%', padding: '0.5rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: '600' }}
@@ -561,6 +590,16 @@ const AccessibilityScanner = () => {
 
                     <div className="tabs">
                         <button
+                            className={`tab-btn ${activeTab === 'browser' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('browser')}
+                        >
+                            <Monitor size={16} /> Live Browser {isBrowserActive && (
+                                <span className="tab-count badge-success" style={{ background: '#10b981', color: '#fff' }}>
+                                    LIVE
+                                </span>
+                            )}
+                        </button>
+                        <button
                             className={`tab-btn ${activeTab === 'violations' ? 'active' : ''}`}
                             onClick={() => setActiveTab('violations')}
                         >
@@ -595,7 +634,22 @@ const AccessibilityScanner = () => {
                         </button>
                     </div>
 
-                    {!results && !isScanning && scanHistory.length === 0 && (
+                    {activeTab === 'browser' && (
+                        <div className="live-browser-tab-pane animate-fade-in" style={{ marginTop: '0.75rem' }}>
+                            <LiveBrowserViewer 
+                                title="Accessibility Live Browser Window" 
+                                subtitle={runtimeInfo?.hasVnc ? "Virtual Desktop (DISPLAY=:99) — Live Interactive Session" : "Embedded Live Session • Click & Type Directly Inside"}
+                                isExecuting={isBrowserActive || isLaunching || isScanning} 
+                                pollEndpoint={`${API_URL}/browser/live-screen`}
+                                hasVnc={runtimeInfo?.hasVnc}
+                                hasDisplayServer={runtimeInfo?.hasDisplayServer}
+                                isHeaded={false}
+                                height="560px"
+                            />
+                        </div>
+                    )}
+
+                    {!results && !isScanning && scanHistory.length === 0 && activeTab !== 'browser' && (
                         <div className="empty-state">
                             <CheckCircle size={48} className="text-muted" />
                             <p>Launch a page and run a scan to see results.</p>
